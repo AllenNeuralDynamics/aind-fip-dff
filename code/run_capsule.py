@@ -1,11 +1,13 @@
+
+#%%
 import os
 import pandas as pd
 import numpy as np
 import itertools
-from pynwb import NWBHDF5IO
-from pathlib2 import Path
+#from pynwb import NWBHDF5IO
+from pathlib import Path
 import glob
-import util_download as util_dl
+#import util_download as util_dl
 import re
 import argparse
 import os
@@ -15,6 +17,11 @@ from scipy.optimize import curve_fit
 import glob
 import itertools
 import pandas as pd
+
+import new_preprocess as nwp
+
+#%%
+
 
 # removing first few seconds
 def tc_crop(tc, nFrame2cut):
@@ -168,6 +175,8 @@ def batch_processing(df_fip, methods=['poly', 'exp']):
     return df_fip_pp, df_pp_params
 
 
+
+
 data_folder = "../data/"
 results_folder = "../results/"
 scratch_folder = "../results/"
@@ -189,7 +198,23 @@ if __name__ == "__main__":
     N_assets_per_subject = 1
     fibers_per_file = 2
 
-    #  Main loop
+
+
+    #  Main loop 
+
+    #%%
+    # New chunk
+    AnalDir = '../trial_data/'
+    # (add system later)
+    filenames = []
+    for name in ['FIP_DataG', 'FIP_DataR', 'FIP_DataIso']:
+        if bool(glob.glob(AnalDir + os.sep +  "**" + os.sep + name +'*',recursive=True)) == True:
+            filenames.extend(glob.glob(AnalDir + os.sep + "**" + os.sep + name +'*', recursive=True)) 
+
+    #%%
+    df_fip_ses = nwp.load_Homebrew_fip_data(filenames=filenames)
+    #%%
+
     df_fip = pd.DataFrame()
     df_pp_params = pd.DataFrame()
     df_logging = pd.DataFrame()

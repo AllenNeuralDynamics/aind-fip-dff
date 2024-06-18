@@ -1,11 +1,11 @@
 # 
 import os
-import boto3
-import aind_codeocean_api
+#import boto3
+#import aind_codeocean_api
 import json
-import boto3
+#import boto3
 import numpy as np
-from aind_codeocean_api.codeocean import CodeOceanClient
+#from aind_codeocean_api.codeocean import CodeOceanClient
 from botocore.exceptions import ClientError
 import shutil
 import itertools
