@@ -18,9 +18,26 @@ import glob
 import itertools
 import pandas as pd
 
+from pynwb import NWBHDF5IO
+
 import new_preprocess as nwp
 
 #%%
+# takes relative or absolute filepath as first argument
+io = NWBHDF5IO(f"{'../data/'}/{'652738_2023-02-13_18-04-56.nwb'}", mode="r", load_namespaces=True)
+
+#%%
+nwb = io.read()
+print(nwb)
+
+
+
+#%%
+
+
+
+
+
 
 data_folder = "../data/"
 results_folder = "../results/"
