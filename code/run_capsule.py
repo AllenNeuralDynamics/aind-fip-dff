@@ -22,161 +22,6 @@ import new_preprocess as nwp
 
 #%%
 
-
-# removing first few seconds
-def tc_crop(tc, nFrame2cut):
-    tc_cropped = tc[nFrame2cut:]
-    return tc_cropped
-
-# Median filtering to remove electrical artifact.
-def tc_medfilt(tc, kernelSize):
-    tc_filtered = medfilt(tc, kernel_size=kernelSize)
-    return tc_filtered
-
-# Lowpass filter - zero phase filtering (with filtfilt) is used to avoid distorting the signal.
-def tc_lowcut(tc, sampling_rate):
-    b,a = butter(2, 9, btype='low', fs=sampling_rate)
-    tc_filtered = filtfilt(b,a, tc)
-    return tc_filtered
-
-# fit with polynomial to remove bleaching artifact 
-def tc_polyfit(tc, sampling_rate, degree):
-    time_seconds = np.arange(len(tc)) /sampling_rate 
-    coefs = np.polyfit(time_seconds, tc, deg=degree)
-    tc_poly = np.polyval(coefs, time_seconds)
-    return tc_poly, coefs
-
-# setting up sliding baseline to calculate dF/F
-def tc_slidingbase(tc, sampling_rate):
-    b,a = butter(2, 0.0001, btype='low', fs=sampling_rate)
-    tc_base = filtfilt(b,a, tc, padtype='even')
-    return tc_base
-
-# obtain dF/F using median of values within sliding baseline 
-def tc_dFF(tc, tc_base, b_percentile):
-    tc_dFoF = tc/tc_base
-    sort = np.sort(tc_dFoF)
-    b_median = np.median(sort[0:round(len(sort) * b_percentile)])
-    tc_dFoF = tc_dFoF - b_median
-    return tc_dFoF
-
-# fill in the gap left by cropping out the first few timesteps
-def tc_filling(tc, nFrame2cut):
-    tc_filled = np.append(np.ones([nFrame2cut,1])*tc[0], tc)
-    return tc_filled
-    
-def tc_expfit(tc, sampling_rate=20):
-    # bi-exponential fit
-    def func(x, a, b, c, d):
-        return a * np.exp(-b * x) + c * np.exp(-d * x)
-    
-    time_seconds = np.arange(len(tc))/sampling_rate
-    popt, pcov = curve_fit(func,time_seconds,tc)
-    tc_exp = func(time_seconds, popt[0], popt[1], popt[2], popt[3])
-    return tc_exp, popt
-
-# Preprocessing total function
-def chunk_processing(tc, method = 'poly', nFrame2cut=100, kernelSize=1, sampling_rate=20, degree=4, b_percentile=0.7):
-    """
-    Preprocesses the fiber photometry signal.
-    Args:
-        tc: np.array
-            Fiber photometry signal
-        method: str
-            Method to preprocess the data. Options: poly, exp
-        nFrame2cut: int
-            Number of frames to crop from the beginning of the signal
-        kernelSize: int
-            Size of the kernel for median filtering
-        sampling_rate: int
-            Sampling rate of the signal
-        degree: int
-            Degree of the polynomial to fit
-        b_percentile: float
-            Percentile to calculate the baseline
-    Returns:
-        tc_dFoF: np.array
-            Preprocessed fiber photometry signal
-        tc_params: dict
-            Dictionary with the parameters of the preprocessing    
-    """
-    tc_cropped = tc_crop(tc, nFrame2cut)
-    tc_filtered = medfilt(tc_cropped, kernel_size=kernelSize)
-    tc_filtered = tc_lowcut(tc_filtered, sampling_rate)
-    
-    if method == 'poly':
-        tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
-    if method == 'exp':
-        tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)           
-    tc_estim = tc_filtered - tc_fit # 
-    tc_base = tc_slidingbase(tc_filtered, sampling_rate)
-    tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)    
-    tc_dFoF = tc_filling(tc_dFoF, nFrame2cut)    
-    tc_params = {i_coef:tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
-    tc_qualitymetrics = {'QC_metric':np.nan}    
-    tc_params.update(tc_qualitymetrics)
-
-    return tc_dFoF, tc_params
-
-
-def batch_processing(df_fip, methods=['poly', 'exp']):
-    df_fip_pp = pd.DataFrame()    
-    df_pp_params = pd.DataFrame() 
-    
-    # df_fip = pd.read_pickle(filename)        
-    if len(df_fip) == 0:
-        return df_fip, df_pp_params
-
-    sessions = pd.unique(df_fip['session'].values)
-    sessions = sessions[~pd.isna(sessions)]
-    fiber_numbers = np.unique(df_fip['fiber_number'].values)    
-    channels = pd.unique(df_fip['channel']) # ['G', 'R', 'Iso']    
-    channels = channels[~pd.isna(channels)]
-    for pp_name in methods:     
-        if pp_name in ['poly', 'exp']:   
-            for i_iter, (channel, fiber_number, session) in enumerate(itertools.product(channels, fiber_numbers, sessions)):            
-                df_fip_iter = df_fip[(df_fip['session']==session) & (df_fip['fiber_number']==fiber_number) & (df_fip['channel']==channel)]        
-                if len(df_fip_iter) == 0:
-                    continue
-                
-                NM_values = df_fip_iter['signal'].values   
-                try:      
-                    NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
-                except:
-                    continue                                       
-                df_fip_iter.loc[:,'signal'] = NM_preprocessed                            
-                df_fip_iter.loc[:,'preprocess'] = pp_name
-                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)                    
-                
-                NM_fitting_params.update({'preprocess':pp_name, 'channel':channel, 'fiber_number':fiber_number, 'session':session})
-                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)     
-
-                # Below is where Johannes's method is commented out   
-                """         if pp_name in ['double_exp']:
-                            for i_iter, (channel, fiber_number, session) in enumerate(itertools.product(channels, fiber_numbers, sessions)):            
-                                df_fip_iter = df_fip[(df_fip['session']==session) & (df_fip['fiber_number']==fiber_number)]        
-                                F = list()
-                                for i_channel, channel in enumerate(['iso', 'G', 'R']):
-                                    F.append(df_fip_iter[df_fip_iter['channel'] == channel].signal.values.flatten())
-                                F = np.vstack(F)
-                                dff_mc = preprocess(F)
-                                for i_channel, channel in enumerate(['iso', 'G', 'R']):
-                                    df_fip_channel = df_fip_iter[df_fip_iter['channel'] == channel]
-                                    df_fip_channel.loc[:,'signal'] = dff_mc[i_channel]
-                                    df_fip_channel.loc[:,'preprocess'] = pp_name
-                                df_fip_pp = pd.concat([df_fip_pp, df_fip_channel], axis=0)                    
-                                
-                                NM_fitting_params.update({'preprocess':pp_name, 'channel':channel, 'fiber_number':fiber_number, 'session':session})
-                                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)    """     
-
-
-    return df_fip_pp, df_pp_params
-
-
-
-
 data_folder = "../data/"
 results_folder = "../results/"
 scratch_folder = "../results/"
@@ -190,14 +35,13 @@ if __name__ == "__main__":
     method_to_preprocess = args.method
 
     #  Search all fiber photometry datasets and define a list of assets
-    data_assets = search_all_assets('FIP*')
+    data_assets = nwp.search_all_assets('FIP*')
 
     # The following will be extracted from NWB file. 
     subject_id = "652738"
     session_id = "2021-06-01_11-00-00"
     N_assets_per_subject = 1
     fibers_per_file = 2
-
 
 
     #  Main loop 
@@ -212,9 +56,12 @@ if __name__ == "__main__":
             filenames.extend(glob.glob(AnalDir + os.sep + "**" + os.sep + name +'*', recursive=True)) 
 
     #%%
+    # create the df for input to the new function, chunk processing
     df_fip_ses = nwp.load_Homebrew_fip_data(filenames=filenames)
     #%%
+    df_fip_pp, df_PP_params = nwp.batch_processing(df_fip=df_fip_ses)
 
+    #%%
     df_fip = pd.DataFrame()
     df_pp_params = pd.DataFrame()
     df_logging = pd.DataFrame()
