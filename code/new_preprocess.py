@@ -176,6 +176,65 @@ def load_Homebrew_fip_data(filenames,  fibers_per_file=2):
         df_fip_ses = df_fip
     return df_fip_ses
 
+
+
+# FUNCTION to convert NWB to df_fip? -- this is the method decided on
+# OR FUNCTION to go from NWB to the traces that we need for batch processing function
+
+#---------------------------------------------------------------------------------------------
+"""
+This function takes in an nwb file and converts it to a 
+dataframe to be processed by batch processing
+"""
+
+def nwb_to_dataframe(nwb_file_path):
+    """
+    Reads time series data from an NWB file, converts it into a dictionary,
+    including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
+    Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
+
+    Parameters:
+    nwb_file_path (str): The path to the NWB file.
+
+    Returns:
+    pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
+    """
+    # Define the list of required substrings
+    required_substrings = ['R_', 'G_', 'Iso_']
+
+    # Open the NWB file
+    with NWBHDF5IO(nwb_file_path, 'r') as io:
+        nwbfile = io.read()
+
+        data_dict = {}
+        timestamps_added = False
+
+        # Iterate over all TimeSeries in the NWB file
+        for key, time_series in nwbfile.acquisition.items():
+            # Check if the key contains any of the required substrings
+            if any(substring in key for substring in required_substrings):
+                # Store only the 'data' part of the TimeSeries
+                data_dict[time_series.name] = time_series.data[:]
+                
+                # Add 'timestamps' field from the first matching key
+                if not timestamps_added:
+                    data_dict['timestamps'] = time_series.timestamps[:]
+                    timestamps_added = True
+
+        # Convert the dictionary to a pandas DataFrame
+        df = pd.DataFrame(data_dict)
+
+        return df
+
+# Example usage
+nwb_file_path = 'path_to_your_nwb_file.nwb'
+time_series_df = nwb_to_dataframe(nwb_file_path)
+print(time_series_df)
+
+#---------------------------------------------------------------------------------------------
+
+
+
 def batch_processing(df_fip, methods=['poly', 'exp']):
     df_fip_pp = pd.DataFrame()    
     df_pp_params = pd.DataFrame() 
