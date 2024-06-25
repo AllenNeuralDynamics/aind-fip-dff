@@ -181,6 +181,65 @@ def load_Homebrew_fip_data(filenames,  fibers_per_file=2):
     return df_fip_ses
 
 # run the total preprocessing on multiple sessions -- future iteration: collect exceptions in a log file
+
+
+# FUNCTION to convert NWB to df_fip? -- this is the method decided on
+# OR FUNCTION to go from NWB to the traces that we need for batch processing function
+
+#---------------------------------------------------------------------------------------------
+"""
+This function takes in an nwb file and converts it to a 
+dataframe to be processed by batch processing
+"""
+
+def nwb_to_dataframe(nwb_file_path):
+    """
+    Reads time series data from an NWB file, converts it into a dictionary,
+    including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
+    Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
+
+    Parameters:
+    nwb_file_path (str): The path to the NWB file.
+
+    Returns:
+    pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
+    """
+    # Define the list of required substrings
+    required_substrings = ['R_', 'G_', 'Iso_']
+
+    # Open the NWB file
+    with NWBHDF5IO(nwb_file_path, 'r') as io:
+        nwbfile = io.read()
+
+        data_dict = {}
+        timestamps_added = False
+
+        # Iterate over all TimeSeries in the NWB file
+        for key, time_series in nwbfile.acquisition.items():
+            # Check if the key contains any of the required substrings
+            if any(substring in key for substring in required_substrings):
+                # Store only the 'data' part of the TimeSeries
+                data_dict[time_series.name] = time_series.data[:]
+                
+                # Add 'timestamps' field from the first matching key
+                if not timestamps_added:
+                    data_dict['timestamps'] = time_series.timestamps[:]
+                    timestamps_added = True
+
+        # Convert the dictionary to a pandas DataFrame
+        df = pd.DataFrame(data_dict)
+
+        return df
+
+# Example usage
+nwb_file_path = 'path_to_your_nwb_file.nwb'
+time_series_df = nwb_to_dataframe(nwb_file_path)
+print(time_series_df)
+
+#---------------------------------------------------------------------------------------------
+
+
+
 def batch_processing(df_fip, methods=['poly', 'exp']):
     df_fip_pp = pd.DataFrame()    
     df_pp_params = pd.DataFrame() 
@@ -314,18 +373,12 @@ def nwb_to_dataframe(nwb_file_path):
                 # Store only the 'data' part of the TimeSeries
                 data_dict[time_series.name] = time_series.data[:]
 
-                timestamps[key].append(time_series.timestamps[:])
+                timestamps[key] = (time_series.timestamps[:])
+
         
-        print(timestamps)
+            print(f"{key} timestamps", timestamps)
 
 
-
-        # QUICK FIX: Find better way..to Ensure all arrays have the same length
-        # min_length = min(len(v) for v in data_dict.values())
-        # for key in data_dict:
-        #     data_dict[key] = data_dict[key][:min_length]
-
-        # Create a list to hold the transformed data
         transformed_data = []
 
         # Transform the data to have a single column for channel names
@@ -333,21 +386,19 @@ def nwb_to_dataframe(nwb_file_path):
         print(data_dict)
 
 
-
-        for channel, data in data_dict.items():
+        for channel, data in data_dict.items():  
             channel, fiber_number = channel.split('_')
-            for i in range(len(timestamps)):
-                for j, value in enumerate(timestamps[i]):
-                    transformed_data.append({
-                    'time_fip': value,
-                    'channel': channel,
-                    'fiber_number': fiber_number,
-                    'signal': data[j]
-                })
-                print("data",len(data))
-                print("time",len(timestamps[i]))
-        
-       
+            for i in range(len(timestamps[channel + '_'+ fiber_number])):
+                transformed_data.append({
+                'time_fip': timestamps[channel + '_'+ fiber_number][i],
+                'channel': channel,
+                'fiber_number': fiber_number,
+                'signal': data[i]
+            })
+            print("data",len(data))
+
+    
+
         # Convert the dictionary to a pandas DataFrame
         df = pd.DataFrame(transformed_data)
 
