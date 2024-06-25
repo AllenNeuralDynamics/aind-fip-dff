@@ -19,9 +19,26 @@ import itertools
 import pandas as pd
 
 
+from pynwb import NWBHDF5IO
+
 import new_preprocess as nwp
 
 #%%
+# takes relative or absolute filepath as first argument
+io = NWBHDF5IO(f"{'../data/'}/{'652738_2023-02-13_18-04-56.nwb'}", mode="r", load_namespaces=True)
+
+#%%
+nwb = io.read()
+print(nwb)
+
+
+
+#%%
+
+
+
+
+
 
 data_folder = "../data/"
 results_folder = "../results/"
@@ -49,7 +66,7 @@ if __name__ == "__main__":
 
     #%%
     # New chunk
-    AnalDir = '../trial_data/'
+    AnalDir = '../trial_data/700708_2024-06-14_08-38-31/'
     # (add system later)
     filenames = []
     for name in ['FIP_DataG', 'FIP_DataR', 'FIP_DataIso']:
