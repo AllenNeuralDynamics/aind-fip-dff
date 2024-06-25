@@ -1,0 +1,7 @@
+{
+    "comments": "no comments",
+    "description": "The reward delivery time of the right lick port",
+    "namespace": "core",
+    "neurodata_type": "TimeSeries",
+    "object_id": "af8a116a-8f7c-4c18-851b-cae3b4904c2d"
+}

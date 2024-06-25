@@ -1,0 +1,7 @@
+{
+    "description": "Trials with laser stimulation",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "94f05b98-b866-430f-85c8-ead94531c965",
+    "zarr_dtype": "int"
+}

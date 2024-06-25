@@ -1,0 +1,7 @@
+{
+    "description": "Start time of epoch, in seconds",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "fc9734a4-6ede-4ca0-8f2b-129695894086",
+    "zarr_dtype": "float64"
+}

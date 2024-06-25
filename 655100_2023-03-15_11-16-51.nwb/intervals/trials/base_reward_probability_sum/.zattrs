@@ -1,0 +1,7 @@
+{
+    "description": "The summation of left and right reward probability",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "eaa99393-86de-4e9d-87d7-fab9528b51ac",
+    "zarr_dtype": "float"
+}

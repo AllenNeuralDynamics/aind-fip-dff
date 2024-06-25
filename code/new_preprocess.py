@@ -15,6 +15,7 @@ import glob
 import itertools
 import pandas as pd
 from pynwb import NWBHDF5IO
+from hdmf_zarr.nwb import NWBZarrIO
 
 #%%
 """
@@ -279,7 +280,7 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
     return df_fip_pp, df_pp_params
 
 
-
+#%%
 def nwb_to_dataframe(nwb_file_path):
     """
     Reads time series data from an NWB file, converts it into a dictionary,
@@ -299,11 +300,12 @@ def nwb_to_dataframe(nwb_file_path):
     # with NWBHDF5IO(nwb_file_path, 'r') as io:
     #     nwbfile = io.read()
 
-    with NWBHDF5IO(nwb_file_path, 'r') as io:
+    with NWBZarrIO(nwb_file_path, 'r') as io:
         nwbfile = io.read()
 
         data_dict = {}
         timestamps_added = False
+        timestamps  = {}
 
         # Iterate over all TimeSeries in the NWB file
         for key, time_series in nwbfile.acquisition.items():
@@ -311,18 +313,50 @@ def nwb_to_dataframe(nwb_file_path):
             if any(substring in key for substring in required_substrings):
                 # Store only the 'data' part of the TimeSeries
                 data_dict[time_series.name] = time_series.data[:]
-                
-                # Add 'timestamps' field from the first matching key
-                if not timestamps_added:
-                    data_dict['timestamps'] = time_series.timestamps[:]
-                    timestamps_added = True
 
+                timestamps[key].append(time_series.timestamps[:])
+        
+        print(timestamps)
+
+
+
+        # QUICK FIX: Find better way..to Ensure all arrays have the same length
+        # min_length = min(len(v) for v in data_dict.values())
+        # for key in data_dict:
+        #     data_dict[key] = data_dict[key][:min_length]
+
+        # Create a list to hold the transformed data
+        transformed_data = []
+
+        # Transform the data to have a single column for channel names
+
+        print(data_dict)
+
+
+
+        for channel, data in data_dict.items():
+            channel, fiber_number = channel.split('_')
+            for i in range(len(timestamps)):
+                for j, value in enumerate(timestamps[i]):
+                    transformed_data.append({
+                    'time_fip': value,
+                    'channel': channel,
+                    'fiber_number': fiber_number,
+                    'signal': data[j]
+                })
+                print("data",len(data))
+                print("time",len(timestamps[i]))
+        
+       
         # Convert the dictionary to a pandas DataFrame
-        df = pd.DataFrame(data_dict)
+        df = pd.DataFrame(transformed_data)
 
         return df
 
-# Example usage
-nwb_file_path = 'path_to_your_nwb_file.nwb'
-time_series_df = nwb_to_dataframe(nwb_file_path)
-print(time_series_df)
+#%%
+
+
+#%%
+df_from_nwb = nwb_to_dataframe("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb")
+
+# %%

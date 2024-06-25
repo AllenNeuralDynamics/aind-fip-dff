@@ -1,0 +1,7 @@
+{
+    "description": "The reward outcome time (reward/no reward/no response)",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "841b56bd-05c2-4a83-bc40-491c9106662e",
+    "zarr_dtype": "float"
+}

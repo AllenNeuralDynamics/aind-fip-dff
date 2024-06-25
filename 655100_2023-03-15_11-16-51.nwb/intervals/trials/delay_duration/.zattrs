@@ -1,0 +1,7 @@
+{
+    "description": "The expected time duration between delay start and go cue start",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "e6b16e4d-96c5-4d51-995c-0306ccb4578b",
+    "zarr_dtype": "float"
+}

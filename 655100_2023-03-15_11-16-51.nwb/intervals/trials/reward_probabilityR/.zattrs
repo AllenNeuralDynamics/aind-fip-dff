@@ -1,0 +1,7 @@
+{
+    "description": "The reward probability of right lick port",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "b64101bc-50fa-4d2d-a05e-eeaead639bfc",
+    "zarr_dtype": "float"
+}
