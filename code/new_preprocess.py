@@ -1,3 +1,4 @@
+#%%
 import os
 import pandas as pd
 import numpy as np
@@ -13,7 +14,9 @@ from scipy.optimize import curve_fit
 import glob
 import itertools
 import pandas as pd
+from pynwb import NWBHDF5IO
 
+#%%
 """
 This capsule should take in an NWB file, 
 check the number of subjects (confirm this),
@@ -176,6 +179,7 @@ def load_Homebrew_fip_data(filenames,  fibers_per_file=2):
         df_fip_ses = df_fip
     return df_fip_ses
 
+# run the total preprocessing on multiple sessions -- future iteration: collect exceptions in a log file
 def batch_processing(df_fip, methods=['poly', 'exp']):
     df_fip_pp = pd.DataFrame()    
     df_pp_params = pd.DataFrame() 
@@ -233,3 +237,92 @@ def batch_processing(df_fip, methods=['poly', 'exp']):
 #---------------------------------------------------------------------------------------------
 
 
+# input is nwb file now
+
+# so we want to access traces: 
+
+def batch_processing_new(df_fip, methods=['poly', 'exp']):
+    df_fip_pp = pd.DataFrame()    
+    df_pp_params = pd.DataFrame() 
+    
+    # df_fip = pd.read_pickle(filename)        
+    if len(df_fip) == 0:
+        return df_fip, df_pp_params
+
+    sessions = pd.unique(df_fip['session'].values)
+    sessions = sessions[~pd.isna(sessions)]
+    fiber_numbers = np.unique(df_fip['fiber_number'].values)    
+    channels = pd.unique(df_fip['channel']) # ['G', 'R', 'Iso']    
+    channels = channels[~pd.isna(channels)]
+    for pp_name in methods:     
+        if pp_name in ['poly', 'exp']:   
+            for i_iter, (channel, fiber_number, session) in enumerate(itertools.product(channels, fiber_numbers, sessions)):            
+                df_fip_iter = df_fip[(df_fip['session']==session) & (df_fip['fiber_number']==fiber_number) & (df_fip['channel']==channel)]        
+                if len(df_fip_iter) == 0:
+                    continue
+                
+                NM_values = df_fip_iter['signal'].values   
+                try:      
+                    NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
+                except:
+                    continue                                       
+                df_fip_iter.loc[:,'signal'] = NM_preprocessed                            
+                df_fip_iter.loc[:,'preprocess'] = pp_name
+                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)                    
+                
+                NM_fitting_params.update({'preprocess':pp_name, 'channel':channel, 'fiber_number':fiber_number, 'session':session})
+                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)     
+
+            
+
+    return df_fip_pp, df_pp_params
+
+
+
+def nwb_to_dataframe(nwb_file_path):
+    """
+    Reads time series data from an NWB file, converts it into a dictionary,
+    including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
+    Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
+
+    Parameters:
+    nwb_file_path (str): The path to the NWB file.
+
+    Returns:
+    pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
+    """
+    # Define the list of required substrings
+    required_substrings = ['R_', 'G_', 'Iso_']
+
+    # Open the NWB file -- HD5 version
+    # with NWBHDF5IO(nwb_file_path, 'r') as io:
+    #     nwbfile = io.read()
+
+    with NWBHDF5IO(nwb_file_path, 'r') as io:
+        nwbfile = io.read()
+
+        data_dict = {}
+        timestamps_added = False
+
+        # Iterate over all TimeSeries in the NWB file
+        for key, time_series in nwbfile.acquisition.items():
+            # Check if the key contains any of the required substrings
+            if any(substring in key for substring in required_substrings):
+                # Store only the 'data' part of the TimeSeries
+                data_dict[time_series.name] = time_series.data[:]
+                
+                # Add 'timestamps' field from the first matching key
+                if not timestamps_added:
+                    data_dict['timestamps'] = time_series.timestamps[:]
+                    timestamps_added = True
+
+        # Convert the dictionary to a pandas DataFrame
+        df = pd.DataFrame(data_dict)
+
+        return df
+
+# Example usage
+nwb_file_path = 'path_to_your_nwb_file.nwb'
+time_series_df = nwb_to_dataframe(nwb_file_path)
+print(time_series_df)
