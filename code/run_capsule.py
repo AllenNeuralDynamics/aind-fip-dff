@@ -19,7 +19,6 @@ import itertools
 import pandas as pd
 
 
-
 import new_preprocess as nwp
 
 #%%
@@ -68,91 +67,21 @@ if __name__ == "__main__":
     df_pp_params = pd.DataFrame()
     df_logging = pd.DataFrame()
 
-    try:
-        print(subject_id)
 
-        # Download data assets related to subject
-        folder = '../scratch/'+subject_id+'/'
-        Path(folder).mkdir(parents=True, exist_ok=True)
-        download_assets(query_asset='FIP_'+subject_id+'*', query_asset_files='.csv', download_folder=folder, max_assets_to_download=N_assets_per_subject)
-        download_assets(query_asset='FIP_'+subject_id+'*', query_asset_files='TTL_', download_folder=folder, max_assets_to_download=N_assets_per_subject)
-        download_assets(query_asset='FIP_'+subject_id+'*', query_asset_files='.json', download_folder=folder, max_assets_to_download=N_assets_per_subject)
+                       
 
-        folders_sessions = glob.glob(folder+'*')    
-        for i_folder, AnalDir in enumerate(folders_sessions[:1]):
-            print(subject_id + ' ' + AnalDir)
-            subject_id, session_date, session_time = re.search(r"\d{6}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", AnalDir).group().split('_')            
-            session_name = subject_id+'_'+session_date+'_'+session_time
-            error = 'nan'
+    #%% test the NWBfunction
+    df_from_nwb = nwp.nwb_to_dataframe("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb")
 
-            #% Detect Fiber photometry and behavioral systems 
-            fiber_photometry_system, filenames = detect_fiber_photometry_system(AnalDir)
-            behavior_system = detect_behavior_recording_system(AnalDir)
 
-            if fiber_photometry_system is None or behavior_system is None:
-                error = 'system_detection'
-                df_logging = pd.concat([df_logging, pd.DataFrame({'subject_id':subject_id, 'session':session_name, 'date':session_date, 'behavior_system':behavior_system, 'fiber_photometry_system':fiber_photometry_system, 'error':error}, index=[0])])
-                continue
+    #%%
 
-            #% Load FIP data and create fip dataframe 
-            if fiber_photometry_system == 'NPM':
-                df_fip_ses = load_NPM_fip_data(filenames, fibers_per_file=fibers_per_file)
-                df_fip_ses_cleaned = clean_timestamps_NPM(df_fip_ses)            
 
-            elif fiber_photometry_system == 'Homebrew':
-                df_fip_ses_cleaned = load_Homebrew_fip_data(filenames, fibers_per_file=fibers_per_file)
-            
-            if len(df_fip_ses_cleaned) == 0:
-                print('Could not processs session because of loading the data:'+session_name)
-                error = 'loading'
-                df_logging = pd.concat([df_logging, pd.DataFrame({'subject_id':subject_id, 'session':session_name, 'date':session_date, 'behavior_system':behavior_system, 'fiber_photometry_system':fiber_photometry_system, 'error':error}, index=[0])])
-                continue
 
-            #% Align FIP to behavioral system clock
-            if behavior_system == 'bpod':
-                timestamps_bitcodes, frame_number_bitcodes, bitcodes = compute_timestamps_bitcodes(AnalDir)
-                frame_number_convertor_FIP_to_bpod = alignment_fip_time_to_bpod(AnalDir, folder_nwb='/data/foraging_nwb_bpod/')
-                if frame_number_convertor_FIP_to_bpod is np.nan:
-                    print('Could not processs session because of bitcodes alignment:'+session_name)
-                    error = 'nwb/bitcodes'
-                    df_logging = pd.concat([df_logging, pd.DataFrame({'subject_id':subject_id, 'session':session_name, 'date':session_date, 'behavior_system':behavior_system, 'fiber_photometry_system':fiber_photometry_system, 'error':error}, index=[0])])
-                    continue
-                df_fip_ses_cleaned.loc[:, 'time'] = frame_number_convertor_FIP_to_bpod(df_fip_ses_cleaned['frame_number'].values)           
-                df_fip_ses_aligned = df_fip_ses_cleaned.loc[:,['session', 'frame_number', 'time', 'time_fip','signal', 'channel', 'fiber_number', 'excitation', 'camera', 'system']]
-                
-            elif behavior_system == 'bonsai':
-                timestamps_Harp_cleaned = clean_timestamps_Harp(AnalDir)
-                df_fip_ses_aligned = alignment_fip_time_to_harp(df_fip_ses_cleaned, timestamps_Harp_cleaned)            
-            
-            #% Preprocessing of FIP data
-            df_fip_ses_aligned.loc[:,'preprocess'] = 'None'        
-            df_fip_ses_pp, df_pp_params_ses = batch_processing(df_fip_ses_aligned, methods=['poly', 'exp'])
-            df_fip_ses = pd.concat([df_fip_ses_aligned, df_fip_ses_pp])     
-            df_pp_params = pd.concat([df_pp_params, df_pp_params_ses])   
 
-            #% Adding fip to nwb
-            dict_fip = split_fip_traces(df_fip_ses, split_by=['channel', 'fiber_number', 'preprocess'])        
-            nwb, src_io = attach_dict_fip(AnalDir, folder_nwb='/data/foraging_nwb_'+behavior_system+'/', dict_fip=dict_fip)
 
-            #% Storing new nwb
-            save_dirname = '../results/'+AnalDir.strip('../scratch/')        
-            if not os.path.exists(save_dirname):
-                Path(save_dirname).mkdir(parents=True, exist_ok=True)         
-            save_filename_nwb = save_dirname+os.sep+ session_name +'.nwb'        
-            with NWBHDF5IO(save_filename_nwb, mode='w') as export_io:
-                export_io.export(src_io=src_io, nwbfile=nwb)
-            src_io.close()     
 
-            #% Storing of dataframes
-            save_filename_df_files = save_dirname+os.sep+ session_name +'_df'        
-            df_fip_ses.to_pickle(save_filename_df_files+'_fip.pkl')
-            df_pp_params_ses.to_pickle(save_filename_df_files+'_pp.pkl')  
-            
-            df_logging = pd.concat([df_logging, pd.DataFrame({'subject_id':subject_id, 'session':session_name, 'date':session_date, 'behavior_system':behavior_system, 'fiber_photometry_system':fiber_photometry_system, 'error':error}, index=[0])])
-    except:
-        df_logging = pd.concat([df_logging, pd.DataFrame({'subject_id':subject_id, 'session':session_name, 'date':session_date, 'behavior_system':np.nan, 'fiber_photometry_system':np.nan, 'error':'not detected error'}, index=[0])])
-    
-    df_logging.to_pickle('../results/df_logging.pkl')
+
 
         
 

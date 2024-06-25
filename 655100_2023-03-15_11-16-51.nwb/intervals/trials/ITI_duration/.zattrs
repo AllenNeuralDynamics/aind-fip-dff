@@ -1,0 +1,7 @@
+{
+    "description": "The expected time duration between trial start and ITI start",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "1bbe1994-e86d-4896-a214-c7ad0489f500",
+    "zarr_dtype": "float"
+}

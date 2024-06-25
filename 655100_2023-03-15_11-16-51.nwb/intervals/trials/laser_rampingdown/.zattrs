@@ -1,0 +1,7 @@
+{
+    "description": "The ramping down time of the laser",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "bc5fbaf9-2b39-40a9-9cb8-2900024c4c81",
+    "zarr_dtype": "int"
+}

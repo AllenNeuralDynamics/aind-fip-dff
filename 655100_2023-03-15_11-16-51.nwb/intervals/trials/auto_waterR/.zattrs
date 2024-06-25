@@ -1,0 +1,7 @@
+{
+    "description": "Autowater given at Right",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "87510987-452b-4ea4-af69-2653bdb07c95",
+    "zarr_dtype": "int"
+}

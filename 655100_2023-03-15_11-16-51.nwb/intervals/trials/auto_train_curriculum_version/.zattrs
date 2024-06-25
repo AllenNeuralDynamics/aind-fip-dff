@@ -1,0 +1,7 @@
+{
+    "description": "The version of the auto training curriculum",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "3209e71d-8b65-45e3-b661-5058c559ee12",
+    "zarr_dtype": "str"
+}
