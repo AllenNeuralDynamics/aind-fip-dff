@@ -1,5 +1,9 @@
 metadata_version: 1
-name: aind-capsule-template
-description: Basic structure of a capsule to be customized as needed.
+name: aind-fip-dff
+description: This Capsule takes in an nwb file and runs it through a preprocessing
+  function and outputs the preprocessed signal along with metrics and session details
+  back to the nwb file.
 authors:
 - name: AIND
+- name: Brian Gitahi
+- name: Stefano Recanatesi

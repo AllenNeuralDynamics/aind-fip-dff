@@ -1,7 +1,0 @@
-{
-    "description": "Whether the current right lickport has a bait or not",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "a06842b1-db45-4247-a1f7-51217f23ada6",
-    "zarr_dtype": "bool"
-}
