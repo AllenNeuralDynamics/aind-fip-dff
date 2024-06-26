@@ -14,6 +14,7 @@ from scipy.optimize import curve_fit
 import glob
 import itertools
 import pandas as pd
+import pynwb
 from pynwb import NWBHDF5IO
 from hdmf_zarr.nwb import NWBZarrIO
 
@@ -187,57 +188,6 @@ def load_Homebrew_fip_data(filenames,  fibers_per_file=2):
 # OR FUNCTION to go from NWB to the traces that we need for batch processing function
 
 #---------------------------------------------------------------------------------------------
-"""
-This function takes in an nwb file and converts it to a 
-dataframe to be processed by batch processing
-"""
-
-def nwb_to_dataframe(nwb_file_path):
-    """
-    Reads time series data from an NWB file, converts it into a dictionary,
-    including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
-    Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
-
-    Parameters:
-    nwb_file_path (str): The path to the NWB file.
-
-    Returns:
-    pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
-    """
-    # Define the list of required substrings
-    required_substrings = ['R_', 'G_', 'Iso_']
-
-    # Open the NWB file
-    with NWBHDF5IO(nwb_file_path, 'r') as io:
-        nwbfile = io.read()
-
-        data_dict = {}
-        timestamps_added = False
-
-        # Iterate over all TimeSeries in the NWB file
-        for key, time_series in nwbfile.acquisition.items():
-            # Check if the key contains any of the required substrings
-            if any(substring in key for substring in required_substrings):
-                # Store only the 'data' part of the TimeSeries
-                data_dict[time_series.name] = time_series.data[:]
-                
-                # Add 'timestamps' field from the first matching key
-                if not timestamps_added:
-                    data_dict['timestamps'] = time_series.timestamps[:]
-                    timestamps_added = True
-
-        # Convert the dictionary to a pandas DataFrame
-        df = pd.DataFrame(data_dict)
-
-        return df
-
-# Example usage
-nwb_file_path = 'path_to_your_nwb_file.nwb'
-time_series_df = nwb_to_dataframe(nwb_file_path)
-print(time_series_df)
-
-#---------------------------------------------------------------------------------------------
-
 
 
 def batch_processing(df_fip, methods=['poly', 'exp']):
@@ -335,7 +285,6 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
                 df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)     
 
             
-
     return df_fip_pp, df_pp_params
 
 
@@ -376,7 +325,7 @@ def nwb_to_dataframe(nwb_file_path):
                 timestamps[key] = (time_series.timestamps[:])
 
         
-            print(f"{key} timestamps", timestamps)
+                print(f"{key} timestamps len", len(timestamps[key]))
 
 
         transformed_data = []
@@ -405,9 +354,66 @@ def nwb_to_dataframe(nwb_file_path):
         return df
 
 #%%
+def is_numeric(obj):
+    '''
+    Check if an array or object is numeric
+    '''
+    attrs = ['__add__', '__sub__', '__mul__', '__truediv__', '__pow__']
+    return all(hasattr(obj, attr) for attr in attrs)
 
+#%%
+def split_fip_traces(df_fip, split_by=['channel', 'fiber_number']):
+    '''
+    split_neural_traces takes in a dataframe with fiber photometry data series and splits it into 
+    individual traces for each channel and each channel number. 
+
+    Parameters
+    ----------
+    df_fip: DataFrame 
+        Time series Dataframe with columns signal, time, channel, and channel number. 
+        Has the signals for variations of channel and channel numbers are mixed together
+
+    Returns
+    ----------
+    dict_fip: dictionary
+        Dictionary that takes in channel name and channel number as key, and time series and signal
+        bundled together as a 2x<TIMESERIES_LEN> as the value
+
+    '''
+    dict_fip = {}        
+    groups = df_fip.groupby(split_by)
+    for group_name, df_group in list(groups):
+        df_group = df_group.sort_values('time_fip')
+        # Transforms integers in the name into int type strings. This is needed because nan in the dataframe entries automatically transform entire columns into float type
+        group_name_string = [str(int(x)) if (is_numeric(x) and x==int(x)) else str(x) for x in group_name]
+        group_string = '_'.join(group_name_string)
+        dict_fip[group_string] = np.vstack([df_group.time_fip.values, df_group.signal.values])
+    return dict_fip
+
+
+
+# %%
+def attach_dict_fip(filename_nwb, dict_fip):
+
+    src_io = NWBZarrIO(filename_nwb, mode='r+')
+    nwb = src_io.read()
+
+    for neural_stream in dict_fip:
+        ts = pynwb.TimeSeries(name = neural_stream + "_preprocessed", data = dict_fip[neural_stream][1], unit = 's', 
+                    timestamps = dict_fip[neural_stream][0])
+        print(ts.data.shape)
+        nwb.add_acquisition(ts)
+    return nwb 
 
 #%%
 df_from_nwb = nwb_to_dataframe("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb")
+
+
+#%%
+df_from_nwb_s = split_fip_traces(df_from_nwb)
+
+#%%
+processed_nwb = attach_dict_fip("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
+
 
 # %%
