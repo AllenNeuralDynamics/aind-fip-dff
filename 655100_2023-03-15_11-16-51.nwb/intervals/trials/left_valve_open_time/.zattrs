@@ -1,7 +1,0 @@
-{
-    "description": "The left valve open time",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "1e233af8-f0b4-413c-804c-1dccefa07fe7",
-    "zarr_dtype": "float"
-}

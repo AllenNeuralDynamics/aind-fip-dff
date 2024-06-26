@@ -16,16 +16,11 @@ import itertools
 import pandas as pd
 import pynwb
 from pynwb import NWBHDF5IO
+import hdmf_zarr.nwb
 from hdmf_zarr.nwb import NWBZarrIO
 
 #%%
-"""
-This capsule should take in an NWB file, 
-check the number of subjects (confirm this),
-check the number of channels,
-check the number of fibers,
-then preprocess the arrays with the dF_F signal
-"""
+
 
 # Preprocessing functions
 #---------------------------------------------------------------------------------------------
@@ -288,6 +283,16 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
     return df_fip_pp, df_pp_params
 
 
+
+
+"""
+    get the following from the nwb:
+    subject_id = "652738" (example)
+    session_id = "2021-06-01_11-00-00" (example)
+    N_assets_per_subject = 1 
+    fibers_per_file = 2
+"""
+
 #%%
 def nwb_to_dataframe(nwb_file_path):
     """
@@ -405,15 +410,9 @@ def attach_dict_fip(filename_nwb, dict_fip):
         nwb.add_acquisition(ts)
     return nwb 
 
-#%%
-df_from_nwb = nwb_to_dataframe("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb")
 
 
-#%%
-df_from_nwb_s = split_fip_traces(df_from_nwb)
-
-#%%
-processed_nwb = attach_dict_fip("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
 
 
-# %%
+
+
