@@ -2,6 +2,6 @@
     "description": "The reward history of right lick port",
     "namespace": "hdmf-common",
     "neurodata_type": "VectorData",
-    "object_id": "356de0e3-ddce-4835-8a9e-c984cfc19dac",
+    "object_id": "8f9d04c8-d062-4118-ba26-4a88cce2b295",
     "zarr_dtype": "bool"
 }

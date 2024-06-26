@@ -2,6 +2,6 @@
     "description": "The wavelength of laser or LED",
     "namespace": "hdmf-common",
     "neurodata_type": "VectorData",
-    "object_id": "dab6cf30-25e7-4f01-a313-367469b9875f",
+    "object_id": "478130eb-03e9-40b8-9ac8-caaa463f4277",
     "zarr_dtype": "int"
 }

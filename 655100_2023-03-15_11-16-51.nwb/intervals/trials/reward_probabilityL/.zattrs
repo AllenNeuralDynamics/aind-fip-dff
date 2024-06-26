@@ -2,6 +2,6 @@
     "description": "The reward probability of left lick port",
     "namespace": "hdmf-common",
     "neurodata_type": "VectorData",
-    "object_id": "7fa5b591-62cc-424d-af02-ac0b62d1900f",
+    "object_id": "04b48a9a-7a9d-4315-b91e-5a822dc08d64",
     "zarr_dtype": "float"
 }

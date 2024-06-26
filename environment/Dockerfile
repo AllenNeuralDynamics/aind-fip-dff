@@ -8,8 +8,6 @@ ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
-
-
 RUN pip3 install -U --no-cache-dir \
     aind-codeocean-api==0.4.2 \
     boto3==1.34.96 \
