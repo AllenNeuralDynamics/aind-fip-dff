@@ -294,7 +294,7 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
 """
 
 #%%
-def nwb_to_dataframe(nwb_file_path):
+def nwb_to_dataframe(nwb):
     """
     Reads time series data from an NWB file, converts it into a dictionary,
     including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
@@ -309,25 +309,19 @@ def nwb_to_dataframe(nwb_file_path):
     # Define the list of required substrings
     required_substrings = ['R_', 'G_', 'Iso_']
 
-    # Open the NWB file -- HD5 version
-    # with NWBHDF5IO(nwb_file_path, 'r') as io:
-    #     nwbfile = io.read()
 
-    with NWBZarrIO(nwb_file_path, 'r+') as io:
-        nwbfile = io.read()
+    data_dict = {}
+    timestamps_added = False
+    timestamps  = {}
 
-        data_dict = {}
-        timestamps_added = False
-        timestamps  = {}
+    # Iterate over all TimeSeries in the NWB file
+    for key, time_series in nwbfile.acquisition.items():
+        # Check if the key contains any of the required substrings
+        if any(substring in key for substring in required_substrings):
+            # Store only the 'data' part of the TimeSeries
+            data_dict[time_series.name] = time_series.data[:]
 
-        # Iterate over all TimeSeries in the NWB file
-        for key, time_series in nwbfile.acquisition.items():
-            # Check if the key contains any of the required substrings
-            if any(substring in key for substring in required_substrings):
-                # Store only the 'data' part of the TimeSeries
-                data_dict[time_series.name] = time_series.data[:]
-
-                timestamps[key] = (time_series.timestamps[:])
+            timestamps[key] = (time_series.timestamps[:])
 
         
 
