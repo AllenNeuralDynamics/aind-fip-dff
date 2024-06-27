@@ -62,7 +62,6 @@ with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
     nwb_file = io.read()
     #%% convert nwb to dataframe
     df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
-    print(df_from_nwb)
 
     #%% add the session column
     filename  = os.path.basename(nwb_file_path)
