@@ -294,14 +294,14 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
 """
 
 #%%
-def nwb_to_dataframe(nwb):
+def nwb_to_dataframe(nwbfile):
     """
     Reads time series data from an NWB file, converts it into a dictionary,
     including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
     Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
 
     Parameters:
-    nwb_file_path (str): The path to the NWB file.
+    nwbfile: NWB zarr file including aligned times
 
     Returns:
     pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
@@ -316,23 +316,15 @@ def nwb_to_dataframe(nwb):
 
     # Iterate over all TimeSeries in the NWB file
     for key, time_series in nwbfile.acquisition.items():
+        print("key, timeseries", key, time_series)
         # Check if the key contains any of the required substrings
         if any(substring in key for substring in required_substrings):
             # Store only the 'data' part of the TimeSeries
             data_dict[time_series.name] = time_series.data[:]
-
             timestamps[key] = (time_series.timestamps[:])
-
-        
-
-
         transformed_data = []
 
         # Transform the data to have a single column for channel names
-
-
-
-
         for channel, data in data_dict.items():  
             channel, fiber_number = channel.split('_')
             for i in range(len(timestamps[channel + '_'+ fiber_number])):
@@ -342,14 +334,11 @@ def nwb_to_dataframe(nwb):
                 'fiber_number': fiber_number,
                 'signal': data[i]
             })
-        
 
-    
+    # Convert the dictionary to a pandas DataFrame
+    df = pd.DataFrame(transformed_data)
 
-        # Convert the dictionary to a pandas DataFrame
-        df = pd.DataFrame(transformed_data)
-
-        return df
+    return df
 
 #%%
 def is_numeric(obj):
@@ -378,7 +367,8 @@ def split_fip_traces(df_fip, split_by=['channel', 'fiber_number']):
         bundled together as a 2x<TIMESERIES_LEN> as the value
 
     '''
-    dict_fip = {}        
+    dict_fip = {}    
+    print("Df_fip", df_fip)    
     groups = df_fip.groupby(split_by)
     for group_name, df_group in list(groups):
         df_group = df_group.sort_values('time_fip')

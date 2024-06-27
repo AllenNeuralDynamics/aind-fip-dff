@@ -36,55 +36,51 @@ then preprocess the arrays with the dF_F signal
 
 
 #%% origin and destination directories for the nwb file
-nwb_original_dir = '../data/'
-nwb_results_dir = '../results/nwb/'
+nwb_original_dir = '/data/'
+nwb_results_dir = '/results/nwb/'
 
 
-#%% 1. copy the original nwb directory from the origin to the destination directory
-nwb_files = glob.glob(os.path.join(nwb_original_dir, '*.nwb'))
+source_pattern = r'/data/nwb/*.nwb'  
+destination_dir = '/results/nwb/'
 
-#%%
-# assuming there's multiple nwb files: copy and update all of them in the dest folder
-for nwb_file in nwb_files:
+# Create the destination directory if it doesn't exist
+os.makedirs(destination_dir, exist_ok=True)
 
-    #join directory and the name of the nwb file then copy the origin --> destination
-    destination_path = os.path.join(nwb_results_dir, os.path.basename(nwb_file))
-    
-    # Check if it's a file or directory
-    if os.path.isdir(nwb_file):
-        shutil.copytree(nwb_file, destination_path)
-    else:
-        # Create a directory for the file
-        os.makedirs(destination_path, exist_ok=True)
-        shutil.copy(nwb_file, destination_path)
+# Find all files matching the source pattern
+source_paths = glob.glob(source_pattern)
 
+# Copy each matching file to the destination directory
+for source_path in source_paths:
+    destination_path = os.path.join(destination_dir, os.path.basename(source_path))
+    shutil.copytree(source_path, destination_path)
     # Update path to the NWB file within the copied directory
     nwb_file_path = destination_path
 
-    # Print the path to ensure correctness
-    print(f"Processing NWB file: {nwb_file_path}")
+# Print the path to ensure correctness
+print(f"Processing NWB file: {nwb_file_path}")
 
-    with NWBZarrIO(nwb_file_path, 'r+') as io:
-        nwbfile = io.read()
-        #%% convert nwb to dataframe
-        df_from_nwb = nwp.nwb_to_dataframe(nwb_file)
+with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
+    nwb_file = io.read()
+    #%% convert nwb to dataframe
+    df_from_nwb = nwp.nwb_to_dataframe(nwb_file)
+    print(df_from_nwb)
 
-        #%% add the session column
-        filename  = os.path.basename(nwb_file)
-        session_name = filename.split('.')[0]
-        df_from_nwb.insert(0, 'session', session_name)
+    #%% add the session column
+    filename  = os.path.basename(nwb_file_path)
+    session_name = filename.split('.')[0]
+    df_from_nwb.insert(0, 'session', session_name)
 
-        #%% now pass the dataframe through the preprocessing function:
-        df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
+    #%% now pass the dataframe through the preprocessing function:
+    df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
 
-        #%% Step to allow for proper conversion to nwb 
-        df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
+    #%% Step to allow for proper conversion to nwb 
+    df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
 
-        #%% format the processed traces and add them to the original nwb
-        processed_nwb = nwp.attach_dict_fip(nwb_file,df_from_nwb_s)
+    #%% format the processed traces and add them to the original nwb
+    nwb_file = nwp.attach_dict_fip(nwb_file,df_from_nwb_s)
 
-        io.write(processed_nwb)
-        print('Succesfully updated the nwb with preprocessed data')
+    io.write(nwb_file)
+    print('Succesfully updated the nwb with preprocessed data')
 
 
 
