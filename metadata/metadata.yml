@@ -4,6 +4,6 @@ description: This Capsule takes in an nwb file and runs it through a preprocessi
   function and outputs the preprocessed signal along with metrics and session details
   back to the nwb file.
 authors:
-- name: AIND
 - name: Brian Gitahi
 - name: Stefano Recanatesi
+- name: Ahad Bawany
