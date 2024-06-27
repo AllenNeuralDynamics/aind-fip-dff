@@ -65,7 +65,9 @@ with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
     df_from_nwb.insert(0, 'session', session_name)
 
     #%% now pass the dataframe through the preprocessing function:
-    df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
+    df_fip_pp_nwb, df_PP_params = nwp.batch_processing_new(df_fip=df_from_nwb)
+
+    #df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
 
     #%% Step to allow for proper conversion to nwb 
     df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
