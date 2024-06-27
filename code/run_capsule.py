@@ -20,9 +20,9 @@ import shutil
 
 from datetime import datetime
 from pynwb import NWBHDF5IO, NWBFile
-import hdmf_zarr.nwb
-from hdmf_zarr.nwb import NWBZarrIO
-import new_preprocess as nwp
+from hdmf_zarr import NWBZarrIO
+import utils.new_preprocess as nwp
+import utils.nwb_dict_utils as nwb_utils
 
 
 """
@@ -61,22 +61,23 @@ print(f"Processing NWB file: {nwb_file_path}")
 with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
     nwb_file = io.read()
     #%% convert nwb to dataframe
-    df_from_nwb = nwp.nwb_to_dataframe(nwb_file)
+    df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
     print(df_from_nwb)
 
     #%% add the session column
     filename  = os.path.basename(nwb_file_path)
     session_name = filename.split('.')[0]
+    session_name = session_name.split("FIP_")[1]
     df_from_nwb.insert(0, 'session', session_name)
 
     #%% now pass the dataframe through the preprocessing function:
     df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
 
     #%% Step to allow for proper conversion to nwb 
-    df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
+    df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
 
     #%% format the processed traces and add them to the original nwb
-    nwb_file = nwp.attach_dict_fip(nwb_file,df_from_nwb_s)
+    nwb_file = nwb_utils.attach_dict_fip(nwb_file,df_from_nwb_s)
 
     io.write(nwb_file)
     print('Succesfully updated the nwb with preprocessed data')
