@@ -1,0 +1,7 @@
+{
+    "description": "The beta of exponential distribution to generate the ITI duration(s)",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "e9fcd17c-d496-4b17-894e-384b75a41c6e",
+    "zarr_dtype": "float"
+}

@@ -1,0 +1,7 @@
+{
+    "description": "Laser start is aligned to an event",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "5b287206-ddd1-40b5-b2db-af90847c1d52",
+    "zarr_dtype": "int"
+}

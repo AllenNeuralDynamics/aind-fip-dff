@@ -1,0 +1,7 @@
+{
+    "description": "The pulse duration for Pulse protocol",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "83c7640a-6095-491e-9682-a6103c9a2473",
+    "zarr_dtype": "int"
+}

@@ -17,9 +17,10 @@ from scipy.optimize import curve_fit
 import glob
 import itertools
 import pandas as pd
+import shutil
 
-
-from pynwb import NWBHDF5IO
+from datetime import datetime
+from pynwb import NWBHDF5IO, NWBFile
 import hdmf_zarr.nwb
 from hdmf_zarr.nwb import NWBZarrIO
 import new_preprocess as nwp
@@ -34,20 +35,21 @@ then preprocess the arrays with the dF_F signal
 """
 
 
-#%% 1. Create preprocessed df using old functions for comparison with new version
+#%% origin and destination directories for the nwb file
+nwb_original_dir = '../data/'
+nwb_results_dir = '../results/nwb/'
 
-AnalDir = '../trial_data/700708_2024-06-14_08-38-31/'
 
-# define the files with the traces from each of the channels
-filenames = []
-for name in ['FIP_DataG', 'FIP_DataR', 'FIP_DataIso']:
-    if bool(glob.glob(AnalDir + os.sep +  "**" + os.sep + name +'*',recursive=True)) == True:
-        filenames.extend(glob.glob(AnalDir + os.sep + "**" + os.sep + name +'*', recursive=True)) 
+#%% 1. copy the original nwb directory from the origin to the destination directory
+nwb_files = glob.glob(os.path.join(nwb_original_dir, '*.nwb'))
 
-# create the df for input to the batch preprocessing function and then preprocess it
-df_fip_ses = nwp.load_Homebrew_fip_data(filenames=filenames)
-df_fip_pp, df_PP_params = nwp.batch_processing(df_fip=df_fip_ses)
+#%%
+# assuming there's multiple nwb files: copy all of them to the dest folder
+for nwb_file in nwb_files:
+    shutil.copytree(nwb_file, nwb_results_dir)
 
+#%%
+nwb_files_results = glob.glob(os.path.join(nwb_results_dir, '*.nwb'))
 
 
 #%% 2. Test the new NWBfunction: convert nwb to dataframe
@@ -82,18 +84,31 @@ df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
 
 #%%  then pass the preprocessed data back to the nwb file
 try:
-    processed_nwb = nwp.attach_dict_fip("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/data/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
+    processed_nwb = nwp.attach_dict_fip("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
 except Exception:
     processed_nwb = nwp.attach_dict_fip("../data/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
+
+
+
+#%% Create a new NWB file and copy data from the processed NWB
+new_nwb = NWBFile(session_description='Processed session',
+                  identifier='NWB123',
+                  session_start_time=datetime.now().astimezone())
+
+# Copy data from processed_nwb to new_nwb
+for item in processed_nwb.acquisition.values():
+    new_nwb.add_acquisition(item)
 
 
 #%%
 # POST THE NWB TO THE RESULTS HERE -- fix this
 # Define the new file path
-results_path= "../results/655100_2023-03-15_11-16-51_processed.nwb"
+results_path= "../results/"
 
 
 # Write the updated NWB file to the new location
 with NWBZarrIO(results_path, mode='w') as io:
-    io.write(processed_nwb)
+    io.write(new_nwb)
+
+
 

@@ -1,0 +1,7 @@
+{
+    "description": "The duration for the animal to consume the reward",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "5b0b61c6-df2d-4173-bb8a-0b0b88fafbfa",
+    "zarr_dtype": "float"
+}

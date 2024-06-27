@@ -1,0 +1,7 @@
+{
+    "comments": "no comments",
+    "description": "Optogenetics time (from Harp)",
+    "namespace": "core",
+    "neurodata_type": "TimeSeries",
+    "object_id": "e9e6484b-21be-414a-81b2-0b8c6e84f387"
+}

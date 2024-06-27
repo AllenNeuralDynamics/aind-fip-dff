@@ -1,0 +1,7 @@
+{
+    "description": "The delay start time",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "74dfe3fc-1170-48e4-b047-fe8620467b24",
+    "zarr_dtype": "float"
+}
