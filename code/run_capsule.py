@@ -46,69 +46,32 @@ nwb_files = glob.glob(os.path.join(nwb_original_dir, '*.nwb'))
 #%%
 # assuming there's multiple nwb files: copy all of them to the dest folder
 for nwb_file in nwb_files:
-    shutil.copytree(nwb_file, nwb_results_dir)
+    #join directory and the name of the nwb file then copy the origin --> destination
+    destination_path = os.path.join(nwb_results_dir, os.path.basename(nwb_file))
+    shutil.copytree(nwb_file, destination_path)
 
-#%%
-nwb_files_results = glob.glob(os.path.join(nwb_results_dir, '*.nwb'))
+    #%% convert nwb to dataframe
+    df_from_nwb = nwp.nwb_to_dataframe(destination_path)
 
+    #%% add the session column
+    filename  = os.path.basename(nwb_file)
+    session_name = filename.split('.')[0]
+    df_from_nwb.insert(0, 'session', session_name)
 
-#%% 2. Test the new NWBfunction: convert nwb to dataframe
+    #%% now pass the dataframe through the preprocessing function:
+    df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
 
-try:
-    nwb_path = "/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/data/655100_2023-03-15_11-16-51.nwb"
-    df_from_nwb = nwp.nwb_to_dataframe(nwb_path)
-    print("loaded nwb file from local path")
-except Exception:
-    nwb_path = "../data/655100_2023-03-15_11-16-51.nwb"
-    df_from_nwb = nwp.nwb_to_dataframe(nwb_path)
-    print("loaded nwb file from alternate path")
+    #%% Step to allow for proper conversion to nwb 
+    df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
 
-#%%
-# Use regex to find the session name
-match = re.search(r'(\d{6}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.nwb', nwb_path)
-if match:
-    session_name = match.group(1)
-    print("Session name:", session_name)
-else:
-    print("Session name not found")
-#%%
-# add the session column
-df_from_nwb.insert(0, 'session', session_name)
+    #%% format the processed traces and add them to the original nwb
+    processed_nwb = nwp.attach_dict_fip(destination_path,df_from_nwb_s)
 
-#%% now pass the dataframe through the preprocessing function:
-df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
+    #%% then save the updated nwb in the results folder
+    with NWBZarrIO(destination_path, mode='r+') as io:
+        io.write(processed_nwb)
+        print('Succesfully updated the nwb with preprocessed data')
 
-
-#%% Step to allow for proper conversion to nwb 
-df_from_nwb_s = nwp.split_fip_traces(df_fip_pp_nwb)
-
-#%%  then pass the preprocessed data back to the nwb file
-try:
-    processed_nwb = nwp.attach_dict_fip("/Users/brian.gitahi/Desktop/AIND/FIP/Git/aind-fip-dff/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
-except Exception:
-    processed_nwb = nwp.attach_dict_fip("../data/655100_2023-03-15_11-16-51.nwb",df_from_nwb_s)
-
-
-
-#%% Create a new NWB file and copy data from the processed NWB
-new_nwb = NWBFile(session_description='Processed session',
-                  identifier='NWB123',
-                  session_start_time=datetime.now().astimezone())
-
-# Copy data from processed_nwb to new_nwb
-for item in processed_nwb.acquisition.values():
-    new_nwb.add_acquisition(item)
-
-
-#%%
-# POST THE NWB TO THE RESULTS HERE -- fix this
-# Define the new file path
-results_path= "../results/"
-
-
-# Write the updated NWB file to the new location
-with NWBZarrIO(results_path, mode='w') as io:
-    io.write(new_nwb)
 
 
 
