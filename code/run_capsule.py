@@ -7,7 +7,6 @@ import itertools
 #from pynwb import NWBHDF5IO
 from pathlib import Path
 import glob
-#import util_download as util_dl
 import re
 import argparse
 import os
