@@ -1,0 +1,7 @@
+{
+    "description": "Whether the auto training stage is overridden",
+    "namespace": "hdmf-common",
+    "neurodata_type": "VectorData",
+    "object_id": "4eec0ada-afa8-4186-aad6-f5293c7aa596",
+    "zarr_dtype": "float"
+}

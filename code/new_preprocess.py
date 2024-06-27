@@ -313,7 +313,7 @@ def nwb_to_dataframe(nwb_file_path):
     # with NWBHDF5IO(nwb_file_path, 'r') as io:
     #     nwbfile = io.read()
 
-    with NWBZarrIO(nwb_file_path, 'r') as io:
+    with NWBZarrIO(nwb_file_path, 'r+') as io:
         nwbfile = io.read()
 
         data_dict = {}
@@ -330,14 +330,13 @@ def nwb_to_dataframe(nwb_file_path):
                 timestamps[key] = (time_series.timestamps[:])
 
         
-                print(f"{key} timestamps len", len(timestamps[key]))
 
 
         transformed_data = []
 
         # Transform the data to have a single column for channel names
 
-        print(data_dict)
+
 
 
         for channel, data in data_dict.items():  
@@ -349,7 +348,7 @@ def nwb_to_dataframe(nwb_file_path):
                 'fiber_number': fiber_number,
                 'signal': data[i]
             })
-            print("data",len(data))
+        
 
     
 
@@ -412,7 +411,21 @@ def attach_dict_fip(filename_nwb, dict_fip):
 
 
 
+# Function to get the preprocessed (pp) dataframe without the nwb generation
+# -- used to check if the new method is working
+def gen_pp_df_old_version(AnalDir='../trial_data/700708_2024-06-14_08-38-31/'):
+   
+    # define the files with the traces from each of the channels
+    filenames = []
+    for name in ['FIP_DataG', 'FIP_DataR', 'FIP_DataIso']:
+        if bool(glob.glob(AnalDir + os.sep +  "**" + os.sep + name +'*',recursive=True)) == True:
+            filenames.extend(glob.glob(AnalDir + os.sep + "**" + os.sep + name +'*', recursive=True)) 
 
+    # create the df for input to the batch preprocessing function and then preprocess it
+    df_fip_ses = load_Homebrew_fip_data(filenames=filenames)
+    df_fip_pp, df_PP_params = batch_processing(df_fip=df_fip_ses)
+
+    return df_fip_ses, df_fip_pp, df_PP_params
 
 
 
