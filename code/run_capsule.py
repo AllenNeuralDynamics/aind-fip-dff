@@ -34,11 +34,6 @@ then preprocess the arrays with the dF_F signal
 """
 
 
-#%% origin and destination directories for the nwb file
-nwb_original_dir = '/data/'
-nwb_results_dir = '/results/nwb/'
-
-
 source_pattern = r'/data/nwb/*.nwb'  
 destination_dir = '/results/nwb/'
 
