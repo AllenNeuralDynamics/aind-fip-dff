@@ -391,10 +391,7 @@ def split_fip_traces(df_fip, split_by=['channel', 'fiber_number']):
 
 
 # %%
-def attach_dict_fip(filename_nwb, dict_fip):
-
-    src_io = NWBZarrIO(filename_nwb, mode='r+')
-    nwb = src_io.read()
+def attach_dict_fip(nwb, dict_fip):
 
     for neural_stream in dict_fip:
         ts = pynwb.TimeSeries(name = neural_stream + "_preprocessed", data = dict_fip[neural_stream][1], unit = 's', 
