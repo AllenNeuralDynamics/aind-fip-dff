@@ -66,10 +66,10 @@ for source_path in source_paths:
             filename  = os.path.basename(nwb_file_path)
             if "Behavior" in filename:
                 session_name = filename.split('.')[0]
-                session_name = session_name.split("Behavior_")
+                session_name = session_name.split("Behavior_")[1]
             else:
                 session_name = filename.split('.')[0]
-                session_name = session_name.split("FIP_")            
+                session_name = session_name.split("FIP_")[1]
 
             df_from_nwb.insert(0, 'session', session_name)
 
