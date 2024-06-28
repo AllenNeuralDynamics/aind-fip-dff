@@ -64,9 +64,9 @@ for source_path in source_paths:
 
             #%% add the session column
             filename  = os.path.basename(nwb_file_path)
-            if "Behavior" in filename:
+            if "behavior" in filename:
                 session_name = filename.split('.')[0]
-                session_name = session_name.split("Behavior_")[1]
+                session_name = session_name.split("behavior_")[1]
             else:
                 session_name = filename.split('.')[0]
                 session_name = session_name.split("FIP_")[1]
