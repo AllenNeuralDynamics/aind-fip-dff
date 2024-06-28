@@ -36,6 +36,8 @@ then preprocess the arrays with the dF_F signal
 
 source_pattern = r'/data/nwb/*.nwb'  
 destination_dir = '/results/nwb/'
+fiber_path = '/data/fiber_raw_data' 
+
 
 # Create the destination directory if it doesn't exist
 os.makedirs(destination_dir, exist_ok=True)
@@ -49,35 +51,36 @@ for source_path in source_paths:
     shutil.copytree(source_path, destination_path)
     # Update path to the NWB file within the copied directory
     nwb_file_path = destination_path
+    
+    if os.path.isdir(os.path.join(fiber_path, "FIP")) or os.path.isdir(os.path.join(fiber_path, "fib")):
 
+        # Print the path to ensure correctness
+        print(f"Processing NWB file: {nwb_file_path}")
 
-    # Print the path to ensure correctness
-    print(f"Processing NWB file: {nwb_file_path}")
+        with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
+            nwb_file = io.read()
+            #%% convert nwb to dataframe
+            df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
 
-    with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
-        nwb_file = io.read()
-        #%% convert nwb to dataframe
-        df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
+            #%% add the session column
+            filename  = os.path.basename(nwb_file_path)
+            session_name = filename.split('.')[0]
+            session_name = session_name.split("FIP_")[1]
+            df_from_nwb.insert(0, 'session', session_name)
 
-        #%% add the session column
-        filename  = os.path.basename(nwb_file_path)
-        session_name = filename.split('.')[0]
-        session_name = session_name.split("FIP_")[1]
-        df_from_nwb.insert(0, 'session', session_name)
+            #%% now pass the dataframe through the preprocessing function:
+            df_fip_pp_nwb, df_PP_params = nwp.batch_processing_new(df_fip=df_from_nwb)
 
-        #%% now pass the dataframe through the preprocessing function:
-        df_fip_pp_nwb, df_PP_params = nwp.batch_processing_new(df_fip=df_from_nwb)
+            #df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
 
-        #df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
+            #%% Step to allow for proper conversion to nwb 
+            df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
 
-        #%% Step to allow for proper conversion to nwb 
-        df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
+            #%% format the processed traces and add them to the original nwb
+            nwb_file = nwb_utils.attach_dict_fip(nwb_file,df_from_nwb_s)
 
-        #%% format the processed traces and add them to the original nwb
-        nwb_file = nwb_utils.attach_dict_fip(nwb_file,df_from_nwb_s)
-
-        io.write(nwb_file)
-        print('Succesfully updated the nwb with preprocessed data')
+            io.write(nwb_file)
+            print('Succesfully updated the nwb with preprocessed data')
 
 
 
