@@ -98,7 +98,7 @@ for source_path in source_paths:
                 dest_file = os.path.join(dest_directory, filename)
 
                 # Move the file
-                shutil.move(src_file, dest_file)
+                shutil.copy2(src_file, dest_file)
                 print(f"Moved: {src_file} to {dest_file}")
                 print('Succesfully updated the nwb with preprocessed data')
 
