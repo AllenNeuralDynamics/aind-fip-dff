@@ -85,7 +85,22 @@ for source_path in source_paths:
             nwb_file = nwb_utils.attach_dict_fip(nwb_file,df_from_nwb_s)
 
             io.write(nwb_file)
-            print('Succesfully updated the nwb with preprocessed data')
+
+
+        src_directory = '/data/fiber_raw_data/'
+        dest_directory = '/results/'
+
+        # Iterate over all files in the source directory
+        for filename in os.listdir(src_directory):
+            if filename.endswith('.json'):
+                # Construct full file path
+                src_file = os.path.join(src_directory, filename)
+                dest_file = os.path.join(dest_directory, filename)
+
+                # Move the file
+                shutil.move(src_file, dest_file)
+                print(f"Moved: {src_file} to {dest_file}")
+                print('Succesfully updated the nwb with preprocessed data')
 
 
 
