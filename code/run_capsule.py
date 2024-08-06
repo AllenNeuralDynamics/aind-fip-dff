@@ -1,4 +1,4 @@
-#%%
+# %%
 import glob
 import os
 import shutil
@@ -18,8 +18,8 @@ then preprocess the arrays with the dF_F signal
 """
 
 
-source_pattern = r'/data/nwb/*.nwb'  
-destination_dir = '/results/nwb/'
+source_pattern = r"/data/nwb/*.nwb"
+destination_dir = "/results/nwb/"
 
 
 # Create the destination directory if it doesn't exist
@@ -38,31 +38,29 @@ for source_path in source_paths:
     # Print the path to ensure correctness
     print(f"Processing NWB file: {nwb_file_path}")
 
-    with NWBZarrIO(path=str(nwb_file_path), mode='r+') as io:
+    with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
         nwb_file = io.read()
-        #%% convert nwb to dataframe
+        # convert nwb to dataframe
         df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
-        #%% add the session column
-        filename  = os.path.basename(nwb_file_path)
+        # add the session column
+        filename = os.path.basename(nwb_file_path)
         if "behavior" in filename:
-            session_name = filename.split('.')[0]
+            session_name = filename.split(".")[0]
             session_name = session_name.split("behavior_")[1]
         else:
-            session_name = filename.split('.')[0]
+            session_name = filename.split(".")[0]
             session_name = session_name.split("FIP_")[1]
 
-        df_from_nwb.insert(0, 'session', session_name)
+        df_from_nwb.insert(0, "session", session_name)
 
-        #%% now pass the dataframe through the preprocessing function:
+        # now pass the dataframe through the preprocessing function:
         df_fip_pp_nwb, df_PP_params = nwp.batch_processing_new(df_fip=df_from_nwb)
 
-        #df_fip_pp_nwb, df_PP_params = nwp.batch_processing(df_fip=df_from_nwb)
-
-        #%% Step to allow for proper conversion to nwb 
+        # Step to allow for proper conversion to nwb
         df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
 
-        #%% format the processed traces and add them to the original nwb
-        nwb_file = nwb_utils.attach_dict_fip(nwb_file,df_from_nwb_s)
+        # format the processed traces and add them to the original nwb
+        nwb_file = nwb_utils.attach_dict_fip(nwb_file, df_from_nwb_s)
 
         io.write(nwb_file)
-        print('Succesfully updated the nwb with preprocessed data')
+        print("Successfully updated the nwb with preprocessed data")
