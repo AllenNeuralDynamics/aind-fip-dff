@@ -1,29 +1,13 @@
-
 #%%
-import os
-import pandas as pd
-import numpy as np
-import itertools
-#from pynwb import NWBHDF5IO
-from pathlib import Path
 import glob
-import re
-import argparse
 import os
-import numpy as  np
-from scipy.signal import medfilt, butter, filtfilt
-from scipy.optimize import curve_fit
-import glob
-import itertools
-import pandas as pd
 import shutil
 
-from datetime import datetime
-from pynwb import NWBHDF5IO, NWBFile
 from hdmf_zarr import NWBZarrIO
+from pynwb import NWBHDF5IO
+
 import utils.new_preprocess as nwp
 import utils.nwb_dict_utils as nwb_utils
-
 
 """
 This capsule should take in an NWB file, 

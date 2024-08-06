@@ -1,23 +1,18 @@
 #%%
-import os
-import pandas as pd
-import numpy as np
-import itertools
-from pathlib import Path
 import glob
+import itertools
+import os
 import re
-import argparse
-import os
-import numpy as  np
-from scipy.signal import medfilt, butter, filtfilt
-from scipy.optimize import curve_fit
-import glob
-import itertools
+
+import numpy as np
 import pandas as pd
-import pynwb
-from pynwb import NWBHDF5IO
-import hdmf_zarr.nwb
+from aind_ophys_utils.signal_utils import noise_std
 from hdmf_zarr.nwb import NWBZarrIO
+from pynwb import NWBHDF5IO
+from scipy.optimize import curve_fit, minimize
+from scipy.signal import butter, filtfilt, medfilt
+from statsmodels.robust import scale
+from statsmodels.robust.norms import HuberT, TukeyBiweight
 
 #%%
 
@@ -76,15 +71,108 @@ def tc_expfit(tc, sampling_rate=20):
     tc_exp = func(time_seconds, popt[0], popt[1], popt[2], popt[3])
     return tc_exp, popt
 
+
+# Biphasic exponential decay  x  increasing saturating exponential
+def baseline(b_inf, b_slow=0, b_fast=0, b_bright=0, t_slow=np.inf, t_fast=np.inf, t_bright=np.inf, T=70000, fs=20):
+    tmp = -np.arange(T)
+    return  b_inf*(1 + b_slow*np.exp(tmp/(t_slow*fs)) + b_fast*np.exp(tmp/(t_fast*fs))) * \
+                    (1 - b_bright*np.exp(tmp/(t_bright*fs)))
+
+def fit_trace(trace, fs=20):
+    def optimize_t_fast(trace):
+        def objective(params):
+            return np.sum((trace-baseline(b_inf=params[0], b_fast=params[1], t_fast=params[2], T=len(trace), fs=fs))**2)
+        return minimize(objective, (1,1,1),
+                        bounds=[(0,np.inf), (0,np.inf), (1,np.inf)],
+                        method="Nelder-Mead", options={'maxiter': 1000})
+
+    def optimize(trace, x0, ds=1, maxiter=20000):
+        T = len(trace)
+        trace_ds = trace[:T//ds*ds].reshape(-1,ds).mean(1)
+        def objective(params):
+            return np.sum((trace_ds-baseline(*params, T=len(trace_ds), fs=fs/ds))**2)
+        return minimize(objective, x0,
+                        bounds=[(0,np.inf), (0,np.inf), (0,np.inf), (0,np.inf), (1,np.inf), (1/ds,np.inf), (1,np.inf)],
+                        method="Nelder-Mead", options={'maxiter': maxiter})       
+    
+    # optimize t_fast on initial frames 
+    t_fast = optimize_t_fast(trace[:2000]).x[2]
+    # optimize on downsampled data to get good initial estimates quickly
+    res100 = optimize(trace, (trace[-1000:].mean(), .2, .1, .15, 2000, t_fast, 1000.), 100, 2000)
+    res10 = optimize(trace, res100.x, 10, 1000)
+    # optimize on full data
+    res = optimize(trace, res10.x)
+    x = res.x
+    if np.allclose(x[3], 0): # no brightening
+        x[-1] = np.inf
+        x[3] = 0
+    if np.allclose(x[2], 0): # no fast decay
+        x[-2] = np.inf
+        x[2] = 0
+    if x[-2] > x[-3]: # swap t_slow and t_fast if optimization returns t_fast > t_slow
+        x[1], x[2], x[-2], x[-3] = x[2], x[1], x[-3], x[-2]
+    return x, res.fun, res.success
+
+# see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
+# Good options seem to be 
+# M=TukeyBiweight(2), scale_est="mad"
+# M=TukeyBiweight(3), scale_est="welch"
+# M=HuberT(.5), scale_est="welch"
+def fit_trace_robust(trace, fs=20, M=HuberT(.5), maxiter=20, tol=1e-5, update_scale=True, asymmetric=True, scale_est='welch'):
+    def optimize_robust(trace, x0, weights):
+        T = len(trace)
+        def objective(params):
+            return np.sum(weights * (trace-baseline(*params, T=T, fs=fs))**2)
+        return minimize(objective, x0,
+                        bounds=[(0,np.inf), (0,np.inf), (0,np.inf), (0,np.inf), (1,np.inf), (1,np.inf), (1,np.inf)])
+    
+    # init with OLS fit 
+    params = fit_trace(trace)[0]
+    f0 = baseline(*params, T=len(trace), fs=fs)
+    resid = trace - f0
+    scl = scale.mad(resid, center=0) if scale_est=='mad' else noise_std(resid, method='welch')
+    deviance = M(resid / scl).sum()
+    
+    iteration = 1
+    converged = False
+    while not converged:
+        if scl == 0.0:
+            import warnings
+            warnings.warn('Estimated scale is 0.0 indicating that the most'
+                          ' last iteration produced a perfect fit of the '
+                          'weighted data.')
+            break
+        weights = M.weights(resid / scl)
+        if asymmetric:
+            weights[resid<0] = 1
+        wls_results = optimize_robust(trace, params, weights)
+        params = wls_results.x
+        f0 = baseline(*params, T=len(trace), fs=fs)
+        resid = trace - f0
+        if update_scale is True:
+            scl = scale.mad(resid, center=0) if scale_est=='mad' else noise_std(resid, method='welch')
+        dev_pre = deviance
+        deviance= M(resid / scl).sum()
+        iteration += 1
+        converged = (iteration >= maxiter or np.abs(deviance-dev_pre) < tol)
+    
+    return params, wls_results.fun, wls_results.success
+
+def tc_brightfit(tc, sampling_rate=20, robust=True):
+    # Fit with  Biphasic exponential decay  x  increasing saturating exponential
+    popt, tc_bright, success = fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
+    return tc_bright, popt
+
+
 # Preprocessing total function
-def chunk_processing(tc, method = 'poly', nFrame2cut=100, kernelSize=1, sampling_rate=20, degree=4, b_percentile=0.7):
+def chunk_processing(tc, method = 'poly', nFrame2cut=100, kernelSize=1, sampling_rate=20, degree=4, b_percentile=0.7, robust=True):
     """
     Preprocesses the fiber photometry signal.
     Args:
         tc: np.array
             Fiber photometry signal
         method: str
-            Method to preprocess the data. Options: poly, exp
+            Method to preprocess the data. Options: poly, exp, bright
         nFrame2cut: int
             Number of frames to crop from the beginning of the signal
         kernelSize: int
@@ -95,6 +183,8 @@ def chunk_processing(tc, method = 'poly', nFrame2cut=100, kernelSize=1, sampling
             Degree of the polynomial to fit
         b_percentile: float
             Percentile to calculate the baseline
+        robust: bool
+            Whether to fit baseline using robust regression using IRLS (only 'bright' method)
     Returns:
         tc_dFoF: np.array
             Preprocessed fiber photometry signal
@@ -108,10 +198,14 @@ def chunk_processing(tc, method = 'poly', nFrame2cut=100, kernelSize=1, sampling
     if method == 'poly':
         tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
     if method == 'exp':
-        tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)           
-    tc_estim = tc_filtered - tc_fit # 
-    tc_base = tc_slidingbase(tc_filtered, sampling_rate)
-    tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)    
+        tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
+    if method == 'bright':
+        tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
+        tc_dFoF = tc_filtered / tc_fit - 1
+    else:
+        tc_estim = tc_filtered - tc_fit 
+        tc_base = tc_slidingbase(tc_filtered, sampling_rate)
+        tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)    
     tc_dFoF = tc_filling(tc_dFoF, nFrame2cut)    
     tc_params = {i_coef:tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
     tc_qualitymetrics = {'QC_metric':np.nan}    
@@ -209,6 +303,7 @@ def batch_processing(df_fip, methods=['poly', 'exp']):
                 try:      
                     NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
                 except:
+                    print(f"Processing with method {pp_name} failed. Continuing...")
                     continue                                       
                 df_fip_iter.loc[:,'signal'] = NM_preprocessed                            
                 df_fip_iter.loc[:,'preprocess'] = pp_name
@@ -246,7 +341,7 @@ def batch_processing(df_fip, methods=['poly', 'exp']):
 
 # so we want to access traces: 
 
-def batch_processing_new(df_fip, methods=['poly', 'exp']):
+def batch_processing_new(df_fip, methods=['poly', 'exp', 'bright']):
     df_fip_pp = pd.DataFrame()    
     df_pp_params = pd.DataFrame() 
     
@@ -260,7 +355,7 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
     channels = pd.unique(df_fip['channel']) # ['G', 'R', 'Iso']    
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:     
-        if pp_name in ['poly', 'exp']:   
+        if pp_name in ['poly', 'exp', 'bright']:   
             for i_iter, (channel, fiber_number, session) in enumerate(itertools.product(channels, fiber_numbers, sessions)):            
                 df_fip_iter = df_fip[(df_fip['session']==session) & (df_fip['fiber_number']==fiber_number) & (df_fip['channel']==channel)]        
                 if len(df_fip_iter) == 0:
@@ -270,6 +365,7 @@ def batch_processing_new(df_fip, methods=['poly', 'exp']):
                 try:      
                     NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
                 except:
+                    print(f"Processing with method {pp_name} failed. Continuing...")
                     continue                                       
                 df_fip_iter.loc[:,'signal'] = NM_preprocessed                            
                 df_fip_iter.loc[:,'preprocess'] = pp_name
@@ -298,6 +394,3 @@ def gen_pp_df_old_version(AnalDir='../trial_data/700708_2024-06-14_08-38-31/'):
     df_fip_pp, df_PP_params = batch_processing(df_fip=df_fip_ses)
 
     return df_fip_ses, df_fip_pp, df_PP_params
-
-
-
