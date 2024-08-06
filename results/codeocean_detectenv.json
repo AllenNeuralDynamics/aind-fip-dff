@@ -952,10 +952,6 @@
                 "version": "4.5"
             },
             {
-                "name": "aind-codeocean-api",
-                "version": "0.4.2"
-            },
-            {
                 "name": "aind-ophys-utils",
                 "version": "0.0.7"
             },
@@ -970,10 +966,6 @@
             {
                 "name": "alsa-lib",
                 "version": "1.2.9"
-            },
-            {
-                "name": "annotated-types",
-                "version": "0.7.0"
             },
             {
                 "name": "anyio",
@@ -1004,6 +996,10 @@
                 "version": "23.1.0"
             },
             {
+                "name": "autopep8",
+                "version": "2.3.1"
+            },
+            {
                 "name": "babel",
                 "version": "2.12.1"
             },
@@ -1024,16 +1020,12 @@
                 "version": "4.12.2"
             },
             {
+                "name": "black",
+                "version": "24.8.0"
+            },
+            {
                 "name": "bleach",
                 "version": "6.0.0"
-            },
-            {
-                "name": "boto3",
-                "version": "1.34.96"
-            },
-            {
-                "name": "botocore",
-                "version": "1.34.154"
             },
             {
                 "name": "brotli-python",
@@ -1068,6 +1060,10 @@
                 "version": "3.2.0"
             },
             {
+                "name": "click",
+                "version": "8.1.7"
+            },
+            {
                 "name": "colorama",
                 "version": "0.4.6"
             },
@@ -1088,16 +1084,8 @@
                 "version": "0.8.0"
             },
             {
-                "name": "contourpy",
-                "version": "1.2.1"
-            },
-            {
                 "name": "cryptography",
                 "version": "41.0.2"
-            },
-            {
-                "name": "cycler",
-                "version": "0.12.1"
             },
             {
                 "name": "dbus",
@@ -1140,6 +1128,10 @@
                 "version": "3.13.1"
             },
             {
+                "name": "flake8",
+                "version": "7.1.1"
+            },
+            {
                 "name": "flit-core",
                 "version": "3.9.0"
             },
@@ -1174,10 +1166,6 @@
             {
                 "name": "fonts-conda-forge",
                 "version": "1"
-            },
-            {
-                "name": "fonttools",
-                "version": "4.53.1"
             },
             {
                 "name": "freetype",
@@ -1272,24 +1260,12 @@
                 "version": "8.0.7"
             },
             {
-                "name": "isort",
-                "version": "5.13.2"
-            },
-            {
                 "name": "jedi",
                 "version": "0.18.2"
             },
             {
                 "name": "jinja2",
                 "version": "3.1.2"
-            },
-            {
-                "name": "jmespath",
-                "version": "1.0.1"
-            },
-            {
-                "name": "joblib",
-                "version": "1.4.2"
             },
             {
                 "name": "json5",
@@ -1362,10 +1338,6 @@
             {
                 "name": "keyutils",
                 "version": "1.6.1"
-            },
-            {
-                "name": "kiwisolver",
-                "version": "1.4.5"
             },
             {
                 "name": "krb5",
@@ -1560,12 +1532,12 @@
                 "version": "2.1.3"
             },
             {
-                "name": "matplotlib",
-                "version": "3.9.0"
-            },
-            {
                 "name": "matplotlib-inline",
                 "version": "0.1.6"
+            },
+            {
+                "name": "mccabe",
+                "version": "0.7.0"
             },
             {
                 "name": "mistune",
@@ -1578,6 +1550,10 @@
             {
                 "name": "mpmath",
                 "version": "1.3.0"
+            },
+            {
+                "name": "mypy-extensions",
+                "version": "1.0.0"
             },
             {
                 "name": "mysql-common",
@@ -1661,7 +1637,7 @@
             },
             {
                 "name": "pandas",
-                "version": "2.0.3"
+                "version": "2.2.2"
             },
             {
                 "name": "pandoc",
@@ -1676,8 +1652,8 @@
                 "version": "0.8.3"
             },
             {
-                "name": "pathlib2",
-                "version": "2.3.7.post1"
+                "name": "pathspec",
+                "version": "0.12.1"
             },
             {
                 "name": "patsy",
@@ -1694,10 +1670,6 @@
             {
                 "name": "pickleshare",
                 "version": "0.7.5"
-            },
-            {
-                "name": "pillow",
-                "version": "10.4.0"
             },
             {
                 "name": "pip",
@@ -1760,6 +1732,10 @@
                 "version": "4"
             },
             {
+                "name": "pycodestyle",
+                "version": "2.12.1"
+            },
+            {
                 "name": "pycosat",
                 "version": "0.6.4"
             },
@@ -1768,16 +1744,8 @@
                 "version": "2.21"
             },
             {
-                "name": "pydantic",
-                "version": "2.8.2"
-            },
-            {
-                "name": "pydantic-core",
-                "version": "2.20.1"
-            },
-            {
-                "name": "pydantic-settings",
-                "version": "2.4.0"
+                "name": "pyflakes",
+                "version": "3.2.0"
             },
             {
                 "name": "pygments",
@@ -1785,15 +1753,11 @@
             },
             {
                 "name": "pynwb",
-                "version": "2.6.0"
+                "version": "2.8.1"
             },
             {
                 "name": "pyopenssl",
                 "version": "23.2.0"
-            },
-            {
-                "name": "pyparsing",
-                "version": "3.1.2"
             },
             {
                 "name": "pyqt",
@@ -1814,10 +1778,6 @@
             {
                 "name": "python-dateutil",
                 "version": "2.8.2"
-            },
-            {
-                "name": "python-dotenv",
-                "version": "1.0.1"
             },
             {
                 "name": "python-fastjsonschema",
@@ -1900,20 +1860,8 @@
                 "version": "0.2.7"
             },
             {
-                "name": "s3transfer",
-                "version": "0.10.2"
-            },
-            {
-                "name": "scikit-learn",
-                "version": "1.4.0"
-            },
-            {
                 "name": "scipy",
                 "version": "1.14.0"
-            },
-            {
-                "name": "seaborn",
-                "version": "0.13.2"
             },
             {
                 "name": "send2trash",
