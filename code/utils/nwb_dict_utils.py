@@ -1,9 +1,8 @@
 #%%
-import os
-import numpy as  np
+import numpy as np
 import pandas as pd
 import pynwb
-from hdmf_zarr.nwb import NWBZarrIO
+
 
 def is_numeric(obj):
     '''
