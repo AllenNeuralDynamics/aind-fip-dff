@@ -96,9 +96,9 @@ def tc_expfit(tc, sampling_rate=20):
         return a * np.exp(-b * x) + c * np.exp(-d * x)
 
     time_seconds = np.arange(len(tc)) / sampling_rate
-    try: # try first providing initial estimates
-        tc0 = tc[:int(sampling_rate)].mean()
-        popt, pcov = curve_fit(func, time_seconds, tc, (.9 * tc0, 1 / 3600, .1 * tc0, 1 / 200))
+    try:  # try first providing initial estimates
+        tc0 = tc[: int(sampling_rate)].mean()
+        popt, pcov = curve_fit(func, time_seconds, tc, (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200))
     except:
         popt, pcov = curve_fit(func, time_seconds, tc)
     tc_exp = func(time_seconds, *popt)
@@ -180,10 +180,10 @@ def fit_trace(trace, fs=20):
             method="Nelder-Mead",
             options={"maxiter": maxiter},
         )
-  
+
     # optimize on decimated data to quickly get good initial estimates
     res100 = optimize(
-        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25, 3600., 200., 2000.), 100, 2000
+        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25, 3600.0, 200.0, 2000.0), 100, 2000
     )
     res10 = optimize(trace, res100.x, 10, 1000)
     # optimize on full data
@@ -238,6 +238,7 @@ def fit_trace_robust(
         params: array
             Optimal values for the parameters of the preprocessing
     """
+
     def optimize_robust(trace, x0, weights):
         T = len(trace)
 
@@ -354,7 +355,7 @@ def chunk_processing(
     except:
         print(f"Processing with method {method} failed. Setting dF/F to nans.")
         tc_dFoF = np.nan * tc
-        tc_params = {i_coef: np.nan for i_coef in range({'poly': 5, 'exp': 4, 'bright': 7}[method])}
+        tc_params = {i_coef: np.nan for i_coef in range({"poly": 5, "exp": 4, "bright": 7}[method])}
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
 
