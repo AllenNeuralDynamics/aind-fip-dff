@@ -996,10 +996,6 @@
                 "version": "23.1.0"
             },
             {
-                "name": "autopep8",
-                "version": "2.3.1"
-            },
-            {
                 "name": "babel",
                 "version": "2.12.1"
             },
@@ -1018,10 +1014,6 @@
             {
                 "name": "beautifulsoup4",
                 "version": "4.12.2"
-            },
-            {
-                "name": "black",
-                "version": "24.8.0"
             },
             {
                 "name": "bleach",
@@ -1060,10 +1052,6 @@
                 "version": "3.2.0"
             },
             {
-                "name": "click",
-                "version": "8.1.7"
-            },
-            {
                 "name": "colorama",
                 "version": "0.4.6"
             },
@@ -1084,8 +1072,16 @@
                 "version": "0.8.0"
             },
             {
+                "name": "contourpy",
+                "version": "1.2.1"
+            },
+            {
                 "name": "cryptography",
                 "version": "41.0.2"
+            },
+            {
+                "name": "cycler",
+                "version": "0.12.1"
             },
             {
                 "name": "dbus",
@@ -1128,10 +1124,6 @@
                 "version": "3.13.1"
             },
             {
-                "name": "flake8",
-                "version": "7.1.1"
-            },
-            {
                 "name": "flit-core",
                 "version": "3.9.0"
             },
@@ -1166,6 +1158,10 @@
             {
                 "name": "fonts-conda-forge",
                 "version": "1"
+            },
+            {
+                "name": "fonttools",
+                "version": "4.53.1"
             },
             {
                 "name": "freetype",
@@ -1338,6 +1334,10 @@
             {
                 "name": "keyutils",
                 "version": "1.6.1"
+            },
+            {
+                "name": "kiwisolver",
+                "version": "1.4.5"
             },
             {
                 "name": "krb5",
@@ -1532,12 +1532,12 @@
                 "version": "2.1.3"
             },
             {
-                "name": "matplotlib-inline",
-                "version": "0.1.6"
+                "name": "matplotlib",
+                "version": "3.9.1.post1"
             },
             {
-                "name": "mccabe",
-                "version": "0.7.0"
+                "name": "matplotlib-inline",
+                "version": "0.1.6"
             },
             {
                 "name": "mistune",
@@ -1550,10 +1550,6 @@
             {
                 "name": "mpmath",
                 "version": "1.3.0"
-            },
-            {
-                "name": "mypy-extensions",
-                "version": "1.0.0"
             },
             {
                 "name": "mysql-common",
@@ -1652,10 +1648,6 @@
                 "version": "0.8.3"
             },
             {
-                "name": "pathspec",
-                "version": "0.12.1"
-            },
-            {
                 "name": "patsy",
                 "version": "0.5.6"
             },
@@ -1670,6 +1662,10 @@
             {
                 "name": "pickleshare",
                 "version": "0.7.5"
+            },
+            {
+                "name": "pillow",
+                "version": "10.4.0"
             },
             {
                 "name": "pip",
@@ -1732,20 +1728,12 @@
                 "version": "4"
             },
             {
-                "name": "pycodestyle",
-                "version": "2.12.1"
-            },
-            {
                 "name": "pycosat",
                 "version": "0.6.4"
             },
             {
                 "name": "pycparser",
                 "version": "2.21"
-            },
-            {
-                "name": "pyflakes",
-                "version": "3.2.0"
             },
             {
                 "name": "pygments",
@@ -1758,6 +1746,10 @@
             {
                 "name": "pyopenssl",
                 "version": "23.2.0"
+            },
+            {
+                "name": "pyparsing",
+                "version": "3.1.2"
             },
             {
                 "name": "pyqt",
