@@ -96,8 +96,12 @@ def tc_expfit(tc, sampling_rate=20):
         return a * np.exp(-b * x) + c * np.exp(-d * x)
 
     time_seconds = np.arange(len(tc)) / sampling_rate
-    popt, pcov = curve_fit(func, time_seconds, tc)
-    tc_exp = func(time_seconds, popt[0], popt[1], popt[2], popt[3])
+    try: # try first providing initial estimates
+        tc0 = tc[:int(sampling_rate)].mean()
+        popt, pcov = curve_fit(func, time_seconds, tc, (.9 * tc0, 1 / 3600, .1 * tc0, 1 / 200))
+    except:
+        popt, pcov = curve_fit(func, time_seconds, tc)
+    tc_exp = func(time_seconds, *popt)
     return tc_exp, popt
 
 
@@ -117,7 +121,8 @@ def tc_brightfit(tc, sampling_rate=20, robust=True):
         popt: array
             Optimal values for the parameters of the preprocessing
     """
-    return fit_trace_robust(tc, sampling_rate)[:2] if robust else fit_trace(tc, sampling_rate)[:2]
+    popt = fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
+    return baseline(*popt, T=len(tc)), popt
 
 
 def baseline(
@@ -141,31 +146,17 @@ def baseline(
 
 
 def fit_trace(trace, fs=20):
-    """Oridinary Least Squares (OLS) fit using above baseline (bleaching x brightening)"""
-
-    def optimize_t_fast(trace):
-        def objective(params):
-            return np.sum(
-                (
-                    trace
-                    - baseline(
-                        b_inf=params[0],
-                        b_fast=params[1],
-                        t_fast=params[2],
-                        T=len(trace),
-                        fs=fs,
-                    )
-                )
-                ** 2
-            )
-
-        return minimize(
-            objective,
-            (1, 1, 1),
-            bounds=[(0, np.inf), (0, np.inf), (1, np.inf)],
-            method="Nelder-Mead",
-            options={"maxiter": 1000},
-        )
+    """
+    Oridinary Least Squares (OLS) fit using above baseline (bleaching x brightening)
+    Args:
+        trace: np.array
+            Fiber photometry signal
+        fs: float
+            Sampling rate of the signal
+    Returns:
+        x: array
+            Optimal values for the parameters of the preprocessing
+    """
 
     def optimize(trace, x0, ds=1, maxiter=20000):
         T = len(trace)
@@ -189,12 +180,10 @@ def fit_trace(trace, fs=20):
             method="Nelder-Mead",
             options={"maxiter": maxiter},
         )
-
-    # optimize t_fast on initial frames
-    t_fast = optimize_t_fast(trace[:2000]).x[2]
-    # optimize on downsampled data to get good initial estimates quickly
+  
+    # optimize on decimated data to quickly get good initial estimates
     res100 = optimize(
-        trace, (trace[-1000:].mean(), 0.2, 0.1, 0.15, 2000, t_fast, 1000.0), 100, 2000
+        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25, 3600., 200., 2000.), 100, 2000
     )
     res10 = optimize(trace, res100.x, 10, 1000)
     # optimize on full data
@@ -208,14 +197,14 @@ def fit_trace(trace, fs=20):
         x[2] = 0
     if x[-2] > x[-3]:  # swap t_slow and t_fast if optimization returns t_fast > t_slow
         x[1], x[2], x[-2], x[-3] = x[2], x[1], x[-3], x[-2]
-    return res.fun, x, res.success
+    return x
 
 
 def fit_trace_robust(
     trace,
     fs=20,
-    M=HuberT(0.5),
-    maxiter=20,
+    M=TukeyBiweight(2),
+    maxiter=50,
     tol=1e-5,
     update_scale=True,
     asymmetric=True,
@@ -223,6 +212,7 @@ def fit_trace_robust(
 ):
     """
     Iteratively Reweighted Least Squares (IRLS) fit using above baseline (bleaching x brightening)
+    see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
     Args:
         trace: np.array
             Fiber photometry signal
@@ -244,13 +234,10 @@ def fit_trace_robust(
         scale_est : str
             'mad' or 'welch'
             Indicates the estimate to use for scaling the weights in the IRLS.
+    Returns:
+        params: array
+            Optimal values for the parameters of the preprocessing
     """
-
-    # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
-    # Good options seem to be
-    # M=TukeyBiweight(2), scale_est="mad"
-    # M=TukeyBiweight(3), scale_est="welch"
-    # M=HuberT(.5), scale_est="welch"
     def optimize_robust(trace, x0, weights):
         T = len(trace)
 
@@ -272,7 +259,7 @@ def fit_trace_robust(
         )
 
     # init with OLS fit
-    params = fit_trace(trace)[1]
+    params = fit_trace(trace)
     f0 = baseline(*params, T=len(trace), fs=fs)
     resid = trace - f0
     scl = scale.mad(resid, center=0) if scale_est == "mad" else noise_std(resid, method="welch")
@@ -308,7 +295,7 @@ def fit_trace_robust(
         iteration += 1
         converged = iteration >= maxiter or np.abs(deviance - dev_pre) < tol
 
-    return wls_results.fun, params, wls_results.success
+    return params
 
 
 # Preprocessing total function
@@ -350,20 +337,24 @@ def chunk_processing(
     tc_cropped = tc_crop(tc, nFrame2cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernelSize)
     tc_filtered = tc_lowcut(tc_filtered, sampling_rate)
-
-    if method == "poly":
-        tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
-    if method == "exp":
-        tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
-    if method == "bright":
-        tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
-        tc_dFoF = tc_filtered / tc_fit - 1
-    else:
-        tc_estim = tc_filtered - tc_fit
-        tc_base = tc_slidingbase(tc_filtered, sampling_rate)
-        tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
-    tc_dFoF = tc_filling(tc_dFoF, nFrame2cut)
-    tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
+    try:
+        if method == "poly":
+            tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
+        if method == "exp":
+            tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
+        if method == "bright":
+            tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
+            tc_dFoF = tc_filtered / tc_fit - 1
+        else:
+            tc_estim = tc_filtered - tc_fit
+            tc_base = tc_slidingbase(tc_filtered, sampling_rate)
+            tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
+        tc_dFoF = tc_filling(tc_dFoF, nFrame2cut)
+        tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
+    except:
+        print(f"Processing with method {method} failed. Setting dF/F to nans.")
+        tc_dFoF = np.nan * tc
+        tc_params = {i_coef: np.nan for i_coef in range({'poly': 5, 'exp': 4, 'bright': 7}[method])}
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
 
@@ -558,11 +549,7 @@ def batch_processing_new(df_fip, methods=["poly", "exp", "bright"]):
                     continue
 
                 NM_values = df_fip_iter["signal"].values
-                try:
-                    NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
-                except:
-                    print(f"Processing with method {pp_name} failed. Continuing...")
-                    continue
+                NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
                 df_fip_iter.loc[:, "signal"] = NM_preprocessed
                 df_fip_iter.loc[:, "preprocess"] = pp_name
                 df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
