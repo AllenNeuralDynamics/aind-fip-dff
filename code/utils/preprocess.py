@@ -362,7 +362,53 @@ def chunk_processing(
     return tc_dFoF, tc_params
 
 
-# Processing Functions
+# run the total preprocessing on multiple sessions -- future iteration: collect exceptions in a log file
+def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
+    df_fip_pp = pd.DataFrame()
+    df_pp_params = pd.DataFrame()
+
+    if len(df_fip) == 0:
+        return df_fip, df_pp_params
+
+    sessions = pd.unique(df_fip["session"].values)
+    sessions = sessions[~pd.isna(sessions)]
+    fiber_numbers = np.unique(df_fip["fiber_number"].values)
+    channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
+    channels = channels[~pd.isna(channels)]
+    for pp_name in methods:
+        if pp_name in ["poly", "exp", "bright"]:
+            for i_iter, (channel, fiber_number, session) in enumerate(
+                itertools.product(channels, fiber_numbers, sessions)
+            ):
+                df_fip_iter = df_fip[
+                    (df_fip["session"] == session)
+                    & (df_fip["fiber_number"] == fiber_number)
+                    & (df_fip["channel"] == channel)
+                ]
+                if len(df_fip_iter) == 0:
+                    continue
+
+                NM_values = df_fip_iter["signal"].values
+                NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
+                df_fip_iter.loc[:, "signal"] = NM_preprocessed
+                df_fip_iter.loc[:, "preprocess"] = pp_name
+                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
+
+                NM_fitting_params.update(
+                    {
+                        "preprocess": pp_name,
+                        "channel": channel,
+                        "fiber_number": fiber_number,
+                        "session": session,
+                    }
+                )
+                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+
+    return df_fip_pp, df_pp_params
+
+
+# Below are obsolete Processing Functions that used the NPM system instead of NWB
 # ---------------------------------------------------------------------------------------------
 # Function to create the input to the batch processing function
 def load_Homebrew_fip_data(filenames, fibers_per_file=2):
@@ -435,138 +481,6 @@ def load_Homebrew_fip_data(filenames, fibers_per_file=2):
     else:
         df_fip_ses = df_fip
     return df_fip_ses
-
-
-# run the total preprocessing on multiple sessions -- future iteration: collect exceptions in a log file
-
-
-# FUNCTION to convert NWB to df_fip? -- this is the method decided on
-# OR FUNCTION to go from NWB to the traces that we need for batch processing function
-
-# ---------------------------------------------------------------------------------------------
-
-
-def batch_processing(df_fip, methods=["poly", "exp"]):
-    df_fip_pp = pd.DataFrame()
-    df_pp_params = pd.DataFrame()
-
-    # df_fip = pd.read_pickle(filename)
-    if len(df_fip) == 0:
-        return df_fip, df_pp_params
-
-    sessions = pd.unique(df_fip["session"].values)
-    sessions = sessions[~pd.isna(sessions)]
-    fiber_numbers = np.unique(df_fip["fiber_number"].values)
-    channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
-    channels = channels[~pd.isna(channels)]
-    for pp_name in methods:
-        if pp_name in ["poly", "exp"]:
-            for i_iter, (channel, fiber_number, session) in enumerate(
-                itertools.product(channels, fiber_numbers, sessions)
-            ):
-                df_fip_iter = df_fip[
-                    (df_fip["session"] == session)
-                    & (df_fip["fiber_number"] == fiber_number)
-                    & (df_fip["channel"] == channel)
-                ]
-                if len(df_fip_iter) == 0:
-                    continue
-
-                NM_values = df_fip_iter["signal"].values
-                try:
-                    NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
-                except:
-                    print(f"Processing with method {pp_name} failed. Continuing...")
-                    continue
-                df_fip_iter.loc[:, "signal"] = NM_preprocessed
-                df_fip_iter.loc[:, "preprocess"] = pp_name
-                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
-
-                NM_fitting_params.update(
-                    {
-                        "preprocess": pp_name,
-                        "channel": channel,
-                        "fiber_number": fiber_number,
-                        "session": session,
-                    }
-                )
-                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-
-                # Below is where Johannes's method is commented out
-                """         if pp_name in ['double_exp']:
-                            for i_iter, (channel, fiber_number, session) in enumerate(itertools.product(channels, fiber_numbers, sessions)):            
-                                df_fip_iter = df_fip[(df_fip['session']==session) & (df_fip['fiber_number']==fiber_number)]        
-                                F = list()
-                                for i_channel, channel in enumerate(['iso', 'G', 'R']):
-                                    F.append(df_fip_iter[df_fip_iter['channel'] == channel].signal.values.flatten())
-                                F = np.vstack(F)
-                                dff_mc = preprocess(F)
-                                for i_channel, channel in enumerate(['iso', 'G', 'R']):
-                                    df_fip_channel = df_fip_iter[df_fip_iter['channel'] == channel]
-                                    df_fip_channel.loc[:,'signal'] = dff_mc[i_channel]
-                                    df_fip_channel.loc[:,'preprocess'] = pp_name
-                                df_fip_pp = pd.concat([df_fip_pp, df_fip_channel], axis=0)                    
-                                
-                                NM_fitting_params.update({'preprocess':pp_name, 'channel':channel, 'fiber_number':fiber_number, 'session':session})
-                                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)    """
-
-    return df_fip_pp, df_pp_params
-
-
-# ---------------------------------------------------------------------------------------------
-
-
-# input is nwb file now
-
-# so we want to access traces:
-
-
-def batch_processing_new(df_fip, methods=["poly", "exp", "bright"]):
-    df_fip_pp = pd.DataFrame()
-    df_pp_params = pd.DataFrame()
-
-    # df_fip = pd.read_pickle(filename)
-    if len(df_fip) == 0:
-        return df_fip, df_pp_params
-
-    sessions = pd.unique(df_fip["session"].values)
-    sessions = sessions[~pd.isna(sessions)]
-    fiber_numbers = np.unique(df_fip["fiber_number"].values)
-    channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
-    channels = channels[~pd.isna(channels)]
-    for pp_name in methods:
-        if pp_name in ["poly", "exp", "bright"]:
-            for i_iter, (channel, fiber_number, session) in enumerate(
-                itertools.product(channels, fiber_numbers, sessions)
-            ):
-                df_fip_iter = df_fip[
-                    (df_fip["session"] == session)
-                    & (df_fip["fiber_number"] == fiber_number)
-                    & (df_fip["channel"] == channel)
-                ]
-                if len(df_fip_iter) == 0:
-                    continue
-
-                NM_values = df_fip_iter["signal"].values
-                NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
-                df_fip_iter.loc[:, "signal"] = NM_preprocessed
-                df_fip_iter.loc[:, "preprocess"] = pp_name
-                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
-
-                NM_fitting_params.update(
-                    {
-                        "preprocess": pp_name,
-                        "channel": channel,
-                        "fiber_number": fiber_number,
-                        "session": session,
-                    }
-                )
-                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-
-    return df_fip_pp, df_pp_params
 
 
 # Function to get the preprocessed (pp) dataframe without the nwb generation

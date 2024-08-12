@@ -1,13 +1,11 @@
-# %%
 import glob
 import os
 import shutil
 
 from hdmf_zarr import NWBZarrIO
-from pynwb import NWBHDF5IO
 
-import utils.new_preprocess as nwp
 import utils.nwb_dict_utils as nwb_utils
+from utils.preprocess import batch_processing
 
 """
 This capsule should take in an NWB file, 
@@ -54,7 +52,7 @@ for source_path in source_paths:
         df_from_nwb.insert(0, "session", session_name)
 
         # now pass the dataframe through the preprocessing function:
-        df_fip_pp_nwb, df_PP_params = nwp.batch_processing_new(df_fip=df_from_nwb)
+        df_fip_pp_nwb, df_PP_params = batch_processing(df_fip=df_from_nwb)
 
         # Step to allow for proper conversion to nwb
         df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
