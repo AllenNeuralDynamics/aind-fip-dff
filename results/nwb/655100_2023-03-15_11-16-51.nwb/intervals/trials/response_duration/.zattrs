@@ -1,7 +1,0 @@
-{
-    "description": "The maximum time that the animal must make a choce in order to get a reward",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "abb6d424-e039-41c7-b7a3-f718edea8724",
-    "zarr_dtype": "float"
-}
