@@ -1,7 +1,0 @@
-{
-    "description": "The schema version of the auto training curriculum",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "8e5be46b-20a8-4b9f-8594-8e25d1c92870",
-    "zarr_dtype": "str"
-}
