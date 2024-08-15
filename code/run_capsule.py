@@ -87,20 +87,20 @@ for source_path in source_paths:
             io.write(nwb_file)
 
 
-        src_directory = '/data/fiber_raw_data/'
-        dest_directory = '/results/'
+src_directory = '/data/fiber_raw_data/'
+dest_directory = '/results/'
 
-        # Iterate over all files in the source directory
-        for filename in os.listdir(src_directory):
-            if filename.endswith('.json'):
-                # Construct full file path
-                src_file = os.path.join(src_directory, filename)
-                dest_file = os.path.join(dest_directory, filename)
+# Iterate over all files in the source directory
+for filename in os.listdir(src_directory):
+    if filename.endswith('.json'):
+        # Construct full file path
+        src_file = os.path.join(src_directory, filename)
+        dest_file = os.path.join(dest_directory, filename)
 
-                # Move the file
-                shutil.copy2(src_file, dest_file)
-                print(f"Moved: {src_file} to {dest_file}")
-                print('Succesfully updated the nwb with preprocessed data')
+        # Move the file
+        shutil.copy2(src_file, dest_file)
+        print(f"Moved: {src_file} to {dest_file}")
+        print('Succesfully updated the nwb with preprocessed data')
 
 
 
