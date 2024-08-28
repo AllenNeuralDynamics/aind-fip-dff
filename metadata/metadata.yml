@@ -1,5 +1,5 @@
 metadata_version: 1
-name: aind-fip-dff Comparison
+name: aind-fip-dff
 description: This capsule takes an input raw NWB file of fiber data and creates processed
   DFF traces
 authors:

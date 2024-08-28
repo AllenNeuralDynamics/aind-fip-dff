@@ -98,7 +98,9 @@ def tc_expfit(tc, sampling_rate=20):
     time_seconds = np.arange(len(tc)) / sampling_rate
     try:  # try first providing initial estimates
         tc0 = tc[: int(sampling_rate)].mean()
-        popt, pcov = curve_fit(func, time_seconds, tc, (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200))
+        popt, pcov = curve_fit(
+            func, time_seconds, tc, (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200)
+        )
     except:
         popt, pcov = curve_fit(func, time_seconds, tc)
     tc_exp = func(time_seconds, *popt)
@@ -121,7 +123,9 @@ def tc_brightfit(tc, sampling_rate=20, robust=True):
         popt: array
             Optimal values for the parameters of the preprocessing
     """
-    popt = fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
+    popt = (
+        fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
+    )
     return baseline(*popt, T=len(tc)), popt
 
 
@@ -140,7 +144,11 @@ def baseline(
     tmp = -np.arange(T)
     return (
         b_inf
-        * (1 + b_slow * np.exp(tmp / (t_slow * fs)) + b_fast * np.exp(tmp / (t_fast * fs)))
+        * (
+            1
+            + b_slow * np.exp(tmp / (t_slow * fs))
+            + b_fast * np.exp(tmp / (t_fast * fs))
+        )
         * (1 - b_bright * np.exp(tmp / (t_bright * fs)))
     )
 
@@ -163,7 +171,9 @@ def fit_trace(trace, fs=20):
         trace_ds = trace[: T // ds * ds].reshape(-1, ds).mean(1)
 
         def objective(params):
-            return np.sum((trace_ds - baseline(*params, T=len(trace_ds), fs=fs / ds)) ** 2)
+            return np.sum(
+                (trace_ds - baseline(*params, T=len(trace_ds), fs=fs / ds)) ** 2
+            )
 
         return minimize(
             objective,
@@ -263,7 +273,11 @@ def fit_trace_robust(
     params = fit_trace(trace)
     f0 = baseline(*params, T=len(trace), fs=fs)
     resid = trace - f0
-    scl = scale.mad(resid, center=0) if scale_est == "mad" else noise_std(resid, method="welch")
+    scl = (
+        scale.mad(resid, center=0)
+        if scale_est == "mad"
+        else noise_std(resid, method="welch")
+    )
     deviance = M(resid / scl).sum()
 
     iteration = 1
@@ -355,7 +369,10 @@ def chunk_processing(
     except:
         print(f"Processing with method {method} failed. Setting dF/F to nans.")
         tc_dFoF = np.nan * tc
-        tc_params = {i_coef: np.nan for i_coef in range({"poly": 5, "exp": 4, "bright": 7}[method])}
+        tc_params = {
+            i_coef: np.nan
+            for i_coef in range({"poly": 5, "exp": 4, "bright": 7}[method])
+        }
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
 
@@ -384,12 +401,14 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                     (df_fip["session"] == session)
                     & (df_fip["fiber_number"] == fiber_number)
                     & (df_fip["channel"] == channel)
-                ]
+                ].copy()
                 if len(df_fip_iter) == 0:
                     continue
 
                 NM_values = df_fip_iter["signal"].values
-                NM_preprocessed, NM_fitting_params = chunk_processing(NM_values, method=pp_name)
+                NM_preprocessed, NM_fitting_params = chunk_processing(
+                    NM_values, method=pp_name
+                )
                 df_fip_iter.loc[:, "signal"] = NM_preprocessed
                 df_fip_iter.loc[:, "preprocess"] = pp_name
                 df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
@@ -431,7 +450,9 @@ def load_Homebrew_fip_data(filenames, fibers_per_file=2):
     save_fip_channels = np.arange(1, fibers_per_file + 1)
     for filename in filenames:
         subject_id, session_date, session_time = (
-            re.search(r"\d{6}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", filename).group().split("_")
+            re.search(r"\d{6}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", filename)
+            .group()
+            .split("_")
         )
         session_name = subject_id + "_" + session_date + "_" + session_time
         header = os.path.basename(filename).split("/")[-1]
@@ -490,7 +511,12 @@ def gen_pp_df_old_version(AnalDir="../trial_data/700708_2024-06-14_08-38-31/"):
     # define the files with the traces from each of the channels
     filenames = []
     for name in ["FIP_DataG", "FIP_DataR", "FIP_DataIso"]:
-        if bool(glob.glob(AnalDir + os.sep + "**" + os.sep + name + "*", recursive=True)) == True:
+        if (
+            bool(
+                glob.glob(AnalDir + os.sep + "**" + os.sep + name + "*", recursive=True)
+            )
+            == True
+        ):
             filenames.extend(
                 glob.glob(AnalDir + os.sep + "**" + os.sep + name + "*", recursive=True)
             )
