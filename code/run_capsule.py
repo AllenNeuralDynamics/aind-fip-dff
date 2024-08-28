@@ -54,11 +54,33 @@ for source_path in source_paths:
         # now pass the dataframe through the preprocessing function:
         df_fip_pp_nwb, df_PP_params = batch_processing(df_fip=df_from_nwb)
 
-        # Step to allow for proper conversion to nwb
-        df_from_nwb_s = nwb_utils.split_fip_traces(df_fip_pp_nwb)
-
-        # format the processed traces and add them to the original nwb
-        nwb_file = nwb_utils.attach_dict_fip(nwb_file, df_from_nwb_s)
+        methods = df_fip_pp_nwb.preprocess.unique()
+        for method in methods:
+            # format the processed traces as dict to allow for proper conversion to nwb
+            dict_from_df = nwb_utils.split_fip_traces(
+                df_fip_pp_nwb[df_fip_pp_nwb.preprocess == method]
+            )
+            # and add them to the original nwb
+            nwb_file = nwb_utils.attach_dict_fip(nwb_file, dict_from_df, method)
 
         io.write(nwb_file)
-        print("Successfully updated the nwb with preprocessed data")
+        print(
+            f"Successfully updated the nwb with preprocessed data using methods {methods}"
+        )
+
+
+src_directory = "/data/fiber_raw_data/"
+dest_directory = "/results/"
+
+# Iterate over all files in the source directory
+if os.path.exists(src_directory):
+    for filename in os.listdir(src_directory):
+        if filename.endswith(".json"):
+            # Construct full file path
+            src_file = os.path.join(src_directory, filename)
+            dest_file = os.path.join(dest_directory, filename)
+
+            # Move the file
+            shutil.copy2(src_file, dest_file)
+            print(f"Moved: {src_file} to {dest_file}")
+            print("Succesfully updated the nwb with preprocessed data")
