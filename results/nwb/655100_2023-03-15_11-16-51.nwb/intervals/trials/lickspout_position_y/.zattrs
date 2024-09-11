@@ -1,7 +1,0 @@
-{
-    "description": "y position (um) of the lickspout position (forward-backward)",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "dd379cfb-4c76-49d7-a8be-fa795da1ee29",
-    "zarr_dtype": "float"
-}

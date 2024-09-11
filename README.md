@@ -1,3 +1,3 @@
-# aind-capsule-template
+# aind-fip-dff
 
-Basic structure of a capsule to be customized as needed.
+This Capsule takes in an nwb file(s) and runs it through a preprocessing function and outputs the preprocessed signal along with metrics (to be added later) and session details back to the nwb file.

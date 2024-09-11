@@ -1,7 +1,0 @@
-{
-    "description": "The laser waveform",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "393fdf49-e01b-40b1-ba05-060c882efc0d",
-    "zarr_dtype": "int"
-}
