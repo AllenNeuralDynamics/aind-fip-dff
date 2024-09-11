@@ -1,9 +1,9 @@
 metadata_version: 1
 name: aind-fip-dff
-description: This Capsule takes in an nwb file(s) and runs it through a preprocessing
-  function and outputs the preprocessed signal along with metrics (to be added later)
-  and session details back to the nwb file.
+description: This capsule takes an input raw NWB file of fiber data and creates processed
+  DFF traces
 authors:
 - name: Brian Gitahi
 - name: Stefano Recanatesi
 - name: Ahad Bawany
+- name: Johannes Friedrich

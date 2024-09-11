@@ -1,7 +1,0 @@
-{
-    "description": "The reward history of left lick port",
-    "namespace": "hdmf-common",
-    "neurodata_type": "VectorData",
-    "object_id": "2d210614-c3b8-485c-99ca-aa6e8a6a0fa1",
-    "zarr_dtype": "bool"
-}

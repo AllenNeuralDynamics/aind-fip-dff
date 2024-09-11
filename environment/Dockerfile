@@ -1,6 +1,6 @@
-# hash:sha256:6e4cb66fab482c3c883f7cdbe832ec9f67e1945b336e2c35601bb392d8d367ca
+# hash:sha256:a41559312bd1be8597bf2181d2f409253f3a2073c5c1071b6e2f98860d191888
 ARG REGISTRY_HOST
-FROM $REGISTRY_HOST/codeocean/cuda-miniconda-jupyterlab:latest
+FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -9,11 +9,10 @@ ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
 RUN pip3 install -U --no-cache-dir \
-    aind-codeocean-api==0.4.2 \
-    boto3==1.34.96 \
-    hdmf-zarr==0.8.0 \
-    pandas==2.0.3 \
-    pathlib2==2.3.7.post1 \
-    pynwb==2.6.0 \
-    scikit-learn==1.4.0 \
-    seaborn==0.13.2
+    torch --index-url https://download.pytorch.org/whl/cpu
+
+RUN pip3 install -U --no-cache-dir \
+    aind-ophys-utils \
+    hdmf-zarr \
+    pynwb \
+    statsmodels
