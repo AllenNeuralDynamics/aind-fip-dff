@@ -61,12 +61,7 @@ def write_output_metadata(
                     end_date_time=dt.now(),
                     input_location=str(input_fp),
                     output_location=str(output_fp),
-                    code_url=(
-                        os.getenv(
-                            "DFF_EXTRACTION_URL",
-                            "https://github.com/AllenNeuralDynamics/aind-fip-dff",
-                        )
-                    ),
+                    code_url=(os.getenv("DFF_EXTRACTION_URL")),
                     parameters=metadata,
                 )
             ],
@@ -83,17 +78,30 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--source_pattern",
     type=str,
-    help="Source pattern to find nwb input files",
     default=r"/data/nwb/*.nwb",
+    help="Source pattern to find nwb input files",
 )
 parser.add_argument(
-    "-o", "--output-dir", type=str, help="Output directory", default="/results/"
+    "-o", "--output-dir", type=str, default="/results/", help="Output directory"
 )
 parser.add_argument(
     "--fiber_path",
     type=str,
-    help="Directory of fiber raw data",
     default="/data/fiber_raw_data",
+    help="Directory of fiber raw data",
+)
+parser.add_argument(
+    '--dff_methods',
+    nargs='+',
+    default=["poly", "exp", "bright"],
+    help=(
+        "List of dff methods to run. Available options are:\n"
+        "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
+        "  'exp': Fit with biphasic exponential using OLS\n"
+        "  'bright': Robust fit with [Biphasic exponential decay (bleaching)] x "
+        "[Increasing saturating exponential (brightening)] using iteratively "
+        "reweighted least squares (IRLS)"
+    ),
 )
 start_time = dt.now()
 args = parser.parse_args()
@@ -135,7 +143,7 @@ for source_path in source_paths:
             df_from_nwb.insert(0, "session", session_name)
 
             # now pass the dataframe through the preprocessing function:
-            df_fip_pp_nwb, df_PP_params = batch_processing(df_fip=df_from_nwb)
+            df_fip_pp_nwb, df_PP_params = batch_processing(df_from_nwb, args.dff_methods)
 
             methods = df_fip_pp_nwb.preprocess.unique()
             for method in methods:
