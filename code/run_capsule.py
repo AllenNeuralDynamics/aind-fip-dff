@@ -1,7 +1,18 @@
+import argparse
 import glob
+import json
 import os
 import shutil
+from datetime import datetime as dt
+from pathlib import Path
+from typing import Union
 
+from aind_data_schema.core.processing import (
+    DataProcess,
+    PipelineProcess,
+    Processing,
+    ProcessName,
+)
 from hdmf_zarr import NWBZarrIO
 
 import utils.nwb_dict_utils as nwb_utils
@@ -16,24 +27,95 @@ then preprocess the arrays with the dF_F signal
 """
 
 
-source_pattern = r"/data/nwb/*.nwb"
-destination_dir = "/results/nwb/"
-fiber_path = '/data/fiber_raw_data' 
+def write_output_metadata(
+    metadata: dict,
+    process_json_dir: str,
+    process_name: str,
+    input_fp: Union[str, Path],
+    output_fp: Union[str, Path],
+    start_date_time: dt,
+) -> None:
+    """Writes output metadata to plane processing.json
+
+    Parameters
+    ----------
+    metadata: dict
+        parameters passed to the capsule
+    input_fp: str
+        path to data input
+    output_fp: str
+        path to data output
+    """
+    with open(Path(process_json_dir) / "processing.json", "r") as f:
+        proc_data = json.load(f)
+    processing = Processing(
+        processing_pipeline=PipelineProcess(
+            processor_full_name="Fiberphotometry Processing Pipeline",
+            pipeline_url=os.getenv("PIPELINE_URL", ""),
+            pipeline_version=os.getenv("PIPELINE_VERSION", ""),
+            data_processes=[
+                DataProcess(
+                    name=process_name,
+                    software_version=os.getenv("VERSION", ""),
+                    start_date_time=start_date_time,
+                    end_date_time=dt.now(),
+                    input_location=str(input_fp),
+                    output_location=str(output_fp),
+                    code_url=(
+                        os.getenv(
+                            "DFF_EXTRACTION_URL",
+                            "https://github.com/AllenNeuralDynamics/aind-fip-dff",
+                        )
+                    ),
+                    parameters=metadata,
+                )
+            ],
+        )
+    )
+    prev_processing = Processing(**proc_data)
+    prev_processing.processing_pipeline.data_processes.append(
+        processing.processing_pipeline.data_processes[0]
+    )
+    prev_processing.write_standard_file(output_directory=Path(output_fp).parent)
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--source_pattern",
+    type=str,
+    help="Source pattern to find nwb input files",
+    default=r"/data/nwb/*.nwb",
+)
+parser.add_argument(
+    "-o", "--output-dir", type=str, help="Output directory", default="/results/"
+)
+parser.add_argument(
+    "--fiber_path",
+    type=str,
+    help="Directory of fiber raw data",
+    default="/data/fiber_raw_data",
+)
+start_time = dt.now()
+args = parser.parse_args()
 
 
 # Create the destination directory if it doesn't exist
-os.makedirs(destination_dir, exist_ok=True)
+os.makedirs(args.output_dir, exist_ok=True)
 
 # Find all files matching the source pattern
-source_paths = glob.glob(source_pattern)
+source_paths = glob.glob(args.source_pattern)
 
 # Copy each matching file to the destination directory
 for source_path in source_paths:
-    destination_path = os.path.join(destination_dir, os.path.basename(source_path))
+    destination_path = os.path.join(
+        args.output_dir, "nwb", os.path.basename(source_path)
+    )
     shutil.copytree(source_path, destination_path)
     # Update path to the NWB file within the copied directory
     nwb_file_path = destination_path
-    if os.path.isdir(os.path.join(fiber_path, "FIP")) or os.path.isdir(os.path.join(fiber_path, "fib")):
+    if os.path.isdir(os.path.join(args.fiber_path, "FIP")) or os.path.isdir(
+        os.path.join(args.fiber_path, "fib")
+    ):
         # Print the path to ensure correctness
         print(f"Processing NWB file: {nwb_file_path}")
 
@@ -69,20 +151,28 @@ for source_path in source_paths:
                 f"Successfully updated the nwb with preprocessed data using methods {methods}"
             )
     else:
-        print("No Behavior data, preproccesing unneeded") 
+        print("NO Fiber but only Behavior data, preprocessing not needed")
 
-src_directory = "/data/fiber_raw_data/"
-dest_directory = "/results/"
+src_directory = args.fiber_path
 
-# Iterate over all files in the source directory
+# Iterate over all .json files in the source directory
 if os.path.exists(src_directory):
     for filename in os.listdir(src_directory):
-        if filename.endswith(".json"):
+        if filename.endswith(".json") and filename!="processing.json":
             # Construct full file path
             src_file = os.path.join(src_directory, filename)
-            dest_file = os.path.join(dest_directory, filename)
+            dest_file = os.path.join(args.output_dir, filename)
 
             # Move the file
             shutil.copy2(src_file, dest_file)
             print(f"Moved: {src_file} to {dest_file}")
 
+# Append to processing.json
+write_output_metadata(
+    vars(args),
+    src_directory,
+    ProcessName.DF_F_ESTIMATION,
+    source_path,
+    os.path.join(args.output_dir, "nwb"),
+    start_time,
+)
