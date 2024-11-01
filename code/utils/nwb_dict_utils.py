@@ -11,8 +11,7 @@ def is_numeric(obj):
     return all(hasattr(obj, attr) for attr in attrs)
 
 
-def attach_dict_fip(nwb, dict_fip, method=""):
-    suffix = f"_dff-{method}" if method else "_dff"
+def attach_dict_fip(nwb, dict_fip, suffix):
     for neural_stream in dict_fip:
         ts = pynwb.TimeSeries(
             name=neural_stream + suffix,

@@ -9,7 +9,9 @@ from aind_ophys_utils.signal_utils import noise_std
 from hdmf_zarr.nwb import NWBZarrIO
 from pynwb import NWBHDF5IO
 from scipy.optimize import curve_fit, minimize
-from scipy.signal import butter, filtfilt, medfilt
+from scipy.signal import butter, filtfilt, medfilt, sosfilt
+from sklearn.linear_model import LinearRegression
+from statsmodels.api import RLM
 from statsmodels.robust import scale
 from statsmodels.robust.norms import HuberT, TukeyBiweight
 
@@ -313,7 +315,7 @@ def fit_trace_robust(
     return params
 
 
-# Preprocessing total function
+# dF/F total function
 def chunk_processing(
     tc,
     method="poly",
@@ -325,7 +327,7 @@ def chunk_processing(
     robust=True,
 ):
     """
-    Preprocesses the fiber photometry signal.
+    Calculates dF/F of the fiber photometry signal.
     Args:
         tc: np.array
             Fiber photometry signal
@@ -345,7 +347,7 @@ def chunk_processing(
             Whether to fit baseline using IRLS (robust regression, only 'bright' method)
     Returns:
         tc_dFoF: np.array
-            Preprocessed fiber photometry signal
+            dF/F of fiber photometry signal
         tc_params: dict
             Dictionary with the parameters of the preprocessing
     """
@@ -379,10 +381,57 @@ def chunk_processing(
     return tc_dFoF, tc_params
 
 
-# run the total preprocessing on multiple sessions -- future iteration: collect exceptions in a log file
+def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
+    """
+    Perform motion correction on a fiber's dF/F traces by regressing out
+    the filtered isosbestic traces.
+    Args:
+        dff: pd.DataFrame
+            DataFrame containing the dF/F traces of the fiber photometry signals.
+        fs: float
+            Sampling rate of the signal, in Hz.
+        M: statsmodels.robust.norms.RobustNorm
+            Robust criterion function used to downweight outliers.
+            Refer to `statsmodels.robust.norms` for more details.
+    Returns:
+        dff_mc : pd.DataFrame
+            Preprocessed fiber photometry signal with motion correction applied 
+            (dF/F + motion correction).
+    """
+    sos = butter(N=2, Wn=.3, fs=fs, output='sos')
+    dff_filt = sosfilt(sos, dff, axis=0).T
+    motion = dff_filt[dff.columns.get_loc("Iso")]
+    if M is not None:
+        motion = (np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt], 0) * motion).T
+    else:
+        motion = LinearRegression(fit_intercept=False, positive=True
+                                 ).fit(motion[:,None], dff_filt.T).predict(motion[:,None])
+    motion -= motion.mean(0)
+    dff_mc = dff - motion
+    return dff_mc
+
+
+# run the total preprocessing (dF/F + motion correction) on multiple sessions
+# -- future iteration: collect exceptions in a log file
 def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
+    """
+    Preprocesses the fiber photometry signal (dF/F + motion correction).
+    Args:
+        df_fib: pd.DataFrame
+            Fiber photometry signal
+        methods: list of str
+            Methods to preprocess the data. Options: poly, exp, bright
+    Returns:
+        df_fip_pp: pd.DataFrame
+            dF/F of fiber photometry signal
+        df_pp_params: pd.DataFrame
+            Dataframe with the parameters of the preprocessing
+        df_fip_mc: pd.DataFrame
+            Preprocessed (dF/F + motion correction) of fiber photometry signal
+    """
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
+    df_mc = pd.DataFrame()
 
     if len(df_fip) == 0:
         return df_fip, df_pp_params
@@ -394,6 +443,7 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:
         if pp_name in ["poly", "exp", "bright"]:
+            # dF/F
             for i_iter, (channel, fiber_number, session) in enumerate(
                 itertools.product(channels, fiber_numbers, sessions)
             ):
@@ -423,8 +473,30 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 )
                 df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
                 df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+            
+            # motion correction
+            for i_iter, (fiber_number, session) in enumerate(
+                itertools.product(fiber_numbers, sessions)
+            ):
+                df_fip_iter = df_fip_pp[
+                    (df_fip_pp["session"] == session)
+                    & (df_fip_pp["fiber_number"] == fiber_number)
+                    & (df_fip_pp["preprocess"] == pp_name)
+                ].copy()
+                if len(df_fip_iter) == 0:
+                    continue
 
-    return df_fip_pp, df_pp_params
+                # convert to #frames x #channels 
+                df_dff_iter = pd.DataFrame(np.column_stack([df_fip_iter[df_fip_iter["channel"] == c]["signal"].values for c in channels]), columns=channels)
+                # run motion correction
+                df_mc_iter = motion_correct(df_dff_iter)
+                # convert back to a table with columns channel and signal
+                df_mc_iter = df_mc_iter.melt(var_name="channel", value_name="signal")
+                df_mc = pd.concat([df_mc, df_mc_iter], ignore_index=True)
+    df_fip_mc = df_fip_pp.copy()
+    df_fip_mc["signal"] = df_mc["signal"]
+
+    return df_fip_pp, df_pp_params, df_fip_mc
 
 
 # Below are obsolete Processing Functions that used the NPM system instead of NWB
