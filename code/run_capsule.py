@@ -93,8 +93,8 @@ if __name__ == "__main__":
         help="Directory of fiber raw data",
     )
     parser.add_argument(
-        '--dff_methods',
-        nargs='+',
+        "--dff_methods",
+        nargs="+",
         default=["poly", "exp", "bright"],
         help=(
             "List of dff methods to run. Available options are:\n"
@@ -143,17 +143,24 @@ if __name__ == "__main__":
                 df_from_nwb.insert(0, "session", session_name)
 
                 # now pass the dataframe through the preprocessing function:
-                df_fip_pp_nwb, df_PP_params, df_fip_mc = batch_processing(df_from_nwb, args.dff_methods)
+                df_fip_pp_nwb, df_PP_params, df_fip_mc = batch_processing(
+                    df_from_nwb, args.dff_methods
+                )
 
                 methods = df_fip_pp_nwb.preprocess.unique()
                 for method in methods:
-                    for df, suffix in ((df_fip_pp_nwb, "dff"), (df_fip_mc, "preprocessed")):
+                    for df, suffix in (
+                        (df_fip_pp_nwb, "dff"),
+                        (df_fip_mc, "preprocessed"),
+                    ):
                         # format the processed traces as dict to allow for proper conversion to nwb
                         dict_from_df = nwb_utils.split_fip_traces(
                             df[df.preprocess == method]
                         )
                         # and add them to the original nwb
-                        nwb_file = nwb_utils.attach_dict_fip(nwb_file, dict_from_df, f"_{suffix}-{method}")
+                        nwb_file = nwb_utils.attach_dict_fip(
+                            nwb_file, dict_from_df, f"_{suffix}-{method}"
+                        )
 
                 io.write(nwb_file)
                 print(
@@ -167,7 +174,7 @@ if __name__ == "__main__":
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
         for filename in os.listdir(src_directory):
-            if filename.endswith(".json") and filename!="processing.json":
+            if filename.endswith(".json") and filename != "processing.json":
                 # Construct full file path
                 src_file = os.path.join(src_directory, filename)
                 dest_file = os.path.join(args.output_dir, filename)
