@@ -21,4 +21,5 @@ RUN pip3 install -U --no-cache-dir \
     aind-ophys-utils \
     hdmf-zarr \
     pynwb \
+    scikit-learn \
     statsmodels

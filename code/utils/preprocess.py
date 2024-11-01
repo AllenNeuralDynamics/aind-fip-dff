@@ -395,17 +395,22 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
             Refer to `statsmodels.robust.norms` for more details.
     Returns:
         dff_mc : pd.DataFrame
-            Preprocessed fiber photometry signal with motion correction applied 
+            Preprocessed fiber photometry signal with motion correction applied
             (dF/F + motion correction).
     """
-    sos = butter(N=2, Wn=.3, fs=fs, output='sos')
+    sos = butter(N=2, Wn=0.3, fs=fs, output="sos")
     dff_filt = sosfilt(sos, dff, axis=0).T
     motion = dff_filt[dff.columns.get_loc("Iso")]
     if M is not None:
-        motion = (np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt], 0) * motion).T
+        motion = (
+            np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt], 0) * motion
+        ).T
     else:
-        motion = LinearRegression(fit_intercept=False, positive=True
-                                 ).fit(motion[:,None], dff_filt.T).predict(motion[:,None])
+        motion = (
+            LinearRegression(fit_intercept=False, positive=True)
+            .fit(motion[:, None], dff_filt.T)
+            .predict(motion[:, None])
+        )
     motion -= motion.mean(0)
     dff_mc = dff - motion
     return dff_mc
@@ -473,7 +478,7 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 )
                 df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
                 df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-            
+
             # motion correction
             for i_iter, (fiber_number, session) in enumerate(
                 itertools.product(fiber_numbers, sessions)
@@ -486,8 +491,16 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 if len(df_fip_iter) == 0:
                     continue
 
-                # convert to #frames x #channels 
-                df_dff_iter = pd.DataFrame(np.column_stack([df_fip_iter[df_fip_iter["channel"] == c]["signal"].values for c in channels]), columns=channels)
+                # convert to #frames x #channels
+                df_dff_iter = pd.DataFrame(
+                    np.column_stack(
+                        [
+                            df_fip_iter[df_fip_iter["channel"] == c]["signal"].values
+                            for c in channels
+                        ]
+                    ),
+                    columns=channels,
+                )
                 # run motion correction
                 df_mc_iter = motion_correct(df_dff_iter)
                 # convert back to a table with columns channel and signal
