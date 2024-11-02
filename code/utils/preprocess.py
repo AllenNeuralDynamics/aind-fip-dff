@@ -416,8 +416,107 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
     return dff_mc
 
 
-# run the total preprocessing (dF/F + motion correction) on multiple sessions
-# -- future iteration: collect exceptions in a log file
+# # run the total preprocessing (dF/F + motion correction) on multiple sessions
+# # -- future iteration: collect exceptions in a log file
+# def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
+#     """
+#     Preprocesses the fiber photometry signal (dF/F + motion correction).
+#     Args:
+#         df_fib: pd.DataFrame
+#             Fiber photometry signal
+#         methods: list of str
+#             Methods to preprocess the data. Options: poly, exp, bright
+#     Returns:
+#         df_fip_pp: pd.DataFrame
+#             dF/F of fiber photometry signal
+#         df_pp_params: pd.DataFrame
+#             Dataframe with the parameters of the preprocessing
+#         df_fip_mc: pd.DataFrame
+#             Preprocessed (dF/F + motion correction) of fiber photometry signal
+#     """
+#     df_fip_pp = pd.DataFrame()
+#     df_pp_params = pd.DataFrame()
+#     df_mc = pd.DataFrame()
+
+#     if len(df_fip) == 0:
+#         return df_fip, df_pp_params
+
+#     sessions = pd.unique(df_fip["session"].values)
+#     sessions = sessions[~pd.isna(sessions)]
+#     fiber_numbers = np.unique(df_fip["fiber_number"].values)
+#     channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
+#     channels = channels[~pd.isna(channels)]
+#     for pp_name in methods:
+#         if pp_name in ["poly", "exp", "bright"]:
+#             # dF/F
+#             # for i_iter, (channel, fiber_number, session) in enumerate(
+#             #     itertools.product(channels, fiber_numbers, sessions)
+#             # ):
+#             for i_iter, (fiber_number, session, channel) in enumerate(
+#                 itertools.product(fiber_numbers, sessions, channels)
+#             ):
+#                 df_fip_iter = df_fip[
+#                     (df_fip["session"] == session)
+#                     & (df_fip["fiber_number"] == fiber_number)
+#                     & (df_fip["channel"] == channel)
+#                 ].copy()
+#                 if len(df_fip_iter) == 0:
+#                     continue
+
+#                 NM_values = df_fip_iter["signal"].values
+#                 NM_preprocessed, NM_fitting_params = chunk_processing(
+#                     NM_values, method=pp_name
+#                 )
+#                 df_fip_iter.loc[:, "signal"] = NM_preprocessed
+#                 df_fip_iter.loc[:, "preprocess"] = pp_name
+#                 df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
+
+#                 NM_fitting_params.update(
+#                     {
+#                         "preprocess": pp_name,
+#                         "channel": channel,
+#                         "fiber_number": fiber_number,
+#                         "session": session,
+#                     }
+#                 )
+#                 df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+#                 df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+
+#             # motion correction
+#             for i_iter, (fiber_number, session) in enumerate(
+#                 itertools.product(fiber_numbers, sessions)
+#             ):
+#                 df_fip_iter = df_fip_pp[
+#                     (df_fip_pp["session"] == session)
+#                     & (df_fip_pp["fiber_number"] == fiber_number)
+#                     & (df_fip_pp["preprocess"] == pp_name)
+#                 ].copy()
+#                 if len(df_fip_iter) == 0:
+#                     continue
+
+#                 # convert to #frames x #channels
+#                 df_dff_iter = pd.DataFrame(
+#                     np.column_stack(
+#                         [
+#                             df_fip_iter[df_fip_iter["channel"] == c]["signal"].values
+#                             for c in channels
+#                         ]
+#                     ),
+#                     columns=channels,
+#                 )
+#                 # run motion correction
+#                 df_mc_iter = motion_correct(df_dff_iter)
+#                 # convert back to a table with columns channel and signal
+#                 df_mc_iter = df_mc_iter.melt(var_name="channel", value_name="signal")
+#                 df_mc = pd.concat([df_mc, df_mc_iter], ignore_index=True)
+#     df_fip_mc = df_fip_pp.copy()
+#     df_fip_mc["signal"] = df_mc["signal"]
+
+#     return df_fip_pp, df_pp_params, df_fip_mc
+
+
+
+
 def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
@@ -448,54 +547,48 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:
         if pp_name in ["poly", "exp", "bright"]:
-            # dF/F
-            for i_iter, (channel, fiber_number, session) in enumerate(
-                itertools.product(channels, fiber_numbers, sessions)
+            for i_iter, (session, fiber_number) in enumerate(
+                itertools.product(sessions, fiber_numbers)
             ):
-                df_fip_iter = df_fip[
-                    (df_fip["session"] == session)
-                    & (df_fip["fiber_number"] == fiber_number)
-                    & (df_fip["channel"] == channel)
-                ].copy()
-                if len(df_fip_iter) == 0:
+                # dF/F
+                df_1fiber = pd.DataFrame()
+                for channel in channels:
+                    df_fip_iter = df_fip[
+                        (df_fip["session"] == session)
+                        & (df_fip["fiber_number"] == fiber_number)
+                        & (df_fip["channel"] == channel)
+                    ].copy()
+                    if len(df_fip_iter) == 0:
+                        continue
+
+                    NM_values = df_fip_iter["signal"].values
+                    NM_preprocessed, NM_fitting_params = chunk_processing(
+                        NM_values, method=pp_name
+                    )
+                    df_fip_iter.loc[:, "signal"] = NM_preprocessed
+                    df_fip_iter.loc[:, "preprocess"] = pp_name
+                    df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], ignore_index=True)
+                    df_1fiber = pd.concat([df_1fiber, df_fip_iter], ignore_index=True)
+
+                    NM_fitting_params.update(
+                        {
+                            "preprocess": pp_name,
+                            "channel": channel,
+                            "fiber_number": fiber_number,
+                            "session": session,
+                        }
+                    )
+                    df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+                    df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+
+                # motion correction
+                if len(df_1fiber) == 0:
                     continue
-
-                NM_values = df_fip_iter["signal"].values
-                NM_preprocessed, NM_fitting_params = chunk_processing(
-                    NM_values, method=pp_name
-                )
-                df_fip_iter.loc[:, "signal"] = NM_preprocessed
-                df_fip_iter.loc[:, "preprocess"] = pp_name
-                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
-
-                NM_fitting_params.update(
-                    {
-                        "preprocess": pp_name,
-                        "channel": channel,
-                        "fiber_number": fiber_number,
-                        "session": session,
-                    }
-                )
-                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-
-            # motion correction
-            for i_iter, (fiber_number, session) in enumerate(
-                itertools.product(fiber_numbers, sessions)
-            ):
-                df_fip_iter = df_fip_pp[
-                    (df_fip_pp["session"] == session)
-                    & (df_fip_pp["fiber_number"] == fiber_number)
-                    & (df_fip_pp["preprocess"] == pp_name)
-                ].copy()
-                if len(df_fip_iter) == 0:
-                    continue
-
                 # convert to #frames x #channels
                 df_dff_iter = pd.DataFrame(
                     np.column_stack(
                         [
-                            df_fip_iter[df_fip_iter["channel"] == c]["signal"].values
+                            df_1fiber[df_1fiber["channel"] == c]["signal"].values
                             for c in channels
                         ]
                     ),
@@ -510,6 +603,7 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     df_fip_mc["signal"] = df_mc["signal"]
 
     return df_fip_pp, df_pp_params, df_fip_mc
+
 
 
 # Below are obsolete Processing Functions that used the NPM system instead of NWB
