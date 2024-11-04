@@ -73,7 +73,6 @@ def nwb_to_dataframe(nwbfile):
     required_substrings = ["R_", "G_", "Iso_"]
 
     data_dict = {}
-    timestamps_added = False
     timestamps = {}
 
     # Iterate over all TimeSeries in the NWB file
