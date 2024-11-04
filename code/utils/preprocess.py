@@ -448,54 +448,48 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:
         if pp_name in ["poly", "exp", "bright"]:
-            # dF/F
-            for i_iter, (channel, fiber_number, session) in enumerate(
-                itertools.product(channels, fiber_numbers, sessions)
+            for i_iter, (session, fiber_number) in enumerate(
+                itertools.product(sessions, fiber_numbers)
             ):
-                df_fip_iter = df_fip[
-                    (df_fip["session"] == session)
-                    & (df_fip["fiber_number"] == fiber_number)
-                    & (df_fip["channel"] == channel)
-                ].copy()
-                if len(df_fip_iter) == 0:
+                # dF/F
+                df_1fiber = pd.DataFrame()
+                for channel in channels:
+                    df_fip_iter = df_fip[
+                        (df_fip["session"] == session)
+                        & (df_fip["fiber_number"] == fiber_number)
+                        & (df_fip["channel"] == channel)
+                    ].copy()
+                    if len(df_fip_iter) == 0:
+                        continue
+
+                    NM_values = df_fip_iter["signal"].values
+                    NM_preprocessed, NM_fitting_params = chunk_processing(
+                        NM_values, method=pp_name
+                    )
+                    df_fip_iter.loc[:, "signal"] = NM_preprocessed
+                    df_fip_iter.loc[:, "preprocess"] = pp_name
+                    df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], ignore_index=True)
+                    df_1fiber = pd.concat([df_1fiber, df_fip_iter], ignore_index=True)
+
+                    NM_fitting_params.update(
+                        {
+                            "preprocess": pp_name,
+                            "channel": channel,
+                            "fiber_number": fiber_number,
+                            "session": session,
+                        }
+                    )
+                    df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+                    df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+
+                # motion correction
+                if len(df_1fiber) == 0:
                     continue
-
-                NM_values = df_fip_iter["signal"].values
-                NM_preprocessed, NM_fitting_params = chunk_processing(
-                    NM_values, method=pp_name
-                )
-                df_fip_iter.loc[:, "signal"] = NM_preprocessed
-                df_fip_iter.loc[:, "preprocess"] = pp_name
-                df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], axis=0)
-
-                NM_fitting_params.update(
-                    {
-                        "preprocess": pp_name,
-                        "channel": channel,
-                        "fiber_number": fiber_number,
-                        "session": session,
-                    }
-                )
-                df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-
-            # motion correction
-            for i_iter, (fiber_number, session) in enumerate(
-                itertools.product(fiber_numbers, sessions)
-            ):
-                df_fip_iter = df_fip_pp[
-                    (df_fip_pp["session"] == session)
-                    & (df_fip_pp["fiber_number"] == fiber_number)
-                    & (df_fip_pp["preprocess"] == pp_name)
-                ].copy()
-                if len(df_fip_iter) == 0:
-                    continue
-
                 # convert to #frames x #channels
                 df_dff_iter = pd.DataFrame(
                     np.column_stack(
                         [
-                            df_fip_iter[df_fip_iter["channel"] == c]["signal"].values
+                            df_1fiber[df_1fiber["channel"] == c]["signal"].values
                             for c in channels
                         ]
                     ),
