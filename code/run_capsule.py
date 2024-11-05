@@ -7,6 +7,7 @@ from datetime import datetime as dt
 from pathlib import Path
 from typing import Union
 
+import matplotlib.pyplot as plt
 from aind_data_schema.core.processing import (
     DataProcess,
     PipelineProcess,
@@ -19,7 +20,7 @@ import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
 
 """
-This capsule should take in an NWB file, 
+This capsule should take in an NWB file,
 check the number of subjects (confirm this),
 check the number of channels,
 check the number of fibers,
@@ -74,6 +75,55 @@ def write_output_metadata(
     prev_processing.write_standard_file(output_directory=Path(output_fp).parent)
 
 
+def plot_raw_dff_mc(nwb_file, fiber, channels, method, fig_path="/results/plots/"):
+    """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
+    for multiple channels from an NWB file.
+
+    Parameters
+    ----------
+    nwb_file : NWBFile
+        The Neurodata Without Borders (NWB) file containing photometry signal traces
+        and their associated metadata.
+    fiber : str
+        The name of the fiber for which the signals should be plotted.
+    channels : list of str
+        A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
+    method : str
+        The name of the preprocessing method used ("poly", "exp", or "bright").
+    fig_path : str, optional
+        The path where the generated plot will be saved. Defaults to "/results/plots/".
+    """
+    fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
+    for i, suffix in enumerate(("", f"_dff-{method}", f"_preprocessed-{method}")):
+        for ch in sorted(channels):
+            trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
+            t, d = trace.timestamps[:], trace.data[:]
+            ax[i].plot(
+                t,
+                d * 100 if i else d,
+                label=ch,
+                alpha=0.8,
+                # more color-blind-friendly g, b, and r
+                c={"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}.get(ch, f"C{i}"),
+            )
+        if i == 0:
+            ax[i].legend()
+        ax[i].set_title(
+            (
+                "Raw",
+                r"$\Delta$F/F ('dff')",
+                r"$\Delta$F/F + motion-correction ('preprocessed')",
+            )[i]
+        )
+        ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
+    ax[i].set_xlim(t[0] - (t[-1] - t[0]) / 100, t[-1] + (t[-1] - t[0]) / 100)
+    plt.suptitle(f"Method: {method},  Fiber: {fiber}", y=1)
+    plt.xlabel("Time [" + trace.unit + "]")
+    plt.tight_layout(pad=0.2)
+    os.makedirs(fig_path, exist_ok=True)
+    plt.savefig(os.path.join(fig_path, f"Fiber{fiber}_{method}.png"))
+
+
 if __name__ == "__main__":
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -105,6 +155,7 @@ if __name__ == "__main__":
             "reweighted least squares (IRLS)"
         ),
     )
+    parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
 
     # Create the destination directory if it doesn't exist
@@ -153,7 +204,7 @@ if __name__ == "__main__":
                         (df_fip_pp_nwb, "dff"),
                         (df_fip_mc, "preprocessed"),
                     ):
-                        # format the processed traces as dict to allow for proper conversion to nwb
+                        # format the processed traces as dict for conversion to nwb
                         dict_from_df = nwb_utils.split_fip_traces(
                             df[df.preprocess == method]
                         )
@@ -164,8 +215,26 @@ if __name__ == "__main__":
 
                 io.write(nwb_file)
                 print(
-                    f"Successfully updated the nwb with preprocessed data using methods {methods}"
+                    "Successfully updated the nwb with preprocessed data"
+                    f" using methods {methods}"
                 )
+                if not args.no_qc:
+                    for method in methods:
+                        keys_split = [
+                            k.split("_")
+                            for k in nwb_file.acquisition.keys()
+                            if k.endswith(method)
+                        ]
+                        channels = sorted(set([k[0] for k in keys_split]))
+                        fibers = sorted(set([k[1] for k in keys_split]))
+                        for fiber in fibers:
+                            plot_raw_dff_mc(
+                                nwb_file,
+                                fiber,
+                                channels,
+                                method,
+                                os.path.join(args.output_dir, "plots"),
+                            )
         else:
             print("NO Fiber but only Behavior data, preprocessing not needed")
 

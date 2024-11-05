@@ -20,6 +20,7 @@ RUN pip3 install -U --no-cache-dir \
     aind-data-schema==0.38.0 \
     aind-ophys-utils \
     hdmf-zarr \
+    matplotlib \
     pynwb \
     scikit-learn \
     statsmodels
