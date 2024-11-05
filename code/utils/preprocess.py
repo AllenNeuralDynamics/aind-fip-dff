@@ -1,7 +1,4 @@
-import glob
 import itertools
-import os
-import re
 
 import numpy as np
 import pandas as pd
@@ -418,8 +415,6 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
     return dff_mc
 
 
-# run the total preprocessing (dF/F + motion correction) on multiple sessions
-# -- future iteration: collect exceptions in a log file
 def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
@@ -470,10 +465,8 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                     )
                     df_fip_iter.loc[:, "signal"] = NM_preprocessed
                     df_fip_iter.loc[:, "preprocess"] = pp_name
-                    df_fip_pp = pd.concat(
-                        [df_fip_pp, df_fip_iter], ignore_index=True)
-                    df_1fiber = pd.concat(
-                        [df_1fiber, df_fip_iter], ignore_index=True)
+                    df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], ignore_index=True)
+                    df_1fiber = pd.concat([df_1fiber, df_fip_iter], ignore_index=True)
 
                     NM_fitting_params.update(
                         {
@@ -483,10 +476,8 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                             "session": session,
                         }
                     )
-                    df_pp_params_ses = pd.DataFrame(
-                        NM_fitting_params, index=[0])
-                    df_pp_params = pd.concat(
-                        [df_pp_params, df_pp_params_ses], axis=0)
+                    df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+                    df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
 
                 # motion correction
                 if len(df_1fiber) == 0:
@@ -495,8 +486,7 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 df_dff_iter = pd.DataFrame(
                     np.column_stack(
                         [
-                            df_1fiber[df_1fiber["channel"]
-                                      == c]["signal"].values
+                            df_1fiber[df_1fiber["channel"] == c]["signal"].values
                             for c in channels
                         ]
                     ),
@@ -512,109 +502,3 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
     df_fip_mc["signal"] = df_mc["signal"]
 
     return df_fip_pp, df_pp_params, df_fip_mc
-
-
-# Below are obsolete Processing Functions that used the NPM system instead of NWB
-# ---------------------------------------------------------------------------------------------
-# Function to create the input to the batch processing function
-def load_Homebrew_fip_data(filenames, fibers_per_file=2):
-    """
-    This function loops over the filenames for the channels
-    in the NPM system 'L415', 'L470', 'L560'
-    The created dataframe has the following fields:
-        - session
-        - time
-        - signal
-        - fiber_number
-        - channel
-        - excitation
-        - camera
-        - system
-    """
-
-    df_fip = pd.DataFrame()
-    # df_data_acquisition = pd.DataFrame()
-    save_fip_channels = np.arange(1, fibers_per_file + 1)
-    for filename in filenames:
-        subject_id, session_date, session_time = (
-            re.search(r"\d{6}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", filename)
-            .group()
-            .split("_")
-        )
-        session_name = subject_id + "_" + session_date + "_" + session_time
-        header = os.path.basename(filename).split("/")[-1]
-        channel = ("_".join(header.split("_")[:2])).replace("FIP_Data", "")
-        try:
-            df_fip_file = pd.read_csv(
-                filename, header=None)  # read the CSV file
-        except pd.errors.EmptyDataError:
-            continue
-        except FileNotFoundError:
-            continue
-        df_file = pd.DataFrame()
-        for col in df_fip_file.columns[save_fip_channels]:
-            df_fip_file_renamed = df_fip_file[[0, col]].rename(
-                columns={0: "time_fip", col: "signal"}
-            )
-            channel_number = int(col)
-            df_fip_file_renamed["fiber_number"] = channel_number
-            df_fip_file_renamed.loc[:,
-                                    "frame_number"] = df_fip_file.index.values
-            df_file = pd.concat([df_file, df_fip_file_renamed])
-            # df_data_acquisition = pd.concat([df_data_acquisition, pd.DataFrame({'session':ses_idx, 'system':'FIP', channel+str(channel_number):1.,'N_files':len(filenames)}, index=[0])])
-        df_file["channel"] = channel
-        camera = {"Iso": "G", "G": "G", "R": "R"}[channel]
-        excitation = {"Iso": 415, "G": 470, "R": 560}[channel]
-        df_file["excitation"] = excitation
-        df_file["camera"] = camera
-        df_fip = pd.concat([df_fip, df_file], axis=0)
-
-    if len(df_fip) > 0:
-        df_fip["system"] = "FIP"
-        df_fip["preprocess"] = "None"
-        df_fip["session"] = subject_id + "_" + \
-            session_date + "_" + session_time
-        df_fip_ses = df_fip.loc[
-            :,
-            [
-                "session",
-                "frame_number",
-                "time_fip",
-                "signal",
-                "channel",
-                "fiber_number",
-                "excitation",
-                "camera",
-                "system",
-                "preprocess",
-            ],
-        ]
-    else:
-        df_fip_ses = df_fip
-    return df_fip_ses
-
-
-# Function to get the preprocessed (pp) dataframe without the nwb generation
-# -- used to check if the new method is working
-def gen_pp_df_old_version(AnalDir="../trial_data/700708_2024-06-14_08-38-31/"):
-
-    # define the files with the traces from each of the channels
-    filenames = []
-    for name in ["FIP_DataG", "FIP_DataR", "FIP_DataIso"]:
-        if (
-            bool(
-                glob.glob(AnalDir + os.sep + "**" +
-                          os.sep + name + "*", recursive=True)
-            )
-            == True
-        ):
-            filenames.extend(
-                glob.glob(AnalDir + os.sep + "**" +
-                          os.sep + name + "*", recursive=True)
-            )
-
-    # create the df for input to the batch preprocessing function and then preprocess it
-    df_fip_ses = load_Homebrew_fip_data(filenames=filenames)
-    df_fip_pp, df_PP_params = batch_processing(df_fip=df_fip_ses)
-
-    return df_fip_ses, df_fip_pp, df_PP_params
