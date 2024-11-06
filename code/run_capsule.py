@@ -36,43 +36,45 @@ def write_output_metadata(
     output_fp: Union[str, Path],
     start_date_time: dt,
 ) -> None:
-    """Writes output metadata to plane processing.json
+    """Writes output metadata to processing.json
 
     Parameters
     ----------
-    metadata: dict
-        parameters passed to the capsule
-    input_fp: str
-        path to data input
-    output_fp: str
-        path to data output
+    metadata : dict
+        Parameters passed to the capsule.
+    process_json_dir : str
+        Directory where the processing.json file is located.
+    process_name : str
+        Name of the process being recorded.
+    input_fp : Union[str, Path]
+        Path to the data input.
+    output_fp : Union[str, Path]
+        Path to the data output.
+    start_date_time : dt
+        Start date and time of the process.
     """
     with open(Path(process_json_dir) / "processing.json", "r") as f:
         proc_data = json.load(f)
-    processing = Processing(
-        processing_pipeline=PipelineProcess(
-            processor_full_name="Fiberphotometry Processing Pipeline",
-            pipeline_url=os.getenv("PIPELINE_URL", ""),
-            pipeline_version=os.getenv("PIPELINE_VERSION", ""),
-            data_processes=[
-                DataProcess(
-                    name=process_name,
-                    software_version=os.getenv("VERSION", ""),
-                    start_date_time=start_date_time,
-                    end_date_time=dt.now(),
-                    input_location=str(input_fp),
-                    output_location=str(output_fp),
-                    code_url=(os.getenv("DFF_EXTRACTION_URL")),
-                    parameters=metadata,
-                )
-            ],
+    processing = Processing(**proc_data)
+    p = processing.processing_pipeline
+    p.data_processes.append(
+        DataProcess(
+            name=process_name,
+            software_version=os.getenv("VERSION", ""),
+            start_date_time=start_date_time,
+            end_date_time=dt.now(),
+            input_location=str(input_fp),
+            output_location=str(output_fp),
+            code_url=(os.getenv("DFF_EXTRACTION_URL")),
+            parameters=metadata,
         )
     )
-    prev_processing = Processing(**proc_data)
-    prev_processing.processing_pipeline.data_processes.append(
-        processing.processing_pipeline.data_processes[0]
-    )
-    prev_processing.write_standard_file(output_directory=Path(output_fp).parent)
+    p.processor_full_name = "Fiberphotometry Processing Pipeline"
+    if u := os.getenv("PIPELINE_URL", ""):
+        p.pipeline_url = u
+    if v := os.getenv("PIPELINE_VERSION", ""):
+        p.pipeline_version = v
+    processing.write_standard_file(output_directory=Path(output_fp).parent)
 
 
 def plot_raw_dff_mc(nwb_file, fiber, channels, method, fig_path="/results/plots/"):
