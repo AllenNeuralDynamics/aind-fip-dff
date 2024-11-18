@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from aind_ophys_utils.signal_utils import noise_std
 from scipy.optimize import curve_fit, minimize
-from scipy.signal import butter, filtfilt, medfilt
+from scipy.signal import butter, sosfiltfilt, medfilt
 from sklearn.linear_model import LinearRegression
 from statsmodels.api import RLM
 from statsmodels.robust import scale
@@ -25,17 +25,17 @@ def tc_medfilt(tc, kernelSize):
     return tc_filtered
 
 
-# Lowpass filter - zero phase filtering (with filtfilt) is used to avoid distorting the signal.
+# Lowpass filter - zero phase filtering (with sosfiltfilt) is used to avoid distorting the signal.
 def tc_lowcut(tc, sampling_rate):
-    b, a = butter(2, 9, btype="low", fs=sampling_rate)
-    tc_filtered = filtfilt(b, a, tc)
+    sos = butter(2, 9, btype="low", fs=sampling_rate, output='sos')
+    tc_filtered = sosfiltfilt(sos, tc)
     return tc_filtered
 
 
 # setting up sliding baseline to calculate dF/F
 def tc_slidingbase(tc, sampling_rate):
-    b, a = butter(2, 0.0001, btype="low", fs=sampling_rate)
-    tc_base = filtfilt(b, a, tc, padtype="even")
+    sos = butter(2, 0.0001, btype="low", fs=sampling_rate, output='sos')
+    tc_base = sosfiltfilt(sos, tc, padtype="even")
     return tc_base
 
 
@@ -396,8 +396,8 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
             Preprocessed fiber photometry signal with motion correction applied
             (dF/F + motion correction).
     """
-    b, a = butter(N=2, Wn=0.3, fs=fs)
-    dff_filt = filtfilt(b, a, dff, axis=0).T
+    sos = butter(N=2, Wn=0.3, fs=fs, output='sos')
+    dff_filt = sosfiltfilt(sos, dff, axis=0).T
     motion = dff_filt[dff.columns.get_loc("Iso")]
     if M is not None:
         motion = (
