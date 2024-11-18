@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from aind_ophys_utils.signal_utils import noise_std
 from scipy.optimize import curve_fit, minimize
-from scipy.signal import butter, filtfilt, medfilt, sosfilt
+from scipy.signal import butter, filtfilt, medfilt
 from sklearn.linear_model import LinearRegression
 from statsmodels.api import RLM
 from statsmodels.robust import scale
@@ -396,8 +396,8 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
             Preprocessed fiber photometry signal with motion correction applied
             (dF/F + motion correction).
     """
-    sos = butter(N=2, Wn=0.3, fs=fs, output="sos")
-    dff_filt = sosfilt(sos, dff, axis=0).T
+    b, a = butter(N=2, Wn=0.3, fs=fs)
+    dff_filt = filtfilt(b, a, dff, axis=0).T
     motion = dff_filt[dff.columns.get_loc("Iso")]
     if M is not None:
         motion = (
