@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import shutil
+import logging
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Union
@@ -90,6 +91,8 @@ def write_output_metadata(
             process_name="processed"
         )
         derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
+    else:
+        logging.error("no input data description")
 
 
 
