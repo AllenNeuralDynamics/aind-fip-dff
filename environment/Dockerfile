@@ -8,7 +8,7 @@ ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
-ENV PIPELINE_URL="https://codeocean.allenneuraldynamics.org/capsule/6519101"
+ENV PIPELINE_URL="https://codeocean.allenneuraldynamics.org/capsule/0995759"
 ENV PIPELINE_VERSION="1.0"
 ENV VERSION="1.0"
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
