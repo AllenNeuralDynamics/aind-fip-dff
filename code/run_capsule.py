@@ -14,7 +14,10 @@ from aind_data_schema.core.processing import (
     Processing,
     ProcessName,
 )
+from aind_data_schema.core.data_description import DerivedDataDescription
 from hdmf_zarr import NWBZarrIO
+
+from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -75,6 +78,19 @@ def write_output_metadata(
     if v := os.getenv("PIPELINE_VERSION", ""):
         p.pipeline_version = v
     processing.write_standard_file(output_directory=Path(output_fp).parent)
+
+    dd_file = Path(json_dir) / "data_description.json"
+    if os.path.exists(dd_file):
+        with open(dd_file, "r") as f:
+            dd_data = json.load(f)
+        dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
+        new_dd = dd_upgrader.upgrade()
+        derived_dd = DerivedDataDescription.from_data_description(
+            data_description=new_dd,
+            process_name="processed"
+
+        derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
+
 
 
 def plot_raw_dff_mc(nwb_file, fiber, channels, method, fig_path="/results/plots/"):
