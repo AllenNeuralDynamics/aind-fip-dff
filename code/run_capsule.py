@@ -30,7 +30,7 @@ then preprocess the arrays with the dF_F signal
 
 def write_output_metadata(
     metadata: dict,
-    process_json_dir: str,
+    json_dir: str,
     process_name: str,
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -42,8 +42,8 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    process_json_dir : str
-        Directory where the processing.json file is located.
+    json_dir : str
+        Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
     input_fp : Union[str, Path]
@@ -53,7 +53,7 @@ def write_output_metadata(
     start_date_time : dt
         Start date and time of the process.
     """
-    with open(Path(process_json_dir) / "processing.json", "r") as f:
+    with open(Path(json_dir) / "processing.json", "r") as f:
         proc_data = json.load(f)
     processing = Processing(**proc_data)
     p = processing.processing_pipeline
