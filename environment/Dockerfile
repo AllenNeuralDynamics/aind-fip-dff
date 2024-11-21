@@ -23,4 +23,5 @@ RUN pip3 install -U --no-cache-dir \
     matplotlib \
     pynwb \
     scikit-learn \
-    statsmodels
+    statsmodels \
+    aind-metadata-upgrader
