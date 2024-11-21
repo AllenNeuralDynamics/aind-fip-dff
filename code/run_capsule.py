@@ -8,12 +8,8 @@ from pathlib import Path
 from typing import Union
 
 import matplotlib.pyplot as plt
-from aind_data_schema.core.processing import (
-    DataProcess,
-    PipelineProcess,
-    Processing,
-    ProcessName,
-)
+import pynwb
+from aind_data_schema.core.processing import DataProcess, Processing, ProcessName
 from hdmf_zarr import NWBZarrIO
 
 import utils.nwb_dict_utils as nwb_utils
@@ -77,7 +73,13 @@ def write_output_metadata(
     processing.write_standard_file(output_directory=Path(output_fp).parent)
 
 
-def plot_raw_dff_mc(nwb_file, fiber, channels, method, fig_path="/results/plots/"):
+def plot_raw_dff_mc(
+    nwb_file: pynwb.NWBFile,
+    fiber: str,
+    channels: list[str],
+    method: str,
+    fig_path: str = "/results/plots/",
+):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
 
