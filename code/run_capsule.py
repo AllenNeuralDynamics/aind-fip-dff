@@ -16,6 +16,7 @@ from aind_data_schema.core.processing import (
     ProcessName,
 )
 from aind_data_schema.core.data_description import DerivedDataDescription
+import pynwb
 from hdmf_zarr import NWBZarrIO
 
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
@@ -96,7 +97,13 @@ def write_output_metadata(
 
 
 
-def plot_raw_dff_mc(nwb_file, fiber, channels, method, fig_path="/results/plots/"):
+def plot_raw_dff_mc(
+    nwb_file: pynwb.NWBFile,
+    fiber: str,
+    channels: list[str],
+    method: str,
+    fig_path: str = "/results/plots/",
+):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
 
