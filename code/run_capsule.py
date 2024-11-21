@@ -244,10 +244,9 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in os.listdir(src_directory):
-            if filename.endswith(".json") and filename != "processing.json":
-                # Construct full file path
-                src_file = os.path.join(src_directory, filename)
+        for filename in [ 'subject.json', 'procedures.json', 'session.json' ]
+            src_file = os.path.join(src_directory, filename)
+            if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
 
                 # Move the file
