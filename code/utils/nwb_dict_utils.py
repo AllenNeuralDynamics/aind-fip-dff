@@ -3,7 +3,7 @@ import pandas as pd
 import pynwb
 
 
-def is_numeric(obj):
+def is_numeric(obj) -> bool:
     """
     Check if an array or object is numeric
     """
@@ -11,7 +11,21 @@ def is_numeric(obj):
     return all(hasattr(obj, attr) for attr in attrs)
 
 
-def attach_dict_fip(nwb, dict_fip, suffix):
+def attach_dict_fip(
+    nwb: pynwb.NWBFile, dict_fip: dict[str, list[np.ndarray]], suffix: str
+) -> pynwb.NWBFile:
+    """
+    Attach a dictionary of fiber photometry data to an NWB file.
+    Args:
+        nwb: pynwb.NWBFile
+            The NWB file to attach the data to.
+        dict_fip: dict[str, list[np.ndarray]]
+            Dictionary containing fiber photometry data.
+        suffix: str
+            Suffix to add to the name of each TimeSeries.
+    Returns:
+        pynwb.NWBFile: The NWB file with the attached data.
+    """
     for neural_stream in dict_fip:
         ts = pynwb.TimeSeries(
             name=neural_stream + suffix,
@@ -23,29 +37,28 @@ def attach_dict_fip(nwb, dict_fip, suffix):
     return nwb
 
 
-def split_fip_traces(df_fip, split_by=["channel", "fiber_number"]):
+def split_fip_traces(
+    df_fip: pd.DataFrame, split_by: list[str] = ["channel", "fiber_number"]
+) -> dict:
     """
     split_neural_traces takes in a dataframe with fiber photometry data series and splits it into
     individual traces for each channel and each channel number.
-
-    Parameters
-    ----------
-    df_fip: DataFrame
-        Time series Dataframe with columns signal, time, channel, and channel number.
-        Has the signals for variations of channel and channel numbers are mixed together
-
-    Returns
-    ----------
-    dict_fip: dictionary
-        Dictionary that takes in channel name and channel number as key, and time series and signal
-        bundled together as a 2x<TIMESERIES_LEN> as the value
-
+    Args:
+        df_fip: pd.DataFrame
+            Time series Dataframe with columns signal, time, channel, and channel number.
+            Has the signals for variations of channel and channel numbers are mixed together
+    Returns:
+        dict_fip: dict
+            Dictionary that takes in channel name and channel number as key, and time series and signal
+            bundled together as a 2x<TIMESERIES_LEN> as the value
     """
     dict_fip = {}
     groups = df_fip.groupby(split_by)
     for group_name, df_group in list(groups):
         df_group = df_group.sort_values("time_fip")
-        # Transforms integers in the name into int type strings. This is needed because nan in the dataframe entries automatically transform entire columns into float type
+        # Transforms integers in the name into int type strings.
+        # This is needed because nan in the dataframe entries
+        # automatically transform entire columns into float type
         group_name_string = [
             str(int(x)) if (is_numeric(x) and x == int(x)) else str(x)
             for x in group_name
@@ -57,17 +70,18 @@ def split_fip_traces(df_fip, split_by=["channel", "fiber_number"]):
     return dict_fip
 
 
-def nwb_to_dataframe(nwbfile):
+def nwb_to_dataframe(nwbfile: pynwb.NWBFile) -> pd.DataFrame:
     """
     Reads time series data from an NWB file, converts it into a dictionary,
     including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
-    Also adds a single 'timestamps' field from the first matching key and converts the dictionary to a pandas DataFrame.
-
-    Parameters:
-    nwbfile: NWB zarr file including aligned times
-
-    Returns:
-    pd.DataFrame: A pandas DataFrame with the time series data and timestamps.
+    Also adds a single 'timestamps' field from the first matching key
+    and converts the dictionary to a pandas DataFrame.
+    Args:
+        nwbfile:
+            NWB zarr file including aligned times
+    Returns: pynwb.NWBFile
+        df: pd.DataFrame
+            A pandas DataFrame with the time series data and timestamps.
     """
     # Define the list of required substrings
     required_substrings = ["R_", "G_", "Iso_"]
