@@ -17,7 +17,7 @@ RUN pip3 install -U --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
 
 RUN pip3 install -U --no-cache-dir \
-    aind-data-schema>1.0.0 \
+    aind-data-schema>=1.2.0 \
     aind-ophys-utils \
     hdmf-zarr \
     matplotlib \
