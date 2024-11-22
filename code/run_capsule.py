@@ -78,14 +78,14 @@ def write_output_metadata(
         
         proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
         processing = proc_upgrader.upgrade(processor_full_name="Fiberphotometry Processing Pipeline")
-        processing.processing_pipeline.data_processes.append(dp)
+        p = processing.processing_pipeline
+        p.data_processes.append(dp)
     else:
-        processing = Processing(
-            process_pipeline=PipelineProcess(
+        p = PipelineProcess(
                 processor_full_name="Fiberphotometry Processing Pipeline",
                 data_processes=[dp],
             )
-        )
+        processing = Processing(processing_pipeline=p)
     if u := os.getenv("PIPELINE_URL", ""):
         p.pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
@@ -281,7 +281,7 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in [ 'subject.json', 'procedures.json', 'session.json' ]
+        for filename in [ 'subject.json', 'procedures.json', 'session.json' ]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
@@ -290,12 +290,11 @@ if __name__ == "__main__":
                 shutil.copy2(src_file, dest_file)
                 print(f"Moved: {src_file} to {dest_file}")
 
-    # Append to processing.json
     write_output_metadata(
-        vars(args),
-        src_directory,
-        ProcessName.DF_F_ESTIMATION,
-        source_path,
-        os.path.join(args.output_dir, "nwb"),
-        start_time,
+        metadata=vars(args),
+        json_dir=src_directory,
+        process_name=ProcessName.DF_F_ESTIMATION,
+        input_fp=source_paths[-1] if source_paths else None,
+        output_fp=os.path.join(args.output_dir, "nwb"),
+        start_date_time=start_time,
     )
