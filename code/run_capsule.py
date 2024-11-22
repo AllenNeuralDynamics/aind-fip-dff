@@ -20,6 +20,7 @@ import pynwb
 from hdmf_zarr import NWBZarrIO
 
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
+from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -58,23 +59,33 @@ def write_output_metadata(
     start_date_time : dt
         Start date and time of the process.
     """
-    with open(Path(json_dir) / "processing.json", "r") as f:
-        proc_data = json.load(f)
-    processing = Processing(**proc_data)
-    p = processing.processing_pipeline
-    p.data_processes.append(
-        DataProcess(
-            name=process_name,
-            software_version=os.getenv("VERSION", ""),
-            start_date_time=start_date_time,
-            end_date_time=dt.now(),
-            input_location=str(input_fp),
-            output_location=str(output_fp),
-            code_url=(os.getenv("DFF_EXTRACTION_URL")),
-            parameters=metadata,
-        )
+    proc_path = Path(json_dir) / "processing.json"
+
+    dp = DataProcess(
+        name=process_name,
+        software_version=os.getenv("VERSION", ""),
+        start_date_time=start_date_time,
+        end_date_time=dt.now(),
+        input_location=str(input_fp),
+        output_location=str(output_fp),
+        code_url=(os.getenv("DFF_EXTRACTION_URL")),
+        parameters=metadata,
     )
-    p.processor_full_name = "Fiberphotometry Processing Pipeline"
+
+    if os.path.exists(proc_path):
+        with open(proc_path, "r") as f:
+            proc_data = json.load(f)
+        
+        proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
+        processing = proc_upgrader.upgrade(processor_full_name="Fiberphotometry Processing Pipeline")
+        processing.processing_pipeline.data_processes.append(dp)
+    else:
+        processing = Processing(
+            process_pipeline=PipelineProcess(
+                processor_full_name="Fiberphotometry Processing Pipeline",
+                data_processes=[dp],
+            )
+        )
     if u := os.getenv("PIPELINE_URL", ""):
         p.pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
