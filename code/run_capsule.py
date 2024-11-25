@@ -3,14 +3,24 @@ import glob
 import json
 import os
 import shutil
+import logging
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Union
 
 import matplotlib.pyplot as plt
+from aind_data_schema.core.processing import (
+    DataProcess,
+    PipelineProcess,
+    Processing,
+    ProcessName,
+)
+from aind_data_schema.core.data_description import DerivedDataDescription
 import pynwb
-from aind_data_schema.core.processing import DataProcess, Processing, ProcessName
 from hdmf_zarr import NWBZarrIO
+
+from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
+from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -26,7 +36,7 @@ then preprocess the arrays with the dF_F signal
 
 def write_output_metadata(
     metadata: dict,
-    process_json_dir: str,
+    json_dir: str,
     process_name: str,
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -38,8 +48,8 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    process_json_dir : str
-        Directory where the processing.json file is located.
+    json_dir : str
+        Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
     input_fp : Union[str, Path]
@@ -49,28 +59,53 @@ def write_output_metadata(
     start_date_time : dt
         Start date and time of the process.
     """
-    with open(Path(process_json_dir) / "processing.json", "r") as f:
-        proc_data = json.load(f)
-    processing = Processing(**proc_data)
-    p = processing.processing_pipeline
-    p.data_processes.append(
-        DataProcess(
-            name=process_name,
-            software_version=os.getenv("VERSION", ""),
-            start_date_time=start_date_time,
-            end_date_time=dt.now(),
-            input_location=str(input_fp),
-            output_location=str(output_fp),
-            code_url=(os.getenv("DFF_EXTRACTION_URL")),
-            parameters=metadata,
-        )
+    proc_path = Path(json_dir) / "processing.json"
+
+    dp = DataProcess(
+        name=process_name,
+        software_version=os.getenv("VERSION", ""),
+        start_date_time=start_date_time,
+        end_date_time=dt.now(),
+        input_location=str(input_fp),
+        output_location=str(output_fp),
+        code_url=(os.getenv("DFF_EXTRACTION_URL")),
+        parameters=metadata,
     )
-    p.processor_full_name = "Fiberphotometry Processing Pipeline"
+
+    if os.path.exists(proc_path):
+        with open(proc_path, "r") as f:
+            proc_data = json.load(f)
+        
+        proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
+        processing = proc_upgrader.upgrade(processor_full_name="Fiberphotometry Processing Pipeline")
+        p = processing.processing_pipeline
+        p.data_processes.append(dp)
+    else:
+        p = PipelineProcess(
+                processor_full_name="Fiberphotometry Processing Pipeline",
+                data_processes=[dp],
+            )
+        processing = Processing(processing_pipeline=p)
     if u := os.getenv("PIPELINE_URL", ""):
         p.pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
         p.pipeline_version = v
     processing.write_standard_file(output_directory=Path(output_fp).parent)
+
+    dd_file = Path(json_dir) / "data_description.json"
+    if os.path.exists(dd_file):
+        with open(dd_file, "r") as f:
+            dd_data = json.load(f)
+        dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
+        new_dd = dd_upgrader.upgrade()
+        derived_dd = DerivedDataDescription.from_data_description(
+            data_description=new_dd,
+            process_name="processed"
+        )
+        derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
+    else:
+        logging.error("no input data description")
+
 
 
 def plot_raw_dff_mc(
@@ -246,22 +281,20 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in os.listdir(src_directory):
-            if filename.endswith(".json") and filename != "processing.json":
-                # Construct full file path
-                src_file = os.path.join(src_directory, filename)
+        for filename in [ 'subject.json', 'procedures.json', 'session.json' ]:
+            src_file = os.path.join(src_directory, filename)
+            if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
 
                 # Move the file
                 shutil.copy2(src_file, dest_file)
                 print(f"Moved: {src_file} to {dest_file}")
 
-    # Append to processing.json
     write_output_metadata(
-        vars(args),
-        src_directory,
-        ProcessName.DF_F_ESTIMATION,
-        source_path,
-        os.path.join(args.output_dir, "nwb"),
-        start_time,
+        metadata=vars(args),
+        json_dir=src_directory,
+        process_name=ProcessName.DF_F_ESTIMATION,
+        input_fp=source_paths[-1] if source_paths else None,
+        output_fp=os.path.join(args.output_dir, "nwb"),
+        start_date_time=start_time,
     )
