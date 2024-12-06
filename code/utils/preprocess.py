@@ -393,21 +393,26 @@ def motion_correct(
             Preprocessed fiber photometry signal with motion correction applied
             (dF/F + motion correction).
     """
+    if np.isnan(dff["Iso"]).any():
+        return np.nan * dff
     sos = butter(N=2, Wn=0.3, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     motion = dff_filt[dff.columns.get_loc("Iso")]
+    motions = np.nan * dff_filt.T
+    no_nans = ~np.isnan(dff_filt.sum(1))
     if M is not None:
-        motion = (
-            np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt], 0) * motion
+        motions[:, no_nans] = (
+            np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt[no_nans]], 0)
+            * motion
         ).T
     else:
-        motion = (
+        motions[:, no_nans] = (
             LinearRegression(fit_intercept=False, positive=True)
-            .fit(motion[:, None], dff_filt.T)
+            .fit(motion[:, None], dff_filt[no_nans].T)
             .predict(motion[:, None])
         )
-    motion -= motion.mean(0)
-    dff_mc = dff - motion
+    motions -= motions.mean(0)
+    dff_mc = dff - motions
     return dff_mc
 
 
