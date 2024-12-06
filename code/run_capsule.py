@@ -1,26 +1,26 @@
 import argparse
 import glob
 import json
+import logging
 import os
 import shutil
-import logging
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Union
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pynwb
+from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
     PipelineProcess,
     Processing,
     ProcessName,
 )
-from aind_data_schema.core.data_description import DerivedDataDescription
-import pynwb
-from hdmf_zarr import NWBZarrIO
-
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
+from hdmf_zarr import NWBZarrIO
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -75,16 +75,18 @@ def write_output_metadata(
     if os.path.exists(proc_path):
         with open(proc_path, "r") as f:
             proc_data = json.load(f)
-        
+
         proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
-        processing = proc_upgrader.upgrade(processor_full_name="Fiberphotometry Processing Pipeline")
+        processing = proc_upgrader.upgrade(
+            processor_full_name="Fiberphotometry Processing Pipeline"
+        )
         p = processing.processing_pipeline
         p.data_processes.append(dp)
     else:
         p = PipelineProcess(
-                processor_full_name="Fiberphotometry Processing Pipeline",
-                data_processes=[dp],
-            )
+            processor_full_name="Fiberphotometry Processing Pipeline",
+            data_processes=[dp],
+        )
         processing = Processing(processing_pipeline=p)
     if u := os.getenv("PIPELINE_URL", ""):
         p.pipeline_url = u
@@ -99,13 +101,11 @@ def write_output_metadata(
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
         new_dd = dd_upgrader.upgrade()
         derived_dd = DerivedDataDescription.from_data_description(
-            data_description=new_dd,
-            process_name="processed"
+            data_description=new_dd, process_name="processed"
         )
         derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
     else:
         logging.error("no input data description")
-
 
 
 def plot_raw_dff_mc(
@@ -137,14 +137,17 @@ def plot_raw_dff_mc(
         for ch in sorted(channels):
             trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
             t, d = trace.timestamps[:], trace.data[:]
-            ax[i].plot(
-                t,
-                d * 100 if i else d,
-                label=ch,
-                alpha=0.8,
-                # more color-blind-friendly g, b, and r
-                c={"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}.get(ch, f"C{i}"),
-            )
+            if ~np.isnan(t).all():
+                ax[i].plot(
+                    t,
+                    d * 100 if i else d,
+                    label=ch,
+                    alpha=0.8,
+                    # more color-blind-friendly g, b, and r
+                    c={"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}.get(
+                        ch, f"C{i}"
+                    ),
+                )
         if i == 0:
             ax[i].legend()
         ax[i].set_title(
@@ -155,7 +158,8 @@ def plot_raw_dff_mc(
             )[i]
         )
         ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
-    ax[i].set_xlim(t[0] - (t[-1] - t[0]) / 100, t[-1] + (t[-1] - t[0]) / 100)
+    tmin, tmax = np.nanmin(t), np.nanmax(t)
+    ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
     plt.suptitle(f"Method: {method},  Fiber: {fiber}", y=1)
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
@@ -281,7 +285,7 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in [ 'subject.json', 'procedures.json', 'session.json' ]:
+        for filename in ["subject.json", "procedures.json", "session.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
