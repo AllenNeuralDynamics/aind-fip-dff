@@ -92,10 +92,14 @@ def tc_expfit(
     try:  # try first providing initial estimates
         tc0 = tc[: int(sampling_rate)].mean()
         popt, pcov = curve_fit(
-            func, time_seconds, tc, (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200)
+            func,
+            time_seconds,
+            tc,
+            (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
+            maxfev=10000,
         )
     except:
-        popt, pcov = curve_fit(func, time_seconds, tc)
+        popt, pcov = curve_fit(func, time_seconds, tc, maxfev=10000)
     tc_exp = func(time_seconds, *popt)
     return tc_exp, popt
 
