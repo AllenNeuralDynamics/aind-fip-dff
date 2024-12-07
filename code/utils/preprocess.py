@@ -4,68 +4,62 @@ import numpy as np
 import pandas as pd
 from aind_ophys_utils.signal_utils import noise_std
 from scipy.optimize import curve_fit, minimize
-from scipy.signal import butter, sosfiltfilt, medfilt
+from scipy.signal import butter, medfilt, sosfiltfilt
 from sklearn.linear_model import LinearRegression
 from statsmodels.api import RLM
 from statsmodels.robust import scale
-from statsmodels.robust.norms import TukeyBiweight
+from statsmodels.robust.norms import RobustNorm, TukeyBiweight
 
 
-# Preprocessing functions
-# ---------------------------------------------------------------------------------------------
-# removing first few seconds
-def tc_crop(tc, nFrame2cut):
-    tc_cropped = tc[nFrame2cut:]
-    return tc_cropped
+def tc_crop(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
+    """Remove the first few seconds of the time course."""
+    return tc[n_frame_to_cut:]
 
 
-# Median filtering to remove electrical artifact.
-def tc_medfilt(tc, kernelSize):
-    tc_filtered = medfilt(tc, kernel_size=kernelSize)
-    return tc_filtered
+def tc_medfilt(tc: np.ndarray, kernel_size: int) -> np.ndarray:
+    """Apply median filtering to remove electrical artifact."""
+    return medfilt(tc, kernel_size=kernel_size)
 
 
-# Lowpass filter - zero phase filtering (with sosfiltfilt) is used to avoid distorting the signal.
-def tc_lowcut(tc, sampling_rate):
-    sos = butter(2, 9, btype="low", fs=sampling_rate, output='sos')
-    tc_filtered = sosfiltfilt(sos, tc)
-    return tc_filtered
+def tc_lowcut(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
+    """Apply lowpass filter with zero phase filtering to avoid distorting the signal."""
+    sos = butter(2, 9, btype="low", fs=sampling_rate, output="sos")
+    return sosfiltfilt(sos, tc)
 
 
-# setting up sliding baseline to calculate dF/F
-def tc_slidingbase(tc, sampling_rate):
-    sos = butter(2, 0.0001, btype="low", fs=sampling_rate, output='sos')
-    tc_base = sosfiltfilt(sos, tc, padtype="even")
-    return tc_base
+def tc_slidingbase(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
+    """Set up sliding baseline to calculate dF/F."""
+    sos = butter(2, 0.0001, btype="low", fs=sampling_rate, output="sos")
+    return sosfiltfilt(sos, tc)
 
 
-# obtain dF/F using median of values within sliding baseline
-def tc_dFF(tc, tc_base, b_percentile):
+def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float) -> np.ndarray:
+    """Obtain dF/F using median of values within sliding baseline."""
     tc_dFoF = tc / tc_base
-    sort = np.sort(tc_dFoF)
-    b_median = np.median(sort[0: round(len(sort) * b_percentile)])
-    tc_dFoF = tc_dFoF - b_median
-    return tc_dFoF
+    sorted_dFoF = np.sort(tc_dFoF)
+    b_median = np.median(sorted_dFoF[: round(len(sorted_dFoF) * b_percentile)])
+    return tc_dFoF - b_median
 
 
-# fill in the gap left by cropping out the first few timesteps
-def tc_filling(tc, nFrame2cut):
-    tc_filled = np.append(np.ones([nFrame2cut, 1]) * tc[0], tc)
-    return tc_filled
+def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
+    """Fill in the gap left by cropping out the first few timesteps."""
+    return np.append(np.ones([n_frame_to_cut, 1]) * tc[0], tc)
 
 
-def tc_polyfit(tc, sampling_rate, degree):
+def tc_polyfit(
+    tc: np.ndarray, sampling_rate: float, degree: int
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Fit with polynomial to remove bleaching artifact
     Args:
-        tc: np.array
+        tc: np.ndarray
             Fiber photometry signal
         sampling_rate: float
             Sampling rate of the signal
     Returns:
-        tc_dFoF: np.array
+        tc_dFoF: np.ndarray
             Preprocessed fiber photometry signal
-        popt: array
+        popt: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
     time_seconds = np.arange(len(tc)) / sampling_rate
@@ -74,18 +68,20 @@ def tc_polyfit(tc, sampling_rate, degree):
     return tc_poly, coefs
 
 
-def tc_expfit(tc, sampling_rate=20):
+def tc_expfit(
+    tc: np.ndarray, sampling_rate: float = 20
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Fit with Biphasic exponential decay
     Args:
-        tc: np.array
+        tc: np.ndarray
             Fiber photometry signal
         sampling_rate: float
             Sampling rate of the signal
     Returns:
-        tc_dFoF: np.array
+        tc_dFoF: np.ndarray
             Preprocessed fiber photometry signal
-        popt: array
+        popt: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
 
@@ -96,15 +92,21 @@ def tc_expfit(tc, sampling_rate=20):
     try:  # try first providing initial estimates
         tc0 = tc[: int(sampling_rate)].mean()
         popt, pcov = curve_fit(
-            func, time_seconds, tc, (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200)
+            func,
+            time_seconds,
+            tc,
+            (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
+            maxfev=10000,
         )
     except:
-        popt, pcov = curve_fit(func, time_seconds, tc)
+        popt, pcov = curve_fit(func, time_seconds, tc, maxfev=10000)
     tc_exp = func(time_seconds, *popt)
     return tc_exp, popt
 
 
-def tc_brightfit(tc, sampling_rate=20, robust=True):
+def tc_brightfit(
+    tc: np.ndarray, sampling_rate: float = 20, robust: bool = True
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Fit with  Biphasic exponential decay (bleaching)  x  increasing saturating exponential (brightening)
     Args:
@@ -121,23 +123,22 @@ def tc_brightfit(tc, sampling_rate=20, robust=True):
             Optimal values for the parameters of the preprocessing
     """
     popt = (
-        fit_trace_robust(tc, sampling_rate) if robust else fit_trace(
-            tc, sampling_rate)
+        fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
     )
     return baseline(*popt, T=len(tc)), popt
 
 
 def baseline(
-    b_inf,
-    b_slow=0,
-    b_fast=0,
-    b_bright=0,
-    t_slow=np.inf,
-    t_fast=np.inf,
-    t_bright=np.inf,
-    T=70000,
-    fs=20,
-):
+    b_inf: float,
+    b_slow: float = 0,
+    b_fast: float = 0,
+    b_bright: float = 0,
+    t_slow: float = np.inf,
+    t_fast: float = np.inf,
+    t_bright: float = np.inf,
+    T: int = 70000,
+    fs: float = 20,
+) -> np.ndarray:
     """Baseline with  Biphasic exponential decay (bleaching)  x  increasing saturating exponential (brightening)"""
     tmp = -np.arange(T)
     return (
@@ -151,16 +152,16 @@ def baseline(
     )
 
 
-def fit_trace(trace, fs=20):
+def fit_trace(trace: np.ndarray, fs: float = 20):
     """
     Oridinary Least Squares (OLS) fit using above baseline (bleaching x brightening)
     Args:
-        trace: np.array
+        trace: np.ndarray
             Fiber photometry signal
         fs: float
             Sampling rate of the signal
     Returns:
-        x: array
+        x: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
 
@@ -191,8 +192,7 @@ def fit_trace(trace, fs=20):
 
     # optimize on decimated data to quickly get good initial estimates
     res100 = optimize(
-        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25,
-                3600.0, 200.0, 2000.0), 100, 2000
+        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25, 3600.0, 200.0, 2000.0), 100, 2000
     )
     res10 = optimize(trace, res100.x, 10, 1000)
     # optimize on full data
@@ -210,20 +210,20 @@ def fit_trace(trace, fs=20):
 
 
 def fit_trace_robust(
-    trace,
-    fs=20,
+    trace: np.ndarray,
+    fs: float = 20,
     M=TukeyBiweight(2),
-    maxiter=50,
-    tol=1e-5,
-    update_scale=True,
-    asymmetric=True,
-    scale_est="welch",
-):
+    maxiter: int = 50,
+    tol: float = 1e-5,
+    update_scale: bool = True,
+    asymmetric: bool = True,
+    scale_est: str = "welch",
+) -> np.ndarray:
     """
     Iteratively Reweighted Least Squares (IRLS) fit using above baseline (bleaching x brightening)
     see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
     Args:
-        trace: np.array
+        trace: np.ndarray
             Fiber photometry signal
         fs: float
             Sampling rate of the signal
@@ -244,7 +244,7 @@ def fit_trace_robust(
             'mad' or 'welch'
             Indicates the estimate to use for scaling the weights in the IRLS.
     Returns:
-        params: array
+        params: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
 
@@ -314,25 +314,25 @@ def fit_trace_robust(
 
 # dF/F total function
 def chunk_processing(
-    tc,
-    method="poly",
-    nFrame2cut=100,
-    kernelSize=1,
-    sampling_rate=20,
-    degree=4,
-    b_percentile=0.7,
-    robust=True,
-):
+    tc: np.ndarray,
+    method: str = "poly",
+    n_frame_to_cut: int = 100,
+    kernel_size: int = 1,
+    sampling_rate: float = 20,
+    degree: int = 4,
+    b_percentile: float = 0.7,
+    robust: bool = True,
+) -> tuple[np.ndarray, dict]:
     """
     Calculates dF/F of the fiber photometry signal.
     Args:
-        tc: np.array
+        tc: np.ndarray
             Fiber photometry signal
         method: str
             Method to preprocess the data. Options: poly, exp, bright
-        nFrame2cut: int
+        n_frame_to_cut: int
             Number of frames to crop from the beginning of the signal
-        kernelSize: int
+        kernel_size: int
             Size of the kernel for median filtering
         sampling_rate: float
             Sampling rate of the signal
@@ -343,13 +343,13 @@ def chunk_processing(
         robust: bool
             Whether to fit baseline using IRLS (robust regression, only 'bright' method)
     Returns:
-        tc_dFoF: np.array
+        tc_dFoF: np.ndarray
             dF/F of fiber photometry signal
         tc_params: dict
             Dictionary with the parameters of the preprocessing
     """
-    tc_cropped = tc_crop(tc, nFrame2cut)
-    tc_filtered = medfilt(tc_cropped, kernel_size=kernelSize)
+    tc_cropped = tc_crop(tc, n_frame_to_cut)
+    tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
     tc_filtered = tc_lowcut(tc_filtered, sampling_rate)
     try:
         if method == "poly":
@@ -363,9 +363,8 @@ def chunk_processing(
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
             tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
-        tc_dFoF = tc_filling(tc_dFoF, nFrame2cut)
-        tc_params = {i_coef: tc_coefs[i_coef]
-                     for i_coef in range(len(tc_coefs))}
+        tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
+        tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
     except:
         print(f"Processing with method {method} failed. Setting dF/F to nans.")
         tc_dFoF = np.nan * tc
@@ -379,7 +378,9 @@ def chunk_processing(
     return tc_dFoF, tc_params
 
 
-def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
+def motion_correct(
+    dff: pd.DataFrame, fs: float = 20, M: RobustNorm = TukeyBiweight(1)
+) -> pd.DataFrame:
     """
     Perform motion correction on a fiber's dF/F traces by regressing out
     the filtered isosbestic traces.
@@ -396,32 +397,38 @@ def motion_correct(dff, fs=20, M=TukeyBiweight(1)):
             Preprocessed fiber photometry signal with motion correction applied
             (dF/F + motion correction).
     """
-    sos = butter(N=2, Wn=0.3, fs=fs, output='sos')
+    if np.isnan(dff["Iso"]).any():
+        return np.nan * dff
+    sos = butter(N=2, Wn=0.3, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     motion = dff_filt[dff.columns.get_loc("Iso")]
+    motions = np.nan * dff_filt.T
+    no_nans = ~np.isnan(dff_filt.sum(1))
     if M is not None:
-        motion = (
-            np.maximum(
-                [RLM(d, motion, M=M).fit().params for d in dff_filt], 0) * motion
+        motions[:, no_nans] = (
+            np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt[no_nans]], 0)
+            * motion
         ).T
     else:
-        motion = (
+        motions[:, no_nans] = (
             LinearRegression(fit_intercept=False, positive=True)
-            .fit(motion[:, None], dff_filt.T)
+            .fit(motion[:, None], dff_filt[no_nans].T)
             .predict(motion[:, None])
         )
-    motion -= motion.mean(0)
-    dff_mc = dff - motion
+    motions -= motions.mean(0)
+    dff_mc = dff - motions
     return dff_mc
 
 
-def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
+def batch_processing(
+    df_fip: pd.DataFrame, methods: list[str] = ["poly", "exp", "bright"]
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
     Args:
         df_fib: pd.DataFrame
             Fiber photometry signal
-        methods: list of str
+        methods: list[str]
             Methods to preprocess the data. Options: poly, exp, bright
     Returns:
         df_fip_pp: pd.DataFrame
@@ -452,9 +459,9 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 df_1fiber = pd.DataFrame()
                 for channel in channels:
                     df_fip_iter = df_fip[
-                        (df_fip["session"] == session) &
-                        (df_fip["fiber_number"] == fiber_number) &
-                        (df_fip["channel"] == channel)
+                        (df_fip["session"] == session)
+                        & (df_fip["fiber_number"] == fiber_number)
+                        & (df_fip["channel"] == channel)
                     ].copy()
                     if len(df_fip_iter) == 0:
                         continue
@@ -495,8 +502,7 @@ def batch_processing(df_fip, methods=["poly", "exp", "bright"]):
                 # run motion correction
                 df_mc_iter = motion_correct(df_dff_iter)
                 # convert back to a table with columns channel and signal
-                df_mc_iter = df_mc_iter.melt(
-                    var_name="channel", value_name="signal")
+                df_mc_iter = df_mc_iter.melt(var_name="channel", value_name="signal")
                 df_mc = pd.concat([df_mc, df_mc_iter], ignore_index=True)
     df_fip_mc = df_fip_pp.copy()
     df_fip_mc["signal"] = df_mc["signal"]
