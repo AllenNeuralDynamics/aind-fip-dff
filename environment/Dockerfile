@@ -24,4 +24,5 @@ RUN pip3 install -U --no-cache-dir \
     pynwb \
     scikit-learn \
     statsmodels \
-    aind-metadata-upgrader
+    aind-metadata-upgrader \
+    aind_log_utils
