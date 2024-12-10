@@ -3,6 +3,7 @@ import glob
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import datetime as dt
 from pathlib import Path
@@ -21,6 +22,7 @@ from aind_data_schema.core.processing import (
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
+from aind_log_utils import log
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -201,6 +203,24 @@ if __name__ == "__main__":
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
 
+    behavior_path = glob.glob(args.fiber_path + "/behavior/*.json")[0]
+    # Regular expression to match the desired number
+    match = re.search(r'behavior/(\d{6,7})_', behavior_path)
+
+    if match:
+        subject_id = match.group(1)
+
+    # Regular expression to capture the full segment and the initial number
+    match = re.search(r'behavior/(\d{6,7})_([^.]+)\.json', behavior_path)
+    if match:
+        asset_name = match.group(1)
+
+    log.setup_logging(
+        "aind-fip-dff",
+        mouse_id=subject_id,
+        session_name=asset_name,
+    )
+
     # Create the destination directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -219,7 +239,7 @@ if __name__ == "__main__":
             os.path.join(args.fiber_path, "fib")
         ):
             # Print the path to ensure correctness
-            print(f"Processing NWB file: {nwb_file_path}")
+            logging.info(f"Processing NWB file: {nwb_file_path}")
 
             with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
                 nwb_file = io.read()
@@ -257,7 +277,7 @@ if __name__ == "__main__":
                         )
 
                 io.write(nwb_file)
-                print(
+                logging.info(
                     "Successfully updated the nwb with preprocessed data"
                     f" using methods {methods}"
                 )
@@ -279,7 +299,7 @@ if __name__ == "__main__":
                                 os.path.join(args.output_dir, "plots"),
                             )
         else:
-            print("NO Fiber but only Behavior data, preprocessing not needed")
+            logging.info("NO Fiber but only Behavior data, preprocessing not needed")
 
     src_directory = args.fiber_path
 
@@ -292,7 +312,7 @@ if __name__ == "__main__":
 
                 # Move the file
                 shutil.copy2(src_file, dest_file)
-                print(f"Moved: {src_file} to {dest_file}")
+                logging.info(f"Moved: {src_file} to {dest_file}")
 
     write_output_metadata(
         metadata=vars(args),
