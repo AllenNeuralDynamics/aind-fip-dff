@@ -202,21 +202,34 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
+    fiber_path = Path(args.fiber_path)
 
-    session_json_path = glob.glob(args.fiber_path + "/session.json")[0]
-    with open(session_json_path, 'r') as f:
-        session_data = json.load(f)
+    # Load subject data
+    subject_json_path = fiber_path / "subject.json"
+    with open(subject_json_path, 'r') as f:
+        subject_data = json.load(f)
 
     # Grab the subject_id and times for logging
-    subject_id = session_data.get('subject_id', None)    
-    data_description_path = glob.glob(args.fiber_path + "/data_description.json")[0]
-    with open(session_json_path, 'r') as f:
+    subject_id = subject_data.get('subject_id', None)    
+
+    # Raise an error if subject_id is None
+    if subject_id is None:
+        logging.info("NO SUBJECT ID IN SUBJECT FILE")
+        raise ValueError("subject_id is missing from the subject_data.")
+
+    # Load data description
+    data_description_path = fiber_path / "data_description.json"
+    with open(data_description_path, 'r') as f:
         date_data = json.load(f)
+
+    # Attempt to extract the creation time
     date = date_data.get('creation_time', None)  
 
-    # Some older data_description jsons are missing this field
-    # We can substitute using the start time of the session
+    # Fallback to session start time if date is missing
     if date is None:
+        session_path = fiber_path / "session.json"
+        with open(session_path, 'r') as f:
+            session_data = json.load(f)
         date = session_data.get('session_start_time', None)
 
     asset_name = "behavior_" +subject_id  + "_" + date
