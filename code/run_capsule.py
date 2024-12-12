@@ -206,11 +206,11 @@ if __name__ == "__main__":
 
     # Load subject data
     subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, 'r') as f:
+    with open(subject_json_path, "r") as f:
         subject_data = json.load(f)
 
     # Grab the subject_id and times for logging
-    subject_id = subject_data.get('subject_id', None)    
+    subject_id = subject_data.get("subject_id", None)
 
     # Raise an error if subject_id is None
     if subject_id is None:
@@ -219,25 +219,23 @@ if __name__ == "__main__":
 
     # Load data description
     data_description_path = fiber_path / "data_description.json"
-    with open(data_description_path, 'r') as f:
+    with open(data_description_path, "r") as f:
         date_data = json.load(f)
 
     # Attempt to extract the creation time
-    date = date_data.get('creation_time', None)  
+    date = date_data.get("creation_time", None)
 
     # Fallback to session start time if date is missing
     if date is None:
         session_path = fiber_path / "session.json"
-        with open(session_path, 'r') as f:
+        with open(session_path, "r") as f:
             session_data = json.load(f)
-        date = session_data.get('session_start_time', None)
+        date = session_data.get("session_start_time", None)
 
-    asset_name = "behavior_" +subject_id  + "_" + date
+    asset_name = "behavior_" + subject_id + "_" + date
 
     log.setup_logging(
-        "aind-fip-dff",
-        mouse_id=subject_id,
-        session_name=asset_name,
+        "aind-fip-dff", mouse_id=subject_id, session_name=asset_name,
     )
 
     # Create the destination directory if it doesn't exist
