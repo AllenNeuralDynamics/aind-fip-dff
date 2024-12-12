@@ -203,17 +203,23 @@ if __name__ == "__main__":
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
 
-    behavior_path = glob.glob(args.fiber_path + "/behavior/*.json")[0]
-    # Regular expression to match the desired number
-    match = re.search(r'behavior/(\d{6,7})_', behavior_path)
+    session_json_path = glob.glob(args.fiber_path + "/session.json")[0]
+    with open(session_json_path, 'r') as f:
+        session_data = json.load(f)
 
-    if match:
-        subject_id = match.group(1)
+    # Grab the subject_id and times for logging
+    subject_id = session_data.get('subject_id', None)    
+    data_description_path = glob.glob(args.fiber_path + "/data_description.json")[0]
+    with open(session_json_path, 'r') as f:
+        date_data = json.load(f)
+    date = date_data.get('creation_time', None)  
 
-    # Regular expression to capture the full segment and the initial number
-    match = re.search(r'behavior/(\d{6,7})_([^.]+)\.json', behavior_path)
-    if match:
-        asset_name = match.group(1)
+    # Some older data_description jsons are missing this field
+    # We can substitute using the start time of the session
+    if date is None:
+        date = session_data.get('session_start_time', None)
+
+    asset_name = "behavior_" +subject_id  + "_" + date
 
     log.setup_logging(
         "aind-fip-dff",
