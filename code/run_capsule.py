@@ -13,16 +13,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pynwb
 from aind_data_schema.core.data_description import DerivedDataDescription
-from aind_data_schema.core.processing import (
-    DataProcess,
-    PipelineProcess,
-    Processing,
-    ProcessName,
-)
-from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
+from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
+                                              Processing, ProcessName)
+from aind_log_utils import log
+from aind_metadata_upgrader.data_description_upgrade import \
+    DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
-from aind_log_utils import log
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -218,14 +215,16 @@ if __name__ == "__main__":
         raise ValueError("subject_id is missing from the subject_data.")
 
     # Load data description
-    data_description_path = fiber_path / "data_description.json"    
+    data_description_path = fiber_path / "data_description.json"
     with open(data_description_path, "r") as f:
         data_description = json.load(f)
-    
-    asset_name = data_description.get('name', None)    
-    
+
+    asset_name = data_description.get("name", None)
+
     log.setup_logging(
-        "aind-fip-dff", mouse_id=subject_id, session_name=asset_name,
+        "aind-fip-dff",
+        mouse_id=subject_id,
+        session_name=asset_name,
     )
 
     # Create the destination directory if it doesn't exist
