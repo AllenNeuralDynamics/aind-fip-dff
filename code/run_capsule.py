@@ -322,7 +322,7 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json"]:
+        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
