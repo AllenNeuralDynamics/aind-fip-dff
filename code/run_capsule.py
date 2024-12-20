@@ -13,16 +13,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pynwb
 from aind_data_schema.core.data_description import DerivedDataDescription
-from aind_data_schema.core.processing import (
-    DataProcess,
-    PipelineProcess,
-    Processing,
-    ProcessName,
-)
-from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
+from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
+                                              Processing, ProcessName)
+from aind_log_utils import log
+from aind_metadata_upgrader.data_description_upgrade import \
+    DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
-from aind_log_utils import log
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -214,28 +211,20 @@ if __name__ == "__main__":
 
     # Raise an error if subject_id is None
     if subject_id is None:
-        logging.info("NO SUBJECT ID IN SUBJECT FILE")
+        logging.info("No subject_id in subject file")
         raise ValueError("subject_id is missing from the subject_data.")
 
     # Load data description
     data_description_path = fiber_path / "data_description.json"
     with open(data_description_path, "r") as f:
-        date_data = json.load(f)
+        data_description = json.load(f)
 
-    # Attempt to extract the creation time
-    date = date_data.get("creation_time", None)
-
-    # Fallback to session start time if date is missing
-    if date is None:
-        session_path = fiber_path / "session.json"
-        with open(session_path, "r") as f:
-            session_data = json.load(f)
-        date = session_data.get("session_start_time", None)
-
-    asset_name = "behavior_" + subject_id + "_" + date
+    asset_name = data_description.get("name", None)
 
     log.setup_logging(
-        "aind-fip-dff", mouse_id=subject_id, session_name=asset_name,
+        "aind-fip-dff",
+        mouse_id=subject_id,
+        session_name=asset_name,
     )
 
     # Create the destination directory if it doesn't exist
@@ -322,7 +311,7 @@ if __name__ == "__main__":
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json"]:
+        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
