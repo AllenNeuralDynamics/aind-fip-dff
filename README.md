@@ -9,7 +9,7 @@ Three baseline estimation methods are implemented:
 - "exp": Fits a biphasic exponential using OLS: $a\cdot e^{-b\cdot t} + c\cdot e^{-d\cdot t}$
 - "bright": Robust fit with  [Biphasic exponential decay (bleaching)]  x  [Increasing saturating exponential (brightening)] using Iteratively Reweighted Least Squares (IRLS):  $b_{\infty} \cdot (1 + b_{slow} e^{-t/\tau_{slow}} + b_{fast} e^{-t/\tau_{fast}}) \cdot (1-b_{bright} e^{-t/\tau_{bright}}))$
 
-### Motion correction
+### Motion Correction
 Motion correction is carried out in two steps:
 1. **Estimating motion attenuation**: A second-order Butterworth filter is applied to smooth the isosbestic trace.
 2. **Removing the motion component**: Robust regression is used to subtract the motion signal from all channels.
@@ -29,4 +29,4 @@ The primary output is the updated NWB file, which includes the newly processed d
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[Fiber]_dff-[method]` (e.g., `G_1_dff-poly`). 
 - **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[Fiber]_preprocessed-[method]` (e.g., `G_1_preprocessed-poly`). 
 
-For quality control (QC), the `plots` subdirectory contains visualizations for each fiber and ΔF/F method. These figures display raw, ΔF/F, and preprocessed (ΔF/F with motion correction) traces of all channels. For example, `Fiber1_bright.png`. 
+For quality control (QC), the `qc` subdirectory contains visualizations for each fiber and ΔF/F method. These figures display raw, ΔF/F, and preprocessed (ΔF/F with motion correction) traces of all channels. For example, `Fiber1_bright.png`. Within the `qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal).
