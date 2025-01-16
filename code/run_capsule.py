@@ -172,38 +172,40 @@ def plot_raw_dff_mc(
     return fig_file
 
 
-def create_evaluation(fiber, method, reference):
-    name = f"Preprocessing of Fiber {fiber} using method '{method}'"
+def create_metric(fiber, method, reference):
+    return QCMetric(
+        name=f"Preprocessing of Fiber {fiber} using method '{method}'",
+        reference=reference,
+        status_history=[
+            QCStatus(
+                evaluator="Pending review",
+                timestamp=dt.now(),
+                status=Status.PENDING,
+            )
+        ],
+        value=DropdownMetric(
+            value=[],
+            options=[
+                "Preprocessing successful",
+                "Baseline correction (dF/F) failed",
+                "Motion correction failed",
+            ],
+            status=[
+                Status.PASS,
+                Status.FAIL,
+                Status.FAIL,
+            ],
+        ),
+    )
+
+
+def create_evaluation(method, metrics):
+    name = f"Preprocessing using method '{method}'"
     return QCEvaluation(
         name=name,
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
-        metrics=[
-            QCMetric(
-                name=name,
-                reference=reference,
-                status_history=[
-                    QCStatus(
-                        evaluator="Pending review",
-                        timestamp=dt.now(),
-                        status=Status.PENDING,
-                    )
-                ],
-                value=DropdownMetric(
-                    value=[],
-                    options=[
-                        "Preprocessing successful",
-                        "Baseline correction (dF/F) failed",
-                        "Motion correction failed",
-                    ],
-                    status=[
-                        Status.PASS,
-                        Status.FAIL,
-                        Status.FAIL,
-                    ],
-                ),
-            )
-        ],
+        metrics=metrics,
         allow_failed_metrics=False,
         description=(
             "Review the preprocessing plots to ensure accurate "
@@ -269,8 +271,8 @@ if __name__ == "__main__":
 
     log.setup_logging(
         "aind-fip-dff",
-        mouse_id=subject_id,
-        session_name=asset_name,
+        subject_id=subject_id,
+        asset_name=asset_name,
     )
 
     # Create the destination directory if it doesn't exist
@@ -343,6 +345,7 @@ if __name__ == "__main__":
                         ]
                         channels = sorted(set([k[0] for k in keys_split]))
                         fibers = sorted(set([k[1] for k in keys_split]))
+                        metrics = []
                         for fiber in fibers:
                             fig_file = plot_raw_dff_mc(
                                 nwb_file,
@@ -351,9 +354,8 @@ if __name__ == "__main__":
                                 method,
                                 os.path.join(args.output_dir, "qc"),
                             )
-                            evaluations.append(
-                                create_evaluation(fiber, method, fig_file)
-                            )
+                            metrics.append(create_metric(fiber, method, fig_file))
+                        evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
                     qc = QualityControl(evaluations=evaluations)
                     qc.write_standard_file(
