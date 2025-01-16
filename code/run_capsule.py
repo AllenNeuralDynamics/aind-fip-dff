@@ -3,7 +3,6 @@ import glob
 import json
 import logging
 import os
-import re
 import shutil
 from datetime import datetime as dt
 from pathlib import Path
@@ -15,10 +14,15 @@ import pynwb
 from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
                                               Processing, ProcessName)
+from aind_data_schema.core.quality_control import (QCEvaluation, QCMetric,
+                                                   QCStatus, QualityControl,
+                                                   Stage, Status)
+from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import \
     DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
+from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 
 import utils.nwb_dict_utils as nwb_utils
@@ -112,7 +116,7 @@ def plot_raw_dff_mc(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str = "/results/plots/",
+    fig_path: str = "/results/qc/",
 ):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
@@ -129,7 +133,7 @@ def plot_raw_dff_mc(
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
     fig_path : str, optional
-        The path where the generated plot will be saved. Defaults to "/results/plots/".
+        The path where the generated plot will be saved. Defaults to "/results/qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
     for i, suffix in enumerate(("", f"_dff-{method}", f"_preprocessed-{method}")):
@@ -163,7 +167,49 @@ def plot_raw_dff_mc(
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
-    plt.savefig(os.path.join(fig_path, f"Fiber{fiber}_{method}.png"))
+    fig_file = os.path.join(fig_path, f"Fiber{fiber}_{method}.png")
+    plt.savefig(fig_file, dpi=300)
+    return fig_file
+
+
+def create_evaluation(fiber, method, reference):
+    name = f"Preprocessing of Fiber {fiber} using method '{method}'"
+    return QCEvaluation(
+        name=name,
+        modality=Modality.FIB,
+        stage=Stage.PROCESSING,
+        metrics=[
+            QCMetric(
+                name=name,
+                reference=reference,
+                status_history=[
+                    QCStatus(
+                        evaluator="Pending review",
+                        timestamp=dt.now(),
+                        status=Status.PENDING,
+                    )
+                ],
+                value=DropdownMetric(
+                    value=[],
+                    options=[
+                        "Preprocessing successful",
+                        "Baseline correction (dF/F) failed",
+                        "Motion correction failed",
+                    ],
+                    status=[
+                        Status.PASS,
+                        Status.FAIL,
+                        Status.FAIL,
+                    ],
+                ),
+            )
+        ],
+        allow_failed_metrics=False,
+        description=(
+            "Review the preprocessing plots to ensure accurate "
+            "baseline (dF/F) and motion correction."
+        ),
+    )
 
 
 if __name__ == "__main__":
@@ -288,6 +334,7 @@ if __name__ == "__main__":
                     f" using methods {methods}"
                 )
                 if not args.no_qc:
+                    evaluations = []
                     for method in methods:
                         keys_split = [
                             k.split("_")
@@ -297,13 +344,22 @@ if __name__ == "__main__":
                         channels = sorted(set([k[0] for k in keys_split]))
                         fibers = sorted(set([k[1] for k in keys_split]))
                         for fiber in fibers:
-                            plot_raw_dff_mc(
+                            fig_file = plot_raw_dff_mc(
                                 nwb_file,
                                 fiber,
                                 channels,
                                 method,
-                                os.path.join(args.output_dir, "plots"),
+                                os.path.join(args.output_dir, "qc"),
                             )
+                            evaluations.append(
+                                create_evaluation(fiber, method, fig_file)
+                            )
+                    # Create QC object and save
+                    qc = QualityControl(evaluations=evaluations)
+                    qc.write_standard_file(
+                        output_directory=os.path.join(args.output_dir, "qc")
+                    )
+
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
 
