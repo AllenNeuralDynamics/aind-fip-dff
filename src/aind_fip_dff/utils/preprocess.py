@@ -45,6 +45,89 @@ def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
     """Fill in the gap left by cropping out the first few timesteps."""
     return np.append(np.ones([n_frame_to_cut, 1]) * tc[0], tc)
 
+def triple_exp(x, params):
+    """
+    Triple exponential function: a * exp(-b * x) + c * exp(-d * x) + f * exp(-g * x) + e
+    """
+    return (
+        params[0] * np.exp(-params[1] * x) +
+        params[2] * np.exp(-params[3] * x) +
+        params[4] * np.exp(-params[5] * x) +
+        params[6]
+    )
+
+def tc_triexpfit(tc: np.ndarray, sampling_rate: float, xtol = 1e-8):
+    """
+    Perform a triple exponential fit to the given data.
+
+    Parameters:
+        x (array): Independent variable data.
+        y (array): Dependent variable data.
+        start_values (list): Initial guesses for the parameters [a, b, c, d, f, g, e].
+
+    Returns:
+        fit_params (array): Optimized parameters of the fit [a, b, c, d, f, g, e].
+        gof (dict): Goodness-of-fit metrics, including R-squared and residuals.
+    """
+    # Perform the curve fitting
+    # print(xtol)
+    # low cut
+    sos = butter(2, 0.01, btype="low", fs=sampling_rate, output="sos")
+    tc = sosfiltfilt(sos, tc)
+    
+    time_scaling = 0.0001
+    
+    # Exponential decay (bleaching) removal
+    start_values = np.zeros(7)
+
+    # intercept
+    start_values[6] = np.mean(tc[-int(1 * 60 * sampling_rate):])
+
+    # 1st decay 
+    start_values[0] = np.mean(tc[0:sampling_rate]) - np.mean(tc[2*60*sampling_rate : (2*60*sampling_rate + sampling_rate)])
+    start_values[1] = -np.log(1 - (np.mean(tc[0:5]) - np.mean(tc[1*60*sampling_rate : (1*60*sampling_rate+sampling_rate)]))/start_values[0])/(1*60*sampling_rate)
+                            
+    # Minor decays
+    # slowest
+    start_values[5] = np.log((np.mean(tc[-10*60*sampling_rate:(-10*60*sampling_rate+10*sampling_rate)]) - start_values[6])/(np.mean(tc[-5*60*sampling_rate:(-5*60*sampling_rate+1*10*sampling_rate)]) - start_values[6]))/(5*60*sampling_rate)
+    start_values[4] = (np.mean(tc[-10*60*sampling_rate:(-10*60*sampling_rate+10*sampling_rate)]) - start_values[6]) / np.exp(start_values[5] * (-10*60*sampling_rate))
+    # middle
+    start_values[2] = np.mean(tc[0:sampling_rate]) - start_values[6] - start_values[4]
+    start_values[3] = (start_values[1] + start_values[5])/2
+
+    # start_values[start_values < 0] = 0
+
+    # scaling by time:
+    start_values[1], start_values[3], start_values[5] = start_values[1] / time_scaling, start_values[3] / time_scaling, start_values[5] / time_scaling
+
+    start_values[start_values < 0] = 0
+    start_values[np.isnan(start_values)] = 0
+    # Time array
+    x = time_scaling*np.arange(len(tc)) / sampling_rate
+    y = tc
+    popt, pcov = curve_fit(
+        lambda x, a, b, c, d, e, f, g: triple_exp(x, [a, b, c, d, e, f, g]), x, y, p0=start_values, maxfev=10000, bounds=(0, np.inf), xtol=xtol
+    )
+    #
+    # Calculate goodness-of-fit metrics
+    residuals = y - triple_exp(x, popt)
+    ss_res = np.sum(residuals**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+    r_squared = 1 - (ss_res / ss_tot)
+
+    gof = {
+        "R-squared": r_squared,
+        "Residuals": residuals,
+        "SS_res": ss_res,
+        "SS_tot": ss_tot
+    }
+
+    tc_triexp = triple_exp(x, popt)
+
+    # scaling back
+    popt[1], popt[3], popt[5] = popt[1] * time_scaling, popt[3] * time_scaling, popt[5] * time_scaling
+
+    return tc_triexp, popt
 
 def tc_polyfit(
     tc: np.ndarray, sampling_rate: float, degree: int
@@ -322,6 +405,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
+    xtol: float = 1e-8,
 ) -> tuple[np.ndarray, dict]:
     """
     Calculates dF/F of the fiber photometry signal.
@@ -356,9 +440,16 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
         if method == "exp":
             tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
+        if method == "tri-exp":
+            try:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, sampling_rate, xtol=xtol)
+                tc_dFoF = (tc_filtered - tc_fit) / tc_fit
+            except:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, sampling_rate, xtol=xtol*100)
+                tc_dFoF = (tc_filtered - tc_fit) / tc_fit
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
-            tc_dFoF = tc_filtered / tc_fit - 1
+            tc_dFoF = tc_filtered / tc_fit - 1                
         else:
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
@@ -370,7 +461,7 @@ def chunk_processing(
         tc_dFoF = np.nan * tc
         tc_params = {
             i_coef: np.nan
-            for i_coef in range({"poly": 5, "exp": 4, "bright": 7}[method])
+            for i_coef in range({"poly": 5, "exp": 4, "bright": 7, "tri-exp": 7}[method])
         }
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
@@ -421,7 +512,7 @@ def motion_correct(
 
 
 def batch_processing(
-    df_fip: pd.DataFrame, methods: list[str] = ["poly", "exp", "bright"]
+    df_fip: pd.DataFrame, methods: list[str] = ["poly", "exp", "bright"], n_frame_to_cut: int = 400, xtol: float = 1e-8
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
@@ -451,7 +542,7 @@ def batch_processing(
     channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:
-        if pp_name in ["poly", "exp", "bright"]:
+        if pp_name in ["poly", "exp", "bright", "tri-exp"]:
             for i_iter, (session, fiber_number) in enumerate(
                 itertools.product(sessions, fiber_numbers)
             ):
@@ -468,7 +559,7 @@ def batch_processing(
 
                     NM_values = df_fip_iter["signal"].values
                     NM_preprocessed, NM_fitting_params = chunk_processing(
-                        NM_values, method=pp_name
+                        NM_values, method=pp_name, n_frame_to_cut=n_frame_to_cut, xtol=xtol
                     )
                     df_fip_iter.loc[:, "signal"] = NM_preprocessed
                     df_fip_iter.loc[:, "preprocess"] = pp_name
