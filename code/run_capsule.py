@@ -359,13 +359,13 @@ if __name__ == "__main__":
                     # Create QC object and save
                     qc = QualityControl(evaluations=evaluations)
                     qc.write_standard_file(
-                        output_directory=os.path.join(args.output_dir, "qc")
+                        output_directory=os.path.join(args.output_dir, "dff-qc")
                     )
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
-            os.mkdir(Path(args.output_dir) / "qc")
-            qc_file_path = Path(args.output_dir) / "qc" / "no_fip_to_qc.txt"
+            os.mkdir(Path(args.output_dir) / "dff-qc")
+            qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
             # Create an empty file
             with open(qc_file_path, "w") as file:
                 file.write(
