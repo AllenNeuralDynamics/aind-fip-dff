@@ -116,7 +116,7 @@ def plot_raw_dff_mc(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str = "dff/qc/",
+    fig_path: str = "dff/",
 ):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
