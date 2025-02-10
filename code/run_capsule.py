@@ -12,15 +12,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pynwb
 from aind_data_schema.core.data_description import DerivedDataDescription
-from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
-                                              Processing, ProcessName)
-from aind_data_schema.core.quality_control import (QCEvaluation, QCMetric,
-                                                   QCStatus, QualityControl,
-                                                   Stage, Status)
+from aind_data_schema.core.processing import (
+    DataProcess,
+    PipelineProcess,
+    Processing,
+    ProcessName,
+)
+from aind_data_schema.core.quality_control import (
+    QCEvaluation,
+    QCMetric,
+    QCStatus,
+    QualityControl,
+    Stage,
+    Status,
+)
 from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
-from aind_metadata_upgrader.data_description_upgrade import \
-    DataDescriptionUpgrade
+from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
@@ -178,9 +186,7 @@ def create_metric(fiber, method, reference):
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator="Pending review",
-                timestamp=dt.now(),
-                status=Status.PENDING,
+                evaluator="Pending review", timestamp=dt.now(), status=Status.PENDING,
             )
         ],
         value=DropdownMetric(
@@ -190,11 +196,7 @@ def create_metric(fiber, method, reference):
                 "Baseline correction (dF/F) failed",
                 "Motion correction failed",
             ],
-            status=[
-                Status.PASS,
-                Status.FAIL,
-                Status.FAIL,
-            ],
+            status=[Status.PASS, Status.FAIL, Status.FAIL,],
         ),
     )
 
@@ -270,9 +272,7 @@ if __name__ == "__main__":
     asset_name = data_description.get("name", None)
 
     log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
+        "aind-fip-dff", subject_id=subject_id, asset_name=asset_name,
     )
 
     # Create the destination directory if it doesn't exist
@@ -362,14 +362,15 @@ if __name__ == "__main__":
                         output_directory=os.path.join(args.output_dir, "qc")
                     )
 
-
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
             os.mkdir(Path(args.output_dir) / "qc")
             qc_file_path = Path(args.output_dir) / "qc" / "no_fip_to_qc.txt"
             # Create an empty file
             with open(qc_file_path, "w") as file:
-                file.write("FIP data files are missing. This may be a behavior session.")
+                file.write(
+                    "FIP data files are missing. This may be a behavior session."
+                )
 
     src_directory = args.fiber_path
 
