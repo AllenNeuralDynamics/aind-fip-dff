@@ -362,8 +362,13 @@ if __name__ == "__main__":
                         output_directory=os.path.join(args.output_dir, "qc")
                     )
 
+
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
+            qc_file_path = args.output_dir / "no_fip_to_qc.txt"
+            # Create an empty file
+            with open(qc_file_path, "w") as file:
+                file.write("FIP data files are missing. This may be a behavior session.")
 
     src_directory = args.fiber_path
 
