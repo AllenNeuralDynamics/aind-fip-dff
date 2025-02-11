@@ -364,7 +364,7 @@ if __name__ == "__main__":
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
-            os.mkdir(Path(args.output_dir) / "dff-qc")
+            os.mkdir(os.path.join(args.output_dir, "dff-qc"))
             qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
             # Create an empty file
             with open(qc_file_path, "w") as file:
