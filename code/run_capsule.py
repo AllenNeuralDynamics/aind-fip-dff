@@ -354,7 +354,7 @@ if __name__ == "__main__":
                                 method,
                                 os.path.join(args.output_dir, "dff-qc"),
                             )
-                            metrics.append(create_metric(fiber, method, fig_file))
+                            metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
                         evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
                     qc = QualityControl(evaluations=evaluations)
