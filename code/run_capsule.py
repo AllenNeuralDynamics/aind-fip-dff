@@ -352,7 +352,7 @@ if __name__ == "__main__":
                                 fiber,
                                 channels,
                                 method,
-                                os.path.join(args.output_dir, "qc"),
+                                os.path.join(args.output_dir, "dff-qc"),
                             )
                             metrics.append(create_metric(fiber, method, fig_file))
                         evaluations.append(create_evaluation(method, metrics))
