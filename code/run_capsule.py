@@ -18,8 +18,19 @@ from aind_data_schema.core.processing import (
     Processing,
     ProcessName,
 )
+from aind_data_schema.core.quality_control import (
+    QCEvaluation,
+    QCMetric,
+    QCStatus,
+    QualityControl,
+    Stage,
+    Status,
+)
+from aind_data_schema_models.modalities import Modality
+from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
+from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 
 import utils.nwb_dict_utils as nwb_utils
@@ -113,7 +124,7 @@ def plot_raw_dff_mc(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str = "/results/plots/",
+    fig_path: str = "dff/",
 ):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
@@ -130,7 +141,7 @@ def plot_raw_dff_mc(
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
     fig_path : str, optional
-        The path where the generated plot will be saved. Defaults to "/results/plots/".
+        The path where the generated plot will be saved. Defaults to "/results/qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
     for i, suffix in enumerate(("", f"_dff-{method}", f"_preprocessed-{method}")):
@@ -164,7 +175,45 @@ def plot_raw_dff_mc(
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
-    plt.savefig(os.path.join(fig_path, f"Fiber{fiber}_{method}.png"))
+    fig_file = os.path.join(fig_path, f"Fiber{fiber}_{method}.png")
+    plt.savefig(fig_file, dpi=300)
+    return fig_file
+
+
+def create_metric(fiber, method, reference):
+    return QCMetric(
+        name=f"Preprocessing of Fiber {fiber} using method '{method}'",
+        reference=reference,
+        status_history=[
+            QCStatus(
+                evaluator="Pending review", timestamp=dt.now(), status=Status.PENDING,
+            )
+        ],
+        value=DropdownMetric(
+            value=[],
+            options=[
+                "Preprocessing successful",
+                "Baseline correction (dF/F) failed",
+                "Motion correction failed",
+            ],
+            status=[Status.PASS, Status.FAIL, Status.FAIL,],
+        ),
+    )
+
+
+def create_evaluation(method, metrics):
+    name = f"Preprocessing using method '{method}'"
+    return QCEvaluation(
+        name=name,
+        modality=Modality.FIB,
+        stage=Stage.PROCESSING,
+        metrics=metrics,
+        allow_failed_metrics=False,
+        description=(
+            "Review the preprocessing plots to ensure accurate "
+            "baseline (dF/F) and motion correction."
+        ),
+    )
 
 
 if __name__ == "__main__":
@@ -200,6 +249,31 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
+    fiber_path = Path(args.fiber_path)
+
+    # Load subject data
+    subject_json_path = fiber_path / "subject.json"
+    with open(subject_json_path, "r") as f:
+        subject_data = json.load(f)
+
+    # Grab the subject_id and times for logging
+    subject_id = subject_data.get("subject_id", None)
+
+    # Raise an error if subject_id is None
+    if subject_id is None:
+        logging.info("No subject_id in subject file")
+        raise ValueError("subject_id is missing from the subject_data.")
+
+    # Load data description
+    data_description_path = fiber_path / "data_description.json"
+    with open(data_description_path, "r") as f:
+        data_description = json.load(f)
+
+    asset_name = data_description.get("name", None)
+
+    log.setup_logging(
+        "aind-fip-dff", subject_id=subject_id, asset_name=asset_name,
+    )
 
     # Create the destination directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
@@ -219,7 +293,7 @@ if __name__ == "__main__":
             os.path.join(args.fiber_path, "fib")
         ):
             # Print the path to ensure correctness
-            print(f"Processing NWB file: {nwb_file_path}")
+            logging.info(f"Processing NWB file: {nwb_file_path}")
 
             with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
                 nwb_file = io.read()
@@ -257,11 +331,12 @@ if __name__ == "__main__":
                         )
 
                 io.write(nwb_file)
-                print(
+                logging.info(
                     "Successfully updated the nwb with preprocessed data"
                     f" using methods {methods}"
                 )
                 if not args.no_qc:
+                    evaluations = []
                     for method in methods:
                         keys_split = [
                             k.split("_")
@@ -270,29 +345,45 @@ if __name__ == "__main__":
                         ]
                         channels = sorted(set([k[0] for k in keys_split]))
                         fibers = sorted(set([k[1] for k in keys_split]))
+                        metrics = []
                         for fiber in fibers:
-                            plot_raw_dff_mc(
+                            fig_file = plot_raw_dff_mc(
                                 nwb_file,
                                 fiber,
                                 channels,
                                 method,
-                                os.path.join(args.output_dir, "plots"),
+                                os.path.join(args.output_dir, "dff-qc"),
                             )
+                            metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
+                        evaluations.append(create_evaluation(method, metrics))
+                    # Create QC object and save
+                    qc = QualityControl(evaluations=evaluations)
+                    qc.write_standard_file(
+                        output_directory=os.path.join(args.output_dir, "dff-qc")
+                    )
+
         else:
-            print("NO Fiber but only Behavior data, preprocessing not needed")
+            logging.info("NO Fiber but only Behavior data, preprocessing not needed")
+            os.mkdir(os.path.join(args.output_dir, "dff-qc"))
+            qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
+            # Create an empty file
+            with open(qc_file_path, "w") as file:
+                file.write(
+                    "FIP data files are missing. This may be a behavior session."
+                )
 
     src_directory = args.fiber_path
 
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json"]:
+        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
 
                 # Move the file
                 shutil.copy2(src_file, dest_file)
-                print(f"Moved: {src_file} to {dest_file}")
+                logging.info(f"Moved: {src_file} to {dest_file}")
 
     write_output_metadata(
         metadata=vars(args),
