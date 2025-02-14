@@ -213,11 +213,11 @@ def fit_trace_robust(
     trace: np.ndarray,
     fs: float = 20,
     M=TukeyBiweight(2),
-    maxiter: int = 50,
+    maxiter: int = 5,
     tol: float = 1e-5,
     update_scale: bool = True,
-    asymmetric: bool = True,
-    scale_est: str = "welch",
+    asymmetric: bool = False,
+    scale_est: str = "mad",
 ) -> np.ndarray:
     """
     Iteratively Reweighted Least Squares (IRLS) fit using above baseline (bleaching x brightening)

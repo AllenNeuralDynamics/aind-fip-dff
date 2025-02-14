@@ -335,32 +335,41 @@ if __name__ == "__main__":
                     "Successfully updated the nwb with preprocessed data"
                     f" using methods {methods}"
                 )
-                if not args.no_qc:
-                    evaluations = []
-                    for method in methods:
-                        keys_split = [
-                            k.split("_")
-                            for k in nwb_file.acquisition.keys()
-                            if k.endswith(method)
-                        ]
-                        channels = sorted(set([k[0] for k in keys_split]))
-                        fibers = sorted(set([k[1] for k in keys_split]))
-                        metrics = []
-                        for fiber in fibers:
-                            fig_file = plot_raw_dff_mc(
-                                nwb_file,
-                                fiber,
-                                channels,
-                                method,
-                                os.path.join(args.output_dir, "dff-qc"),
-                            )
-                            metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
-                        evaluations.append(create_evaluation(method, metrics))
-                    # Create QC object and save
-                    qc = QualityControl(evaluations=evaluations)
-                    qc.write_standard_file(
-                        output_directory=os.path.join(args.output_dir, "dff-qc")
-                    )
+            if not args.no_qc:
+                evaluations = []
+                for method in methods:
+                    keys_split = [
+                        k.split("_")
+                        for k in nwb_file.acquisition.keys()
+                        if k.endswith(method)
+                    ]
+                    channels = sorted(set([k[0] for k in keys_split]))
+                    fibers = sorted(set([k[1] for k in keys_split]))
+                    metrics = []
+                    for fiber in fibers:
+                        fig_file = plot_raw_dff_mc(
+                            nwb_file,
+                            fiber,
+                            channels,
+                            method,
+                            os.path.join(args.output_dir, "dff-qc"),
+                        )
+                        metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
+                    evaluations.append(create_evaluation(method, metrics))
+                # Create QC object and save
+                qc = QualityControl(evaluations=evaluations)
+                qc.write_standard_file(
+                    output_directory=os.path.join(args.output_dir, "dff-qc")
+                )
+            # append to processing.json
+            write_output_metadata(
+                metadata=vars(args),
+                json_dir=args.fiber_path,
+                process_name=ProcessName.DF_F_ESTIMATION,
+                input_fp=source_path,
+                output_fp=os.path.join(args.output_dir, "nwb"),
+                start_date_time=start_time,
+            )
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
@@ -371,25 +380,18 @@ if __name__ == "__main__":
                 file.write(
                     "FIP data files are missing. This may be a behavior session."
                 )
+            # copy processing.json
+            src_file = os.path.join(args.fiber_path, "processing.json")
+            if os.path.exists(src_file):
+                shutil.copy2(src_file, os.path.join(args.output_dir, "processing.json"))
 
     src_directory = args.fiber_path
-
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
         for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
-
                 # Move the file
                 shutil.copy2(src_file, dest_file)
                 logging.info(f"Moved: {src_file} to {dest_file}")
-
-    write_output_metadata(
-        metadata=vars(args),
-        json_dir=src_directory,
-        process_name=ProcessName.DF_F_ESTIMATION,
-        input_fp=source_paths[-1] if source_paths else None,
-        output_fp=os.path.join(args.output_dir, "nwb"),
-        start_date_time=start_time,
-    )
