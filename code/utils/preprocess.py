@@ -205,7 +205,7 @@ def fit_trace_robust(
     maxiter: int = 5,
     tol: float = 1e-5,
     update_scale: bool = True,
-    asymmetric: bool = False,
+    asymmetric: bool = True,
     scale_est: str = "mad",
 ) -> np.ndarray:
     """
@@ -346,8 +346,7 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
-            # tc_dFoF = tc_filtered / tc_fit - 1
-            tc_dFoF = tc_dFF(tc_filtered - tc_fit, tc_fit, b_percentile)
+            tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
