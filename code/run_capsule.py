@@ -48,7 +48,7 @@ then preprocess the arrays with the dF_F signal
 def write_output_metadata(
     metadata: dict,
     json_dir: str,
-    process_name: str,
+    process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
     start_date_time: dt,
@@ -72,7 +72,7 @@ def write_output_metadata(
     """
     proc_path = Path(json_dir) / "processing.json"
 
-    dp = DataProcess(
+    dp = [DataProcess(
         name=process_name,
         software_version=os.getenv("VERSION", ""),
         start_date_time=start_date_time,
@@ -81,7 +81,7 @@ def write_output_metadata(
         output_location=str(output_fp),
         code_url=(os.getenv("DFF_EXTRACTION_URL")),
         parameters=metadata,
-    )
+    )] if process_name is not None else []
 
     if os.path.exists(proc_path):
         with open(proc_path, "r") as f:
@@ -92,11 +92,11 @@ def write_output_metadata(
             processor_full_name="Fiberphotometry Processing Pipeline"
         )
         p = processing.processing_pipeline
-        p.data_processes.append(dp)
+        p.data_processes += dp
     else:
         p = PipelineProcess(
             processor_full_name="Fiberphotometry Processing Pipeline",
-            data_processes=[dp],
+            data_processes=dp,
         )
         processing = Processing(processing_pipeline=p)
     if u := os.getenv("PIPELINE_URL", ""):
@@ -190,7 +190,6 @@ def create_metric(fiber, method, reference):
             )
         ],
         value=DropdownMetric(
-            value=[],
             options=[
                 "Preprocessing successful",
                 "Baseline correction (dF/F) failed",
@@ -335,41 +334,33 @@ if __name__ == "__main__":
                     "Successfully updated the nwb with preprocessed data"
                     f" using methods {methods}"
                 )
-            if not args.no_qc:
-                evaluations = []
-                for method in methods:
-                    keys_split = [
-                        k.split("_")
-                        for k in nwb_file.acquisition.keys()
-                        if k.endswith(method)
-                    ]
-                    channels = sorted(set([k[0] for k in keys_split]))
-                    fibers = sorted(set([k[1] for k in keys_split]))
-                    metrics = []
-                    for fiber in fibers:
-                        fig_file = plot_raw_dff_mc(
-                            nwb_file,
-                            fiber,
-                            channels,
-                            method,
-                            os.path.join(args.output_dir, "dff-qc"),
-                        )
-                        metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
-                    evaluations.append(create_evaluation(method, metrics))
-                # Create QC object and save
-                qc = QualityControl(evaluations=evaluations)
-                qc.write_standard_file(
-                    output_directory=os.path.join(args.output_dir, "dff-qc")
-                )
-            # append to processing.json
-            write_output_metadata(
-                metadata=vars(args),
-                json_dir=args.fiber_path,
-                process_name=ProcessName.DF_F_ESTIMATION,
-                input_fp=source_path,
-                output_fp=os.path.join(args.output_dir, "nwb"),
-                start_date_time=start_time,
-            )
+                if not args.no_qc:
+                    evaluations = []
+                    for method in methods:
+                        keys_split = [
+                            k.split("_")
+                            for k in nwb_file.acquisition.keys()
+                            if k.endswith(method)
+                        ]
+                        channels = sorted(set([k[0] for k in keys_split]))
+                        fibers = sorted(set([k[1] for k in keys_split]))
+                        metrics = []
+                        for fiber in fibers:
+                            fig_file = plot_raw_dff_mc(
+                                nwb_file,
+                                fiber,
+                                channels,
+                                method,
+                                os.path.join(args.output_dir, "dff-qc"),
+                            )
+                            metrics.append(create_metric(fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"))
+                        evaluations.append(create_evaluation(method, metrics))
+                    # Create QC object and save
+                    qc = QualityControl(evaluations=evaluations)
+                    qc.write_standard_file(
+                        output_directory=os.path.join(args.output_dir, "dff-qc")
+                    )
+            process_name = ProcessName.DF_F_ESTIMATION  # append DataProcess to processing.json
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
@@ -380,10 +371,16 @@ if __name__ == "__main__":
                 file.write(
                     "FIP data files are missing. This may be a behavior session."
                 )
-            # copy processing.json
-            src_file = os.path.join(args.fiber_path, "processing.json")
-            if os.path.exists(src_file):
-                shutil.copy2(src_file, os.path.join(args.output_dir, "processing.json"))
+            process_name = None  # update processing.json w/o appending DataProcess
+
+        write_output_metadata(
+            metadata=vars(args),
+            json_dir=args.fiber_path,
+            process_name=process_name,
+            input_fp=source_path,
+            output_fp=os.path.join(args.output_dir, "nwb"),
+            start_date_time=start_time,
+        )
 
     src_directory = args.fiber_path
     # Iterate over all .json files in the source directory

@@ -16,17 +16,6 @@ def tc_crop(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
     return tc[n_frame_to_cut:]
 
 
-def tc_medfilt(tc: np.ndarray, kernel_size: int) -> np.ndarray:
-    """Apply median filtering to remove electrical artifact."""
-    return medfilt(tc, kernel_size=kernel_size)
-
-
-def tc_lowcut(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
-    """Apply lowpass filter with zero phase filtering to avoid distorting the signal."""
-    sos = butter(2, 9, btype="low", fs=sampling_rate, output="sos")
-    return sosfiltfilt(sos, tc)
-
-
 def tc_slidingbase(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
     """Set up sliding baseline to calculate dF/F."""
     sos = butter(2, 0.0001, btype="low", fs=sampling_rate, output="sos")
@@ -98,7 +87,7 @@ def tc_expfit(
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
             maxfev=10000,
         )
-    except:
+    except RuntimeError:
         popt, pcov = curve_fit(func, time_seconds, tc, maxfev=10000)
     tc_exp = func(time_seconds, *popt)
     return tc_exp, popt
@@ -350,7 +339,6 @@ def chunk_processing(
     """
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
-    tc_filtered = tc_lowcut(tc_filtered, sampling_rate)
     try:
         if method == "poly":
             tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
@@ -358,15 +346,16 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
-            tc_dFoF = tc_filtered / tc_fit - 1
+            # tc_dFoF = tc_filtered / tc_fit - 1
+            tc_dFoF = tc_dFF(tc_filtered - tc_fit, tc_fit, b_percentile)
         else:
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
             tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
         tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
-    except:
-        print(f"Processing with method {method} failed. Setting dF/F to nans.")
+    except Exception as e:
+        print(f"Processing with method {method} failed with Error {e}. Setting dF/F to nans.")
         tc_dFoF = np.nan * tc
         tc_params = {
             i_coef: np.nan
@@ -379,7 +368,10 @@ def chunk_processing(
 
 
 def motion_correct(
-    dff: pd.DataFrame, fs: float = 20, M: RobustNorm = TukeyBiweight(1)
+    dff: pd.DataFrame,
+    fs: float = 20,
+    cutoff_freq: float = 0.3,
+    M: RobustNorm = TukeyBiweight(1),
 ) -> pd.DataFrame:
     """
     Perform motion correction on a fiber's dF/F traces by regressing out
@@ -389,6 +381,9 @@ def motion_correct(
             DataFrame containing the dF/F traces of the fiber photometry signals.
         fs: float
             Sampling rate of the signal, in Hz.
+        cutoff_freq: float
+            Cutoff frequency of the lowpass Butterworth filter
+            (that's only applied for the regression), in Hz.
         M: statsmodels.robust.norms.RobustNorm
             Robust criterion function used to downweight outliers.
             Refer to `statsmodels.robust.norms` for more details.
@@ -399,25 +394,27 @@ def motion_correct(
     """
     if np.isnan(dff["Iso"]).any():
         return np.nan * dff
-    sos = butter(N=2, Wn=0.3, fs=fs, output="sos")
+    sos = butter(N=2, Wn=cutoff_freq, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
-    motion = dff_filt[dff.columns.get_loc("Iso")]
-    motions = np.nan * dff_filt.T
+    idx_iso = dff.columns.get_loc("Iso")
+    motion = dff_filt[idx_iso]
     no_nans = ~np.isnan(dff_filt.sum(1))
+    no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
     if M is not None:
-        motions[:, no_nans] = (
-            np.maximum([RLM(d, motion, M=M).fit().params for d in dff_filt[no_nans]], 0)
-            * motion
-        ).T
+        coef = np.maximum(
+            [RLM(d, motion, M=M).fit().params for d in dff_filt[no_nans]], 0
+        )
     else:
-        motions[:, no_nans] = (
+        coef = (
             LinearRegression(fit_intercept=False, positive=True)
             .fit(motion[:, None], dff_filt[no_nans].T)
-            .predict(motion[:, None])
+            .coef_
         )
-    motions -= motions.mean(0)
-    dff_mc = dff - motions
-    return dff_mc
+    motions = np.full_like(dff_filt, np.nan)
+    motions[no_nans] = coef * dff["Iso"].values
+    motions[idx_iso] = motion
+    motions -= motions.mean(axis=1, keepdims=True)
+    return dff - motions.T
 
 
 def batch_processing(
