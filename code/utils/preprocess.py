@@ -201,7 +201,7 @@ def fit_trace(trace: np.ndarray, fs: float = 20):
 def fit_trace_robust(
     trace: np.ndarray,
     fs: float = 20,
-    M=TukeyBiweight(2),
+    M: RobustNorm = TukeyBiweight(2),
     maxiter: int = 5,
     tol: float = 1e-5,
     update_scale: bool = True,

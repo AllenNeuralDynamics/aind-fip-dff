@@ -148,6 +148,7 @@ def plot_raw_dff_mc(
         for ch in sorted(channels):
             trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
             t, d = trace.timestamps[:], trace.data[:]
+            t -= t[0] 
             if ~np.isnan(t).all():
                 ax[i].plot(
                     t,
