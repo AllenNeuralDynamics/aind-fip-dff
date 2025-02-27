@@ -14,13 +14,9 @@ ENV VERSION="10"
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
-RUN pip3 install -U --no-cache-dir \
     aind-data-schema>=1.2.0 \
     aind-log-utils \
     aind-metadata-upgrader \
-    aind-ophys-utils \
     aind-qcportal-schema \
     hdmf-zarr \
     matplotlib \

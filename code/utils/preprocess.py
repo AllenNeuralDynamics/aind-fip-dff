@@ -1,12 +1,14 @@
 import itertools
+import logging
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from aind_ophys_utils.signal_utils import noise_std
 from scipy.optimize import curve_fit, minimize
 from scipy.signal import butter, medfilt, sosfiltfilt
+from scipy.stats import skew
 from sklearn.linear_model import LinearRegression
-from statsmodels.api import RLM
+from statsmodels.api import add_constant, RLM
 from statsmodels.robust import scale
 from statsmodels.robust.norms import RobustNorm, TukeyBiweight
 
@@ -46,8 +48,8 @@ def tc_polyfit(
         sampling_rate: float
             Sampling rate of the signal
     Returns:
-        tc_dFoF: np.ndarray
-            Preprocessed fiber photometry signal
+        tc_F0: np.ndarray
+            Fitted baseline
         popt: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
@@ -68,8 +70,8 @@ def tc_expfit(
         sampling_rate: float
             Sampling rate of the signal
     Returns:
-        tc_dFoF: np.ndarray
-            Preprocessed fiber photometry signal
+        tc_F0: np.ndarray
+            Fitted baseline
         popt: np.ndarray
             Optimal values for the parameters of the preprocessing
     """
@@ -93,42 +95,21 @@ def tc_expfit(
     return tc_exp, popt
 
 
-def tc_brightfit(
-    tc: np.ndarray, sampling_rate: float = 20, robust: bool = True
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit with  Biphasic exponential decay (bleaching)  x  increasing saturating exponential (brightening)
-    Args:
-        tc: np.array
-            Fiber photometry signal
-        sampling_rate: float
-            Sampling rate of the signal
-        robust: bool
-            Whether to fit baseline using IRLS (robust regression)
-    Returns:
-        tc_dFoF: np.array
-            Preprocessed fiber photometry signal
-        popt: array
-            Optimal values for the parameters of the preprocessing
-    """
-    popt = (
-        fit_trace_robust(tc, sampling_rate) if robust else fit_trace(tc, sampling_rate)
-    )
-    return baseline(*popt, T=len(tc)), popt
-
-
 def baseline(
     b_inf: float,
     b_slow: float = 0,
     b_fast: float = 0,
+    b_rapid: float = 0,
     b_bright: float = 0,
     t_slow: float = np.inf,
     t_fast: float = np.inf,
+    t_rapid: float = np.inf,
     t_bright: float = np.inf,
     T: int = 70000,
     fs: float = 20,
 ) -> np.ndarray:
-    """Baseline with  Biphasic exponential decay (bleaching)  x  increasing saturating exponential (brightening)"""
+    """Baseline with  Triphasic exponential decay (bleaching)
+    x  increasing saturating exponential (brightening)"""
     tmp = -np.arange(T)
     return (
         b_inf
@@ -136,169 +117,241 @@ def baseline(
             1
             + b_slow * np.exp(tmp / (t_slow * fs))
             + b_fast * np.exp(tmp / (t_fast * fs))
+            + b_rapid * np.exp(tmp / (t_rapid * fs))
         )
         * (1 - b_bright * np.exp(tmp / (t_bright * fs)))
     )
 
 
-def fit_trace(trace: np.ndarray, fs: float = 20):
-    """
-    Oridinary Least Squares (OLS) fit using above baseline (bleaching x brightening)
-    Args:
-        trace: np.ndarray
-            Fiber photometry signal
-        fs: float
-            Sampling rate of the signal
-    Returns:
-        x: np.ndarray
-            Optimal values for the parameters of the preprocessing
-    """
-
-    def optimize(trace, x0, ds=1, maxiter=20000):
-        T = len(trace)
-        trace_ds = trace[: T // ds * ds].reshape(-1, ds).mean(1)
-
-        def objective(params):
-            return np.sum(
-                (trace_ds - baseline(*params, T=len(trace_ds), fs=fs / ds)) ** 2
-            )
-
-        return minimize(
-            objective,
-            x0,
-            bounds=[
-                (0, np.inf),
-                (0, np.inf),
-                (0, np.inf),
-                (0, np.inf),
-                (1, np.inf),
-                (1 / ds, np.inf),
-                (1, np.inf),
-            ],
-            method="Nelder-Mead",
-            options={"maxiter": maxiter},
+def plot_fit(x, trace, fs=20, title=None, color="C0"):
+    T = len(trace)
+    F0 = baseline(*x, T=T)
+    logging.info(
+        "b_inf={:9.4f}, b_slow={:6.4f}, b_fast={:6.4f}, b_rapid={:6.4f}, b_bright={:6.4f}, ".format(
+            *x[:5]
         )
-
-    # optimize on decimated data to quickly get good initial estimates
-    res100 = optimize(
-        trace, (trace[-1000:].mean(), 0.35, 0.2, 0.25, 3600.0, 200.0, 2000.0), 100, 2000
     )
-    res10 = optimize(trace, res100.x, 10, 1000)
-    # optimize on full data
-    res = optimize(trace, res10.x)
-    x = res.x
-    if np.allclose(x[3], 0):  # no brightening
-        x[-1] = np.inf
-        x[3] = 0
-    if np.allclose(x[2], 0):  # no fast decay
-        x[-2] = np.inf
-        x[2] = 0
-    if x[-2] > x[-3]:  # swap t_slow and t_fast if optimization returns t_fast > t_slow
-        x[1], x[2], x[-2], x[-3] = x[2], x[1], x[-3], x[-2]
-    return x
+    logging.info(
+        "                 t_slow={:6.0f}, t_fast={:6.0f}, t_rapid={:6.0f}, t_bright={:6.0f}".format(
+            *x[5:]
+        )
+    )
+    fig, ax = plt.subplots(2, 1, figsize=(15, 3), sharex=True)
+    ax[0].plot(np.arange(T) / fs, trace, label="data", c=color)
+    ax[0].plot(np.arange(T) / fs, F0, label="fit", c="C1")
+    ax[0].set_ylabel("Trace")
+    ax[0].legend()
+    ax[1].plot(np.arange(T) / fs, trace - F0, c=color)
+    ax[1].axhline(0, c="k", ls="--")
+    ax[1].set_xlabel("Time [seconds]")
+    ax[1].set_ylabel("Residual")
+    ax[1].set_xlim(-T / fs * 0.01, T / fs * 1.01)
+    if title is not None:
+        plt.suptitle(title)
+    plt.tight_layout(pad=0.4)
+    plt.show()
 
 
-def fit_trace_robust(
+def tc_brightfit(
     trace: np.ndarray,
     fs: float = 20,
-    M: RobustNorm = TukeyBiweight(2),
-    maxiter: int = 5,
-    tol: float = 1e-5,
+    rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
+    M: RobustNorm | None = TukeyBiweight(3),
+    maxiter: int = 10,
+    tol: float = 1e-4,
     update_scale: bool = True,
-    asymmetric: bool = True,
-    scale_est: str = "mad",
-) -> np.ndarray:
+    skewness_factor: float = 1.0,
+    plot: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Iteratively Reweighted Least Squares (IRLS) fit using above baseline (bleaching x brightening)
-    see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
+    Fit trace with above baseline (bleaching x brightening) using Ordinary
+    Least Squares (OLS) or Iteratively Reweighted Least Squares (IRLS).
+    More complex models that include brightening and/or a third exponential
+    are only selected if they notably improve the fit by reducing the RSS.
     Args:
         trace: np.ndarray
             Fiber photometry signal
         fs: float
             Sampling rate of the signal
+        rss_thresh: float, or (float, float), or str
+            Factor(s) used for model selection.
+            If a list then the order is (brightening, 3rd exponential)
+            A more complex model (with 2 additional parameters)
+            is accepted if the RSS decreases by at least this factor.
+            Automatically calculated if "AIC" or "BIC".
         M : statsmodels.robust.norms.RobustNorm
             The robust criterion function for downweighting outliers.
             See statsmodels.robust.norms for more information.
         maxiter : int
-            The maximum number of iterations to try.
+            The maximum number of IRLS iterations to try.
+            Has to be >0 for robust regression, 0 uses only OLS.
         tol : float
             The convergence tolerance of the estimate.
+        skewness_factor : float
+            Scaling factor to correct for bias by performing asymmetric
+            robust regression based on skewness of the residuals.
         update_scale : bool
             If `update_scale` is False then the scale estimate for the
             weights is held constant over the iteration.  Otherwise, it
             is updated for each fit in the iteration.
-        asymmetric : bool
-            If `asymmetric` is True then only positive outliers are reweighted.
-        scale_est : str
-            'mad' or 'welch'
-            Indicates the estimate to use for scaling the weights in the IRLS.
     Returns:
-        params: np.ndarray
+        tc_dFoF: np.array
+            Preprocessed fiber photometry signal
+        popt: array
             Optimal values for the parameters of the preprocessing
     """
 
-    def optimize_robust(trace, x0, weights):
-        T = len(trace)
+    # constants for fancy logging
+    CEND = "\33[0m"
+    CBOLD = "\33[1m"
+    CRED = "\33[31m"
+    CGREEN = "\33[32m"
 
-        def objective(params):
-            return np.sum(weights * (trace - baseline(*params, T=T, fs=fs)) ** 2)
+    T = len(trace)
+    Tds = T // 10
+    if rss_thresh == "BIC":
+        rss_thresh = [Tds ** (-2 / Tds)] * 2
+    elif rss_thresh == "AIC":
+        rss_thresh = [np.exp(-4 / Tds)] * 2
 
-        return minimize(
-            objective,
-            x0,
-            bounds=[
-                (0, np.inf),
-                (0, np.inf),
-                (0, np.inf),
-                (0, np.inf),
-                (1, np.inf),
-                (1, np.inf),
-                (1, np.inf),
-            ],
+    def optimize(trace, x0, ds=1, maxiter=20000, weights=1, plot=plot):
+        """if item in x0 is set to np.nan it is not optimized but
+        set to its default, i.e. this exponential term is excluded
+        """
+        trace_ds = trace[: T // ds * ds].reshape(-1, ds).mean(1)
+        optimize_param = ~np.isnan(x0)
+        params = np.array([0] * 5 + [np.inf] * 4)  # default params if not optimized
+
+        def objective(params_to_optimize):
+            params[optimize_param] = params_to_optimize
+            return np.sum(
+                weights * (trace_ds - baseline(*params, T=T // ds, fs=fs / ds)) ** 2
+            )
+
+        bounds = np.array(
+            [(0, np.inf)] * 5 + [(300, np.inf), (1, 1200), (1, 180), (60, np.inf)]
         )
+        res = minimize(
+            objective,
+            np.array(x0)[optimize_param],
+            bounds=bounds[optimize_param],
+            method="Nelder-Mead",
+            options={"maxiter": maxiter},
+        )
+        params[optimize_param] = res.x
+        logging.info(
+            f"Cost: {res.fun:.3f}  "
+            f"Success: {CGREEN if res.success else CRED} {res.success} {CEND}  "
+            f"{res.message}"
+        )
+        if plot:
+            plot_fit(params, trace, fs)
+        return params, res.fun, res.success, res.message
 
-    # init with OLS fit
-    params = fit_trace(trace)
-    f0 = baseline(*params, T=len(trace), fs=fs)
-    resid = trace - f0
-    scl = (
-        scale.mad(resid, center=0)
-        if scale_est == "mad"
-        else noise_std(resid, method="welch")
+    x0 = np.array(
+        [trace[-1000:].mean(), 0.35, 0.2, np.nan, np.nan, 3600, 240, np.nan, np.nan]
     )
-    deviance = M(resid / scl).sum()
+    logging.info(f"{CBOLD}Fit of 10x decimated trace with double-exp{CEND}")
+    x2, cost2, success2, _ = optimize(trace, x0, 10)
+    if x2[6] > x2[5]:  # swap t_slow and t_fast if optimization returns t_fast > t_slow
+        x2[[1, 2, 5, 6]] = x2[[2, 1, 6, 5]]
 
-    iteration = 1
-    converged = False
-    while not converged:
-        if scl == 0.0:
-            import warnings
+    x0[~np.isnan(x0)] = x2[~np.isnan(x0)]
+    x0[[4, 8]] = 0.1, 2000
+    logging.info(f"{CBOLD}Fit of 10x decimated trace with brightening{CEND}")
+    xB, costB, successB, _ = optimize(trace, x0, 10, 3000)
 
-            warnings.warn(
-                "Estimated scale is 0.0 indicating that the most"
-                " last iteration produced a perfect fit of the "
-                "weighted data."
-            )
-            break
-        weights = M.weights(resid / scl)
-        if asymmetric:
-            weights[resid < 0] = 1
-        wls_results = optimize_robust(trace, params, weights)
-        params = wls_results.x
-        f0 = baseline(*params, T=len(trace), fs=fs)
+    cost_ratio = costB / cost2
+    include_bright = cost_ratio < rss_thresh[0]
+    logging.info(
+        f"Cost reduction by including brightening is {(cost_ratio-1)*100:.3f}%, "
+        f"thus {CBOLD}{'including' if include_bright else 'skipping'}{CEND} brightening term."
+        + ("\n" if plot else "")
+    )
+    if include_bright:
+        x0[~np.isnan(x0)] = xB[~np.isnan(x0)]
+    else:
+        x0[[4, 8]] = np.nan
+    x0[[3, 7]] = 0.1, 50
+    logging.info(f"{CBOLD}Fit of 10x decimated trace with triple-exp{CEND}")
+    x3, cost3, success3, _ = optimize(trace, x0, 10, 3000)
+    # swap as needed to ensure t_slow > t_fast > t_rapid
+    order = np.argsort(x3[5:8])[::-1]
+    x3[5:8] = x3[5 + order]
+    x3[1:4] = x3[1 + order]
+
+    cost_ratio = cost3 / (costB if include_bright else cost2)
+    include_3rd = cost_ratio < rss_thresh[1]
+    logging.info(
+        f"Cost reduction by including 3rd exponential is {(cost_ratio-1)*100:.3f}%, "
+        f"thus {CBOLD}{'including' if include_3rd else 'skipping'}{CEND} 3rd exponential term."
+        + ("\n" if plot else "")
+    )
+    if include_3rd:
+        x0[~np.isnan(x0)] = x3[~np.isnan(x0)]
+    else:
+        x0[[3, 7]] = np.nan
+    params = np.array([0] * 5 + [np.inf] * 4)
+    params[~np.isnan(x0)] = x0[~np.isnan(x0)]
+    logging.info(
+        f"Cost on original trace with params obtained on decimated trace is "
+        f"{np.sum((trace - baseline(*params, T=len(trace), fs=fs)) ** 2):.3f}"
+    )
+    logging.info(
+        f"{CBOLD}Fit of original trace with {'triple-exp' if include_3rd else 'double-exp'} "
+        f"and {'' if include_bright else 'no '}brightening{CEND}"
+    )
+    x, cost, success, msg = optimize(trace, x0)
+
+    # robust fit down-weighting outliers using IRLS
+    # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
+    if maxiter > 0 and M is not None:
+        f0 = baseline(*x, T=T, fs=fs)
         resid = trace - f0
-        if update_scale is True:
-            scl = (
-                scale.mad(resid, center=0)
-                if scale_est == "mad"
-                else noise_std(resid, method="welch")
-            )
-        dev_pre = deviance
+        scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
         deviance = M(resid / scl).sum()
-        iteration += 1
-        converged = iteration >= maxiter or np.abs(deviance - dev_pre) < tol
+        iteration = 0
+        converged = False
+        while not converged:
+            iteration += 1
+            if scl == 0.0:
+                import warnings
 
-    return params
+                warnings.warn(
+                    "Estimated scale is 0.0 indicating that the most"
+                    " last iteration produced a perfect fit of the "
+                    "weighted data."
+                )
+                break
+            if skewness_factor != 0:
+                avg_skew = np.mean(
+                    [skew((resid)[t0 : t0 + 1200]) for t0 in range(0, len(resid), 1200)]
+                )
+                resid[resid > 0] *= np.exp(skewness_factor * avg_skew)
+            weights = M.weights(resid / scl)
+            x[np.isnan(x0)] = np.nan  # set params of excluded terms to nan
+            x, cost, success, msg = optimize(trace, x, weights=weights, plot=False)
+            f0 = baseline(*x, T=T, fs=fs)
+            resid = trace - f0
+            if update_scale is True:
+                scl = scale.mad(
+                    resid[None if skewness_factor == 0 else resid < 0], center=0
+                )
+            dev_pre = deviance
+            deviance = M(resid / scl).sum()
+            converged = iteration >= maxiter or np.abs(deviance / dev_pre - 1) < tol
+        logging.info(
+            f"{CBOLD}IRLS fit {iteration}/{maxiter} of original trace with "
+            f"{'triple-exp' if include_3rd else 'double-exp'} "
+            f"and {'' if include_bright else 'no '}brightening{CEND}"
+        )
+        logging.info(
+            f"Cost: {cost:.3f}  Success: {CGREEN if success else CRED} {success} {CEND} {msg}"
+        )
+        if plot:
+            plot_fit(x, trace, fs)
+
+    return baseline(*x, T=T, fs=fs), x
 
 
 # dF/F total function
@@ -332,7 +385,7 @@ def chunk_processing(
         robust: bool
             Whether to fit baseline using IRLS (robust regression, only 'bright' method)
     Returns:
-        tc_dFoF: np.ndarray
+        tc_F0: np.ndarray
             dF/F of fiber photometry signal
         tc_params: dict
             Dictionary with the parameters of the preprocessing
@@ -345,7 +398,7 @@ def chunk_processing(
         if method == "exp":
             tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
         if method == "bright":
-            tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate, robust)
+            tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate)
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -354,11 +407,13 @@ def chunk_processing(
         tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
     except Exception as e:
-        print(f"Processing with method {method} failed with Error {e}. Setting dF/F to nans.")
+        logging.warning(
+            f"Processing with method {method} failed with Error {e}. Setting dF/F to nans."
+        )
         tc_dFoF = np.nan * tc
         tc_params = {
             i_coef: np.nan
-            for i_coef in range({"poly": 5, "exp": 4, "bright": 7}[method])
+            for i_coef in range({"poly": 5, "exp": 4, "bright": 9}[method])
         }
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
@@ -370,11 +425,11 @@ def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
     cutoff_freq: float = 0.3,
-    M: RobustNorm = TukeyBiweight(1),
+    M: RobustNorm = TukeyBiweight(3),
 ) -> pd.DataFrame:
     """
     Perform motion correction on a fiber's dF/F traces by regressing out
-    the filtered isosbestic traces.
+    the isosbestic traces.
     Args:
         dff: pd.DataFrame
             DataFrame containing the dF/F traces of the fiber photometry signals.
@@ -401,19 +456,24 @@ def motion_correct(
     no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
     if M is not None:
         coef = np.maximum(
-            [RLM(d, motion, M=M).fit().params for d in dff_filt[no_nans]], 0
+            [
+                RLM(d, add_constant(motion), M=M).fit().params[1:]
+                for d in dff_filt[no_nans]
+            ],
+            0,
         )
     else:
         coef = (
-            LinearRegression(fit_intercept=False, positive=True)
+            LinearRegression(fit_intercept=True, positive=True)
             .fit(motion[:, None], dff_filt[no_nans].T)
             .coef_
         )
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
-    motions[idx_iso] = motion
     motions -= motions.mean(axis=1, keepdims=True)
-    return dff - motions.T
+    dff_mc = dff - motions.T
+    dff_mc["Iso"] = 0
+    return dff_mc
 
 
 def batch_processing(
