@@ -178,11 +178,11 @@ def plot_raw_dff_mc(
         ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
     tmin, tmax = np.nanmin(t), np.nanmax(t)
     ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
-    plt.suptitle(f"Method: {method},  ROI: {int(fiber)-1}", y=1)
+    plt.suptitle(f"Method: {method},  ROI: {fiber}", y=1)
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{int(fiber)-1}_{method}.png")
+    fig_file = os.path.join(fig_path, f"ROI{fiber_{method}.png")
     plt.savefig(fig_file, dpi=300)
     return fig_file
 
