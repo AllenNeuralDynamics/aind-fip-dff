@@ -182,7 +182,7 @@ def plot_raw_dff_mc(
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber_{method}.png")
+    fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
     plt.savefig(fig_file, dpi=300)
     return fig_file
 
