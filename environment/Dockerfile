@@ -9,7 +9,7 @@ ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
 ENV PIPELINE_URL="https://github.com/AllenNeuralDynamics/aind-fiber-photometry-pipeline"
-ENV PIPELINE_VERSION="5"
+ENV PIPELINE_VERSION="7"
 ENV VERSION="10"
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
