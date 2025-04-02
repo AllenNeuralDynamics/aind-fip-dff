@@ -370,7 +370,7 @@ if __name__ == "__main__":
                             )
                             metrics.append(
                                 create_metric(
-                                    fiber, method, f"dff-qc/Fiber{fiber}_{method}.png"
+                                    fiber, method, f"dff-qc/ROI{fiber}_{method}.png"
                                 )
                             )
                         evaluations.append(create_evaluation(method, metrics))
