@@ -1,6 +1,44 @@
 import numpy as np
 import pandas as pd
 import pynwb
+import zarr
+
+
+def np_to_zarr(array, path="array", store=None, chunks=None, dtype=None):
+    """
+    Convert a NumPy array to a Zarr array.
+
+    Args:
+        array (np.ndarray): The NumPy array to convert.
+        path (str, optional): The path within the Zarr store to save the array. Defaults to "array".
+        store (zarr.Store, optional): The Zarr store to use. Defaults to an in-memory store.
+                                      Use `zarr.DirectoryStore` for persistent storage.
+        chunks (tuple, optional): Chunk size for the Zarr array. Defaults to the shape of the array.
+        dtype (str or np.dtype, optional): Data type for the Zarr array. Defaults to the dtype of the input array.
+
+    Returns:
+        zarr.core.Array: The created Zarr array.
+    """
+    # Use an in-memory store if no store is provided
+    if store is None:
+        store = zarr.MemoryStore()
+
+    # Create a Zarr group in the store
+    root = zarr.group(store=store)
+
+    # Create the Zarr array
+    zarr_array = root.create_dataset(
+        path,
+        data=array,
+        chunks=(
+            chunks if chunks else array.shape
+        ),  # Default to the full array as one chunk
+        dtype=(
+            dtype if dtype else array.dtype
+        ),  # Default to the dtype of the input array
+    )
+
+    return zarr_array
 
 
 def is_numeric(obj) -> bool:
@@ -26,15 +64,65 @@ def attach_dict_fip(
     Returns:
         pynwb.NWBFile: The NWB file with the attached data.
     """
-    for neural_stream in dict_fip:
-        ts = pynwb.TimeSeries(
-            name=neural_stream + suffix,
-            data=dict_fip[neural_stream][1],
-            unit="s",
-            timestamps=dict_fip[neural_stream][0],
-        )
-        nwb.add_acquisition(ts)
+    nwb.add_processing_module(
+        [
+            pynwb.TimeSeries(
+                name=neural_stream + suffix,
+                data=np_to_zarr(
+                    dict_fip[neural_stream][1],
+                    f"/processing/{neural_stream + suffix}/data",
+                ),
+                unit="s",
+                timestamps=np_to_zarr(
+                    dict_fip[neural_stream][0],
+                    f"/processing/{neural_stream + suffix}/timestamps",
+                ),
+            )
+            for neural_stream in dict_fip
+        ]
+    )
     return nwb
+
+
+
+# def attach_dict_fip(
+#     nwb: pynwb.NWBFile, dict_fip: dict[str, list[np.ndarray]], suffix: str
+# ) -> pynwb.NWBFile:
+#     """
+#     Attach a dictionary of fiber photometry data to an NWB file.
+
+#     Args:
+#         nwb: pynwb.NWBFile
+#             The NWB file to attach the data to.
+#         dict_fip: dict[str, list[np.ndarray]]
+#             Dictionary containing fiber photometry data.
+#         suffix: str
+#             Suffix to add to the name of each TimeSeries.
+
+#     Returns:
+#         pynwb.NWBFile: The NWB file with the attached data.
+#     """
+#     # Create or retrieve a processing module
+#     module_name = "fiber_photometry"
+#     if module_name not in nwb.processing:
+#         processing_module = pynwb.ProcessingModule(
+#             name=module_name, description="Fiber photometry data"
+#         )
+#         nwb.add_processing_module(processing_module)
+#     else:
+#         processing_module = nwb.processing[module_name]
+
+#     # Add TimeSeries to the processing module
+#     for neural_stream in dict_fip:
+#         ts = pynwb.TimeSeries(
+#             name=neural_stream + suffix,
+#             data=dict_fip[neural_stream][1],
+#             unit="s",
+#             timestamps=dict_fip[neural_stream][0],
+#         )
+#         processing_module.add(ts)
+
+#     return nwb
 
 
 def split_fip_traces(

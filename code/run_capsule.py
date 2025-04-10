@@ -150,9 +150,12 @@ def plot_raw_dff_mc(
         The path where the generated plot will be saved. Defaults to "/results/qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
-    for i, suffix in enumerate(("", f"_dff-{method}", f"_preprocessed-{method}")):
+    for i, suffix in enumerate(("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")):
         for ch in sorted(channels):
-            trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
+            if i==0:
+                trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
+            else:
+                trace = nwb_file.processing[ch + f"_{fiber}{suffix}"]
             t, d = trace.timestamps[:], trace.data[:]
             t -= t[0]
             if ~np.isnan(t).all():
@@ -172,7 +175,7 @@ def plot_raw_dff_mc(
             (
                 "Raw",
                 r"$\Delta$F/F ('dff')",
-                r"$\Delta$F/F + motion-correction ('preprocessed')",
+                r"$\Delta$F/F + motion-correction ('dff_mc')",
             )[i]
         )
         ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
@@ -189,7 +192,7 @@ def plot_raw_dff_mc(
 
 def create_metric(fiber, method, reference):
     return QCMetric(
-        name=f"Preprocessing of Fiber {fiber} using method '{method}'",
+        name=f"Preprocessing of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
@@ -249,7 +252,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dff_methods",
         nargs="+",
-        default=["poly", "exp", "bright"],
+        default=["poly"], # "exp"], #, "bright"],
         help=(
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
@@ -332,8 +335,8 @@ if __name__ == "__main__":
                 methods = df_fip_pp_nwb.preprocess.unique()
                 for method in methods:
                     for df, suffix in (
-                        (df_fip_pp_nwb, "dff"),
-                        (df_fip_mc, "preprocessed"),
+                        (df_fip_pp_nwb, f"_dff-{method}"),
+                        (df_fip_mc, f"_dff-{method}_mc-iso-IRLS"),
                     ):
                         # format the processed traces as dict for conversion to nwb
                         dict_from_df = nwb_utils.split_fip_traces(
@@ -341,7 +344,7 @@ if __name__ == "__main__":
                         )
                         # and add them to the original nwb
                         nwb_file = nwb_utils.attach_dict_fip(
-                            nwb_file, dict_from_df, f"_{suffix}-{method}"
+                            nwb_file, dict_from_df, suffix
                         )
 
                 io.write(nwb_file)
@@ -354,7 +357,7 @@ if __name__ == "__main__":
                     for method in methods:
                         keys_split = [
                             k.split("_")
-                            for k in nwb_file.acquisition.keys()
+                            for k in nwb_file.processing.keys()
                             if k.endswith(method)
                         ]
                         channels = sorted(set([k[0] for k in keys_split]))
