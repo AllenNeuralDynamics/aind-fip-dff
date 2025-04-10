@@ -152,10 +152,12 @@ def plot_raw_dff_mc(
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
     for i, suffix in enumerate(("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")):
         for ch in sorted(channels):
-            if i==0:
-                trace = nwb_file.acquisition[ch + f"_{fiber}{suffix}"]
+            if i == 0:
+                trace = nwb_file.acquisition[ch + f"_{fiber}"]
             else:
-                trace = nwb_file.processing[ch + f"_{fiber}{suffix}"]
+                trace = nwb_file.processing["fiber_photometry"].data_interfaces[
+                    ch + f"_{fiber}{suffix}"
+                ]
             t, d = trace.timestamps[:], trace.data[:]
             t -= t[0]
             if ~np.isnan(t).all():
@@ -252,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dff_methods",
         nargs="+",
-        default=["poly"], # "exp"], #, "bright"],
+        default=["poly",  "exp", "bright"],
         help=(
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
@@ -357,7 +359,9 @@ if __name__ == "__main__":
                     for method in methods:
                         keys_split = [
                             k.split("_")
-                            for k in nwb_file.processing.keys()
+                            for k in nwb_file.processing[
+                                "fiber_photometry"
+                            ].data_interfaces.keys()
                             if k.endswith(method)
                         ]
                         channels = sorted(set([k[0] for k in keys_split]))
