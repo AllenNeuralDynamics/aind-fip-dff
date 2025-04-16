@@ -28,7 +28,7 @@ Key parameters include:
 ## Output
 
 The primary output is the updated NWB file, which includes the newly processed data:
-- **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[Fiber]_dff-[method]` (e.g., `G_1_dff-poly`). 
-- **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[Fiber]_preprocessed-[method]` (e.g., `G_1_preprocessed-poly`). 
+- **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
+- **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_preprocessed-[method]` (e.g., `G_1_preprocessed-poly`). 
 
 For quality control (QC), the `dff-qc` subdirectory contains visualizations for each fiber and ΔF/F method. These figures display raw, ΔF/F, and preprocessed (ΔF/F with motion correction) traces of all channels. For example, `ROI1_bright.png`. Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal).

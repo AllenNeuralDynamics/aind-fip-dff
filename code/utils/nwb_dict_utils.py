@@ -16,6 +16,7 @@ def attach_dict_fip(
 ) -> pynwb.NWBFile:
     """
     Attach a dictionary of fiber photometry data to an NWB file.
+
     Args:
         nwb: pynwb.NWBFile
             The NWB file to attach the data to.
@@ -23,9 +24,21 @@ def attach_dict_fip(
             Dictionary containing fiber photometry data.
         suffix: str
             Suffix to add to the name of each TimeSeries.
+
     Returns:
         pynwb.NWBFile: The NWB file with the attached data.
     """
+    # Create or retrieve a processing module
+    module_name = "fiber_photometry"
+    if module_name not in nwb.processing:
+        processing_module = pynwb.ProcessingModule(
+            name=module_name, description="Fiber photometry data"
+        )
+        nwb.add_processing_module(processing_module)
+    else:
+        processing_module = nwb.processing[module_name]
+
+    # Add TimeSeries to the processing module
     for neural_stream in dict_fip:
         ts = pynwb.TimeSeries(
             name=neural_stream + suffix,
@@ -33,7 +46,8 @@ def attach_dict_fip(
             unit="s",
             timestamps=dict_fip[neural_stream][0],
         )
-        nwb.add_acquisition(ts)
+        processing_module.add(ts)
+
     return nwb
 
 
