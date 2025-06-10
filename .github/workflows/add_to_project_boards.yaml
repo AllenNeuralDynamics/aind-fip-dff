@@ -1,0 +1,123 @@
+name: Add issue to Sci Comp and aind-physio-arch boards
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    name: Add issue to project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: https://github.com/orgs/AllenNeuralDynamics/projects/155
+          github-token: ${{ secrets.SERVICE_TOKEN }}
+  add-to-physio-arch-board:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      # To use this, create a PAT and configure SSO
+      # It should have the following scopes:
+      #   - repo (Full control of private repositories)
+      #   - project (Full control of procects)
+      #   - read: org (to read the project board)
+      # Add your PAT to repository secrets as PROJECT_ID
+      # Modify the optionId on L54 to include the Platform Id (see bottom of document) relevant to the repo project
+      # If the repo does not fit any platform, remove L71-84
+      - name: Add to project with labels to Physiology Architecture board
+        run: |
+          # Add issue to Physiology Architecture board
+          ITEM_ID=$(gh api graphql -f query='
+            mutation($project:ID!, $item:ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $item}) {
+                item {
+                  id
+                }
+              }
+            }' -f project="PVT_kwDOBa47bs4AhzQZ" -f item="${{ github.event.issue.node_id }}" --jq '.data.addProjectV2ItemById.item.id')
+          
+          # Set Platform
+          # The optionId values are the IDs of the single select options in the project (see Id values below)
+          gh api graphql -f query='
+            mutation($project:ID!, $item:ID!, $field:ID!, $optionId:String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $field
+                value: {singleSelectOptionId: $optionId}
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f project="PVT_kwDOBa47bs4AhzQZ" -f item="$ITEM_ID" -f field="PVTSSF_lADOBa47bs4AhzQZzgcOjdk" -f optionId="ab13a6d8"
+
+          # Set Team to Physiology and Behavior
+          gh api graphql -f query='
+            mutation($project:ID!, $item:ID!, $field:ID!, $optionId:String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $field
+                value: {singleSelectOptionId: $optionId}
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f project="PVT_kwDOBa47bs4AhzQZ" -f item="$ITEM_ID" -f field="PVTSSF_lADOBa47bs4AhzQZzgqNGR4" -f optionId="0b8e06b0"
+          
+          # Set Status to Backlog
+          gh api graphql -f query='
+            mutation($project:ID!, $item:ID!, $field:ID!, $optionId:String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $field
+                value: {singleSelectOptionId: $optionId}
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f project="PVT_kwDOBa47bs4AhzQZ" -f item="$ITEM_ID" -f field="PVTSSF_lADOBa47bs4AhzQZzgaazJE" -f optionId="58e00b7d"
+        env:
+          GITHUB_TOKEN: ${{ secrets.PROJECT_ID }}
+
+# {
+#  "data": {
+#    "node": {
+#      "field": {
+#        "id": "PVTSSF_lADOBa47bs4AhzQZzgcOjdk",
+#        "name": "Platform",
+#        "options": [
+#         {
+#            "id": "7f87264f",
+#           "name": "fib"
+#         },
+#         {
+#           "id": "9476480e",
+#          "name": "ephys"
+#       },
+#         {
+#           "id": "8fab6831",
+#           "name": "ophys"
+#         },
+#         {
+#           "id": "1853b06d",
+#           "name": "behavior"
+#         },
+#         {
+#           "id": "de1b47c8",
+#           "name": "slap2"
+#         },
+#         {
+#           "id": "ab13a6d8",
+#           "name": "dynamic foraging"
+#         }
+#       ]
+#     }
+#   }
+# }
+#
