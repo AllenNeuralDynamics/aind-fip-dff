@@ -52,7 +52,7 @@ def attach_dict_fip(
 
 
 def split_fip_traces(
-    df_fip: pd.DataFrame, split_by: list[str] = ["channel", "fiber_number"]
+    df_fip: pd.DataFrame, split_by: list[str] = ["channel", "fiber_number"], signal: str = "signal"
 ) -> dict:
     """
     split_neural_traces takes in a dataframe with fiber photometry data series and splits it into
@@ -79,7 +79,7 @@ def split_fip_traces(
         ]
         group_string = "_".join(group_name_string)
         dict_fip[group_string] = np.vstack(
-            [df_group.time_fip.values, df_group.signal.values]
+            [df_group.time_fip.values, df_group[signal].values]
         )
     return dict_fip
 

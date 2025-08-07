@@ -330,19 +330,31 @@ if __name__ == "__main__":
                 df_from_nwb.insert(0, "session", session_name)
 
                 # now pass the dataframe through the preprocessing function:
-                df_fip_pp_nwb, df_PP_params, df_fip_mc = batch_processing(
+                df_fip_pp, df_PP_params, coeffs = batch_processing(
                     df_from_nwb, args.dff_methods
                 )
 
-                methods = df_fip_pp_nwb.preprocess.unique()
+                methods = df_fip_pp.preprocess.unique()
                 for method in methods:
-                    for df, suffix in (
-                        (df_fip_pp_nwb, f"_dff-{method}"),
-                        (df_fip_mc, f"_dff-{method}_mc-iso-IRLS"),
+                    # for df, suffix in (
+                    #     (df_fip_pp, f"_dff-{method}"),
+                    #     (df_fip_mc, f"_dff-{method}_mc-iso-IRLS"),
+                    # ):
+                    #     # format the processed traces as dict for conversion to nwb
+                    #     dict_from_df = nwb_utils.split_fip_traces(
+                    #         df[df.preprocess == method]
+                    #     )
+                    #     # and add them to the original nwb
+                    #     nwb_file = nwb_utils.attach_dict_fip(
+                    #         nwb_file, dict_from_df, suffix
+                    #     )
+                    for signal, suffix in (
+                        ("dFF", f"_dff-{method}"),
+                        ("motion_corrected", f"_dff-{method}_mc-iso-IRLS"),
                     ):
                         # format the processed traces as dict for conversion to nwb
                         dict_from_df = nwb_utils.split_fip_traces(
-                            df[df.preprocess == method]
+                            df_fip_pp[df_fip_pp.preprocess == method], signal=signal
                         )
                         # and add them to the original nwb
                         nwb_file = nwb_utils.attach_dict_fip(
