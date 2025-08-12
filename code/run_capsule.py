@@ -338,7 +338,6 @@ def plot_motion_correction(
                 gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
             )
             if i < 2:
-                l = ("", "low-passed")[i]
                 if cut:
                     sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
                     noise_filt = lambda x: sosfiltfilt(sos, x)
@@ -353,8 +352,8 @@ def plot_motion_correction(
                 plot_psd(
                     ax2, df["dFF"] if i == 0 else df["filtered"], color, i == 1 and cut
                 )
-                coef = coeffs[int(fiber)][ch]
-                intercept = intercepts[int(fiber)][ch]
+                coef = coeffs[method][int(fiber)][ch]
+                intercept = intercepts[method][int(fiber)][ch]
                 if i == 0:
                     ax.plot(
                         t,

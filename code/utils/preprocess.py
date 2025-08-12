@@ -502,7 +502,7 @@ def batch_processing(
     methods: list[str] = ["poly", "exp", "bright"],
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
-) -> tuple[pd.DataFrame, pd.DataFrame, list, list]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
     Args:
@@ -521,16 +521,19 @@ def batch_processing(
             dF/F of fiber photometry signal
         df_pp_params: pd.DataFrame
             Dataframe with the parameters of the preprocessing
-        coeffs: list
-            List of regression coefficients for motion correction
-        intercepts: list
-            List of regression intercepts for motion correction
+        coeffs: dict
+            Dictionary mapping preprocessing methods to their corresponding regression 
+            coefficients for motion correction. Each key is a method name and each value 
+            is a list of coefficients.
+        intercepts: dict
+            Dictionary mapping preprocessing methods to their corresponding regression 
+            intercepts for motion correction. Each key is a method name and each value 
+            is a list of coefficients.
     """
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
     df_mc = pd.DataFrame()
-    coeffs = []
-    intercepts = []
+    coeffs, intercepts = {}, {}
 
     if len(df_fip) == 0:
         return df_fip, df_pp_params
@@ -542,6 +545,7 @@ def batch_processing(
     channels = channels[~pd.isna(channels)]
     for pp_name in methods:
         if pp_name in ["poly", "exp", "bright"]:
+            coeffs[pp_name], intercepts[pp_name] = [], []
             for i_iter, (session, fiber_number) in enumerate(
                 itertools.product(sessions, fiber_numbers)
             ):
@@ -596,8 +600,8 @@ def batch_processing(
                     cutoff_freq_motion=cutoff_freq_motion,
                     cutoff_freq_noise=cutoff_freq_noise,
                 )
-                coeffs.append(coeff)
-                intercepts.append(intercept)
+                coeffs[pp_name].append(coeff)
+                intercepts[pp_name].append(intercept)
                 # convert back to a table with columns channel and signal
                 df_mc_iter = df_mc_iter.melt(
                     var_name="channel", value_name="motion_corrected"
