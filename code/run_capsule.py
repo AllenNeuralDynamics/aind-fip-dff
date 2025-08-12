@@ -1,10 +1,12 @@
 import argparse
 import glob
+import itertools
 import json
 import logging
 import os
 import shutil
 from datetime import datetime as dt
+from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Union
 
@@ -37,7 +39,7 @@ from matplotlib.gridspec import GridSpec
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import batch_processing
+from utils.preprocess import chunk_processing, motion_correct
 
 """
 This capsule should take in an NWB file,
@@ -581,7 +583,7 @@ if __name__ == "__main__":
             with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
                 nwb_file = io.read()
                 # convert nwb to dataframe
-                df_from_nwb = nwb_utils.nwb_to_dataframe(nwb_file)
+                df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
                 # add the session column
                 filename = os.path.basename(nwb_file_path)
                 if "behavior" in filename:
@@ -591,15 +593,96 @@ if __name__ == "__main__":
                     session_name = filename.split(".")[0]
                     session_name = session_name.split("FIP_")[1]
 
-                df_from_nwb.insert(0, "session", session_name)
+                df_fip.insert(0, "session", session_name)
 
                 # now pass the dataframe through the preprocessing function:
-                df_fip_pp, df_PP_params, coeffs, intercepts = batch_processing(
-                    df_from_nwb,
-                    args.dff_methods,
-                    args.cutoff_freq_motion,
-                    args.cutoff_freq_noise,
-                )
+                # df_fip_pp, df_PP_params, coeffs, intercepts = batch_processing(
+                #     df_fip,
+                #     args.dff_methods,
+                #     args.cutoff_freq_motion,
+                #     args.cutoff_freq_noise,
+                # )
+
+                df_fip_pp = pd.DataFrame()
+                df_pp_params = pd.DataFrame()
+                coeffs, intercepts = {}, {}
+
+                fiber_numbers = df_fip["fiber_number"].unique()  # [:1]
+                channels = df_fip["channel"].unique()  # ['G', 'R', 'Iso']
+                channels = channels[~pd.isna(channels)]
+                for pp_name in args.dff_methods:
+                    if pp_name in ["poly", "exp", "bright"]:
+
+                        def process1fiber(fiber_number):
+                            # dF/F
+                            def process1channel(channel):
+                                df_fip_iter = df_fip[
+                                    (df_fip["fiber_number"] == fiber_number)
+                                    & (df_fip["channel"] == channel)
+                                ].copy()
+
+                                NM_values = df_fip_iter["signal"].values
+                                NM_preprocessed, NM_fitting_params, NM_fit = (
+                                    chunk_processing(NM_values, method=pp_name)
+                                )
+                                df_fip_iter.loc[:, "dFF"] = NM_preprocessed
+                                df_fip_iter.loc[:, "preprocess"] = pp_name
+                                df_fip_iter.loc[:, "F0"] = NM_fit
+
+                                NM_fitting_params.update(
+                                    {
+                                        "preprocess": pp_name,
+                                        "channel": channel,
+                                        "fiber_number": fiber_number,
+                                    }
+                                )
+                                df_pp_params_ses = pd.DataFrame(
+                                    NM_fitting_params, index=[0]
+                                )
+                                return df_fip_iter, df_pp_params_ses
+
+                            with ThreadPool(len(channels)) as tp:
+                                res = tp.map(process1channel, channels)
+                            df_1fiber = pd.concat(
+                                [r[0] for r in res], ignore_index=True
+                            )
+                            df_pp_params = pd.concat([r[1] for r in res])
+
+                            # motion correction
+                            df_dff_iter = (
+                                pd.DataFrame(  # convert to #frames x #channels
+                                    np.column_stack(
+                                        [
+                                            df_1fiber[df_1fiber["channel"] == c][
+                                                "dFF"
+                                            ].values
+                                            for c in channels
+                                        ]
+                                    ),
+                                    columns=channels,
+                                )
+                            )
+                            # run motion correction
+                            df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(
+                                df_dff_iter,
+                                cutoff_freq_motion=args.cutoff_freq_motion,
+                                cutoff_freq_noise=args.cutoff_freq_noise,
+                            )
+                            # convert back to a table with columns channel and signal
+                            df_1fiber["motion_corrected"] = df_mc_iter.melt(
+                                var_name="channel", value_name="motion_corrected"
+                            ).motion_corrected
+                            df_1fiber["filtered"] = df_filt_iter.melt(
+                                var_name="channel", value_name="filtered"
+                            ).filtered
+                            return df_1fiber, df_pp_params, coeff, intercept
+
+                        with Pool(len(fiber_numbers)) as pool:
+                            res = pool.map(process1fiber, fiber_numbers)
+                        df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
+                        df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
+                        coeffs[pp_name] = [r[2] for r in res]
+                        intercepts[pp_name] = [r[3] for r in res]
 
                 methods = df_fip_pp.preprocess.unique()
                 for method in methods:
@@ -622,54 +705,63 @@ if __name__ == "__main__":
                     f" using methods {methods}"
                 )
                 if not args.no_qc:
+                    channels = df_fip_pp["channel"].unique()
+                    fibers = df_fip_pp["fiber_number"].unique()
+
+                    def foo(a):
+                        fiber, method = a
+                        return plot_dff(
+                            df_fip_pp,
+                            fiber,
+                            channels,
+                            method,
+                            os.path.join(args.output_dir, "dff-qc"),
+                        )
+
+                    def bar(a):
+                        fiber, method = a
+                        return plot_motion_correction(
+                            df_fip_pp,
+                            fiber,
+                            channels,
+                            method,
+                            os.path.join(args.output_dir, "dff-qc"),
+                            coeffs,
+                            intercepts,
+                            args.cutoff_freq_motion,
+                            args.cutoff_freq_noise,
+                        )
+
+                    with Pool(len(fibers)) as pool:
+                        pool.map(foo, itertools.product(fibers, methods))
+                        pool.map(bar, itertools.product(fibers, methods))
                     evaluations = []
                     for method in methods:
-                        keys_split = [
-                            k.split("_")
-                            for k in nwb_file.processing[
-                                "fiber_photometry"
-                            ].data_interfaces.keys()
-                            if k.endswith(method)
-                        ]
-                        channels = sorted(set([k[0] for k in keys_split]))
-                        fibers = sorted(set([k[1] for k in keys_split]))
                         metrics = []
                         for fiber in fibers:
-                            # fig_file = plot_raw_dff_mc(
-                            #     nwb_file,
+                            # plot_dff(
+                            #     df_fip_pp,
                             #     fiber,
                             #     channels,
                             #     method,
                             #     os.path.join(args.output_dir, "dff-qc"),
                             # )
-                            # metrics.append(
-                            #     create_metric(
-                            #         fiber, method, f"dff-qc/ROI{fiber}_{method}.png"
-                            #     )
-                            # )
-                            plot_dff(
-                                df_fip_pp,
-                                fiber,
-                                channels,
-                                method,
-                                os.path.join(args.output_dir, "dff-qc"),
-                            )
                             metrics.append(
                                 create_metric(
                                     fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
                                 )
                             )
-                            plot_motion_correction(
-                                df_fip_pp,
-                                fiber,
-                                channels,
-                                method,
-                                os.path.join(args.output_dir, "dff-qc"),
-                                coeffs,
-                                intercepts,
-                                args.cutoff_freq_motion,
-                                args.cutoff_freq_noise,
-                            )
+                            # plot_motion_correction(
+                            #     df_fip_pp,
+                            #     fiber,
+                            #     channels,
+                            #     method,
+                            #     os.path.join(args.output_dir, "dff-qc"),
+                            #     coeffs,
+                            #     intercepts,
+                            #     args.cutoff_freq_motion,
+                            #     args.cutoff_freq_noise,
+                            # )
                             metrics.append(
                                 create_metric(
                                     fiber,

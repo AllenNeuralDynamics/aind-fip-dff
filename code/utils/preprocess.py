@@ -1,5 +1,6 @@
 import itertools
 import logging
+# from multiprocessing.pool import ThreadPool
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,7 +9,7 @@ from scipy.optimize import curve_fit, minimize
 from scipy.signal import butter, medfilt, sosfiltfilt
 from scipy.stats import skew
 from sklearn.linear_model import LinearRegression
-from statsmodels.api import add_constant, RLM
+from statsmodels.api import RLM, add_constant
 from statsmodels.robust import scale
 from statsmodels.robust.norms import RobustNorm, TukeyBiweight
 
@@ -158,7 +159,7 @@ def tc_brightfit(
     rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
     M: RobustNorm | None = TukeyBiweight(3),
     maxiter: int = 10,
-    tol: float = 1e-4,
+    tol: float = 1e-3,
     update_scale: bool = True,
     skewness_factor: float = 1.0,
     plot: bool = False,
@@ -305,7 +306,7 @@ def tc_brightfit(
 
     # robust fit down-weighting outliers using IRLS
     # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
-    if maxiter > 0 and M is not None:
+    if maxiter > 0 and M is not None and cost > 0:
         f0 = baseline(*x, T=T, fs=fs)
         resid = trace - f0
         scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
@@ -522,12 +523,12 @@ def batch_processing(
         df_pp_params: pd.DataFrame
             Dataframe with the parameters of the preprocessing
         coeffs: dict
-            Dictionary mapping preprocessing methods to their corresponding regression 
-            coefficients for motion correction. Each key is a method name and each value 
+            Dictionary mapping preprocessing methods to their corresponding regression
+            coefficients for motion correction. Each key is a method name and each value
             is a list of coefficients.
         intercepts: dict
-            Dictionary mapping preprocessing methods to their corresponding regression 
-            intercepts for motion correction. Each key is a method name and each value 
+            Dictionary mapping preprocessing methods to their corresponding regression
+            intercepts for motion correction. Each key is a method name and each value
             is a list of coefficients.
     """
     df_fip_pp = pd.DataFrame()
@@ -615,3 +616,116 @@ def batch_processing(
     df_fip_pp["filtered"] = df_mc["filtered"]
 
     return df_fip_pp, df_pp_params, coeffs, intercepts
+
+
+# def batch_processing(
+#     df_fip: pd.DataFrame,
+#     methods: list[str] = ["poly", "exp", "bright"],
+#     cutoff_freq_motion: float = 0.05,
+#     cutoff_freq_noise: float = 3,
+# ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+#     """
+#     Preprocesses the fiber photometry signal (dF/F + motion correction).
+#     Args:
+#         df_fib: pd.DataFrame
+#             Fiber photometry signal
+#         methods: list[str]
+#             Methods to preprocess the data. Options: poly, exp, bright
+#         cutoff_freq_motion: float
+#             Cutoff frequency of the lowpass Butterworth filter that's only
+#             applied for estimating the regression coefficient, in Hz.
+#         cutoff_freq_noise: float
+#             Cutoff frequency of the lowpass Butterworth filter
+#             that's applied to filter out noise, in Hz.
+#     Returns:
+#         df_fip_pp: pd.DataFrame
+#             dF/F of fiber photometry signal
+#         df_pp_params: pd.DataFrame
+#             Dataframe with the parameters of the preprocessing
+#         coeffs: dict
+#             Dictionary mapping preprocessing methods to their corresponding regression
+#             coefficients for motion correction. Each key is a method name and each value
+#             is a list of coefficients.
+#         intercepts: dict
+#             Dictionary mapping preprocessing methods to their corresponding regression
+#             intercepts for motion correction. Each key is a method name and each value
+#             is a list of coefficients.
+#     """
+#     df_fip_pp = pd.DataFrame()
+#     df_pp_params = pd.DataFrame()
+#     coeffs, intercepts = {}, {}
+
+#     if len(df_fip) == 0:
+#         return df_fip, df_pp_params
+
+#     fiber_numbers = np.unique(df_fip["fiber_number"].values)  # [:1]
+#     channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
+#     channels = channels[~pd.isna(channels)]
+#     for pp_name in methods:
+#         if pp_name in ["poly", "exp", "bright"]:
+
+#             def process1fiber(fiber_number):
+#                 # dF/F
+#                 df_1fiber = pd.DataFrame()
+#                 df_pp_params = pd.DataFrame()
+#                 for channel in channels:
+#                     df_fip_iter = df_fip[
+#                         (df_fip["fiber_number"] == fiber_number)
+#                         & (df_fip["channel"] == channel)
+#                     ].copy()
+#                     if len(df_fip_iter) == 0:
+#                         continue
+
+#                     NM_values = df_fip_iter["signal"].values
+#                     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
+#                         NM_values, method=pp_name
+#                     )
+#                     df_fip_iter.loc[:, "dFF"] = NM_preprocessed
+#                     df_fip_iter.loc[:, "preprocess"] = pp_name
+#                     df_fip_iter.loc[:, "F0"] = NM_fit
+#                     df_1fiber = pd.concat([df_1fiber, df_fip_iter], ignore_index=True)
+
+#                     NM_fitting_params.update(
+#                         {
+#                             "preprocess": pp_name,
+#                             "channel": channel,
+#                             "fiber_number": fiber_number,
+#                             # "session": session,
+#                         }
+#                     )
+#                     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+#                     df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
+
+#                 # convert to #frames x #channels
+#                 df_dff_iter = pd.DataFrame(
+#                     np.column_stack(
+#                         [
+#                             df_1fiber[df_1fiber["channel"] == c]["dFF"].values
+#                             for c in channels
+#                         ]
+#                     ),
+#                     columns=channels,
+#                 )
+#                 # run motion correction
+#                 df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(
+#                     df_dff_iter,
+#                     cutoff_freq_motion=cutoff_freq_motion,
+#                     cutoff_freq_noise=cutoff_freq_noise,
+#                 )
+#                 # convert back to a table with columns channel and signal
+#                 df_1fiber["motion_corrected"] = df_mc_iter.melt(
+#                     var_name="channel", value_name="motion_corrected"
+#                 ).motion_corrected
+#                 df_1fiber["filtered"] = df_filt_iter.melt(
+#                     var_name="channel", value_name="filtered"
+#                 ).filtered
+#                 return df_1fiber, df_pp_params, coeff, intercept
+
+#             res = ThreadPool(len(fiber_numbers)).map(process1fiber, fiber_numbers)
+#             df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
+#             df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
+#             coeffs[pp_name], intercepts[pp_name] = [r[2] for r in res], [
+#                 r[3] for r in res
+#             ]
+
+#     return df_fip_pp, df_pp_params, coeffs, intercepts
