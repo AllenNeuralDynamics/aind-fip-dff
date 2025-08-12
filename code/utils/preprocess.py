@@ -424,7 +424,8 @@ def chunk_processing(
 def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
-    cutoff_freq: float = 0.3,
+    cutoff_freq_motion: float = 0.05,
+    cutoff_freq_noise: float = 3,
     M: RobustNorm = TukeyBiweight(3),
 ) -> pd.DataFrame:
     """
@@ -435,9 +436,12 @@ def motion_correct(
             DataFrame containing the dF/F traces of the fiber photometry signals.
         fs: float
             Sampling rate of the signal, in Hz.
-        cutoff_freq: float
+        cutoff_freq_motion: float
+            Cutoff frequency of the lowpass Butterworth filter that's only
+            applied for estimating the regression coefficient, in Hz.
+        cutoff_freq_noise: float
             Cutoff frequency of the lowpass Butterworth filter
-            (that's only applied for the regression), in Hz.
+            that's applied to filter out noise, in Hz.
         M: statsmodels.robust.norms.RobustNorm
             Robust criterion function used to downweight outliers.
             Refer to `statsmodels.robust.norms` for more details.
@@ -455,7 +459,7 @@ def motion_correct(
     if np.isnan(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
         return np.nan * dff, np.nan * dff, c, c
-    sos = butter(N=2, Wn=cutoff_freq, fs=fs, output="sos")
+    sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     idx_iso = dff.columns.get_loc("Iso")
     motion = dff_filt[idx_iso]
@@ -487,12 +491,18 @@ def motion_correct(
     c[no_nans] = intercept
     c[idx_iso] = 0
     intercept = {ch: c_ for ch, c_ in zip(dff.columns, c)}
+    if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
+        sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
+        dff_mc = dff_mc.apply(lambda x: sosfiltfilt(sos, x))
     return dff_mc, dff_filt, coef, intercept
 
 
 def batch_processing(
-    df_fip: pd.DataFrame, methods: list[str] = ["poly", "exp", "bright"]
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    df_fip: pd.DataFrame,
+    methods: list[str] = ["poly", "exp", "bright"],
+    cutoff_freq_motion: float = 0.05,
+    cutoff_freq_noise: float = 3,
+) -> tuple[pd.DataFrame, pd.DataFrame, list, list]:
     """
     Preprocesses the fiber photometry signal (dF/F + motion correction).
     Args:
@@ -500,6 +510,12 @@ def batch_processing(
             Fiber photometry signal
         methods: list[str]
             Methods to preprocess the data. Options: poly, exp, bright
+        cutoff_freq_motion: float
+            Cutoff frequency of the lowpass Butterworth filter that's only
+            applied for estimating the regression coefficient, in Hz.
+        cutoff_freq_noise: float
+            Cutoff frequency of the lowpass Butterworth filter
+            that's applied to filter out noise, in Hz.
     Returns:
         df_fip_pp: pd.DataFrame
             dF/F of fiber photometry signal
@@ -507,6 +523,8 @@ def batch_processing(
             Dataframe with the parameters of the preprocessing
         coeffs: list
             List of regression coefficients for motion correction
+        intercepts: list
+            List of regression intercepts for motion correction
     """
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
@@ -573,7 +591,11 @@ def batch_processing(
                     columns=channels,
                 )
                 # run motion correction
-                df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(df_dff_iter)
+                df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(
+                    df_dff_iter,
+                    cutoff_freq_motion=cutoff_freq_motion,
+                    cutoff_freq_noise=cutoff_freq_noise,
+                )
                 coeffs.append(coeff)
                 intercepts.append(intercept)
                 # convert back to a table with columns channel and signal

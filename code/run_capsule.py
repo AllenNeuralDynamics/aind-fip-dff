@@ -34,6 +34,7 @@ from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
+from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import batch_processing
@@ -267,6 +268,9 @@ def plot_motion_correction(
     fig_path: str,
     coeffs: list[dict],
     intercepts: list[dict],
+    cutoff_freq_motion: float,
+    cutoff_freq_noise: float,
+    fs: float = 20,
 ):
     """Plot dF/F and motio-corrected dF/F photometry traces for multiple channels.
 
@@ -286,13 +290,30 @@ def plot_motion_correction(
         The list of regression coefficients.
     intercepts : list
         The list of regression intercepts.
+    cutoff_freq_motion: float
+        Cutoff frequency of the lowpass Butterworth filter that's only
+        applied for estimating the regression coefficient, in Hz.
+    cutoff_freq_noise : float
+        Cutoff frequency of the lowpass Butterworth filter
+        that's applied to filter out noise, in Hz.
+    fs : float
+        Sampling rate of the signal, in Hz.
     """
+    cut = cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2
     colors = {"G": "C2", "Iso": "C0", "R": "C3"}
     rows = 3 * len(channels) - 3
-    fig = plt.figure(figsize=(12, rows))
-    gs = GridSpec(rows, 2, width_ratios=[3.5, 1])
+    fig = plt.figure(figsize=(15, rows))
+    gs = GridSpec(rows, 3, width_ratios=[3.5, 0.4, 1])
+
+    def plot_psd(ax, data, color, cut=False):
+        """Helper function to create PSD plots"""
+        psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
+        if cut:
+            psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
+        ax.loglog(psd[0] * fs, psd[1], c=color)
 
     left_axes = []
+    center_axes = []
     right_axes = []
     df_iso = df_fip_pp[
         (df_fip_pp.channel == "Iso")
@@ -308,29 +329,44 @@ def plot_motion_correction(
             & (df_fip_pp.preprocess == method)
         ]
         color = colors.get(ch, f"C{c}")
-        # Create subplots in the left column (sharing x-axis)
+        # Create subplots in the left and center column (sharing x-axis)
         for i in range(3):
             ax = fig.add_subplot(
                 gs[3 * c + i, 0], sharex=(None if c + i == 0 else left_axes[0])
             )
+            ax2 = fig.add_subplot(
+                gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
+            )
             if i < 2:
                 l = ("", "low-passed")[i]
+                if cut:
+                    sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
+                    noise_filt = lambda x: sosfiltfilt(sos, x)
+                else:
+                    noise_filt = lambda x: x
                 ax.plot(
                     t,
-                    (df["dFF"] if i == 0 else df["filtered"]) * 100,
+                    (noise_filt(df["dFF"]) if i == 0 else df["filtered"]) * 100,
                     c=color,
                     label=(("", "low-passed ")[i] + ch),
+                )
+                plot_psd(
+                    ax2, df["dFF"] if i == 0 else df["filtered"], color, i == 1 and cut
                 )
                 coef = coeffs[int(fiber)][ch]
                 intercept = intercepts[int(fiber)][ch]
                 if i == 0:
                     ax.plot(
                         t,
-                        (intercept + df_iso["dFF"] * coef) * 100,
+                        (intercept + noise_filt(df_iso["dFF"]) * coef) * 100,
                         c=colors["Iso"],
                         label="regressed Iso",
                         alpha=0.5,
                     )
+                    plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"])
+                else:
+                    ax2.axvline(cutoff_freq_motion, c="k", ls="--")
+                    plot_psd(ax2.twinx(), df_iso["filtered"], "C1", cut)
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
@@ -341,14 +377,18 @@ def plot_motion_correction(
                 ax.plot(
                     t, df["motion_corrected"] * 100, c=color, label=f"corrected {ch}"
                 )
+                plot_psd(ax2, df["motion_corrected"], color, cut)
+                if cut:
+                    ax2.axvline(cutoff_freq_noise, c="k", ls="--")
             ax.legend(
                 ncol=3, loc=(0.01, 0.77), borderpad=0.05
             ).get_frame().set_linewidth(0.0)
             left_axes.append(ax)
+            center_axes.append(ax2)
 
         # Create subplots in the right column, each spanning 3 rows
         ax = fig.add_subplot(
-            gs[3 * c : 3 * c + 3, 1], sharex=(None if c == 0 else right_axes[0])
+            gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
         ax.scatter(
             df_iso["dFF"] * 100, df["dFF"] * 100, s=0.1, c="C0", label="original"
@@ -371,7 +411,7 @@ def plot_motion_correction(
         right_axes.append(ax)
 
     # Hide x-tick labels for all but the bottom subplots
-    for ax in left_axes[:-1] + right_axes[:-1]:
+    for ax in left_axes[:-1] + center_axes[:-1] + right_axes[:-1]:
         plt.setp(ax.get_xticklabels(), visible=False)
 
     tmin, tmax = np.nanmin(t), np.nanmax(t)
@@ -380,11 +420,17 @@ def plot_motion_correction(
     left_axes[rows // 2].set_ylabel(
         "$\Delta$F/F [%]", y=(1.1, 0.5)[rows % 2], labelpad=10
     )
+    center_axes[-1].set_xlabel("Frequency [Hz]")
+    center_axes[rows // 2].set_ylabel("PSD", y=(1.1, 0.5)[rows % 2])
     right_axes[-1].set_xlabel("Iso", color=colors["Iso"])
     plt.suptitle(
-        f"$\\bf{{Motion\;correction}}$   Methods: {method} & iso-IRLS,  ROI: {0}", y=1
+        f"$\\bf{{Motion\;correction}}$   Methods: {method} & iso-IRLS,  ROI: {fiber}",
+        y=1,
     )
-    plt.tight_layout(pad=0.2, h_pad=0, w_pad=1)
+    plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
+    for ax in center_axes:
+        pos = ax.get_position()
+        ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.01, pos.height])
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
@@ -465,6 +511,24 @@ if __name__ == "__main__":
             "reweighted least squares (IRLS)"
         ),
     )
+    parser.add_argument(
+        "--cutoff_freq_motion",
+        type=float,
+        default=0.05,
+        help=(
+            "Cutoff frequency of the lowpass Butterworth filter that's only "
+            "applied for estimating the regression coefficient, in Hz."
+        ),
+    )
+    parser.add_argument(
+        "--cutoff_freq_noise",
+        type=float,
+        default=3,
+        help=(
+            "Cutoff frequency of the lowpass Butterworth filter "
+            "that's applied to filter out noise, in Hz."
+        ),
+    )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
@@ -532,7 +596,10 @@ if __name__ == "__main__":
 
                 # now pass the dataframe through the preprocessing function:
                 df_fip_pp, df_PP_params, coeffs, intercepts = batch_processing(
-                    df_from_nwb, args.dff_methods
+                    df_from_nwb,
+                    args.dff_methods,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
                 )
 
                 methods = df_fip_pp.preprocess.unique()
@@ -601,6 +668,8 @@ if __name__ == "__main__":
                                 os.path.join(args.output_dir, "dff-qc"),
                                 coeffs,
                                 intercepts,
+                                args.cutoff_freq_motion,
+                                args.cutoff_freq_noise,
                             )
                             metrics.append(
                                 create_metric(
