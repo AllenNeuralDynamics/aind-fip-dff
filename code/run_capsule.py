@@ -42,11 +42,10 @@ import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
 
 """
-This capsule should take in an NWB file,
-check the number of subjects (confirm this),
-check the number of channels,
-check the number of fibers,
-then preprocess the arrays with the dF_F signal
+This capsule takes in an NWB file containing raw fiber photometry data 
+then process each channel (usually 4) of each ROI (usually 4) by
+generating baseline-corrected (ΔF/F) and motion-corrected traces,
+which are then appended back to the NWB file.
 """
 
 
@@ -305,7 +304,7 @@ def plot_motion_correction(
     colors = {"G": "C2", "Iso": "C0", "R": "C3"}
     rows = 3 * len(channels) - 3
     fig = plt.figure(figsize=(15, rows))
-    gs = GridSpec(rows, 3, width_ratios=[3.5, 0.4, 1])
+    gs = GridSpec(rows, 3, width_ratios=[11, 1, 3])
 
     def plot_psd(ax, data, color, cut=False):
         """Helper function to create PSD plots"""
@@ -313,6 +312,7 @@ def plot_motion_correction(
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
+        return ax
 
     left_axes = []
     center_axes = []
@@ -340,6 +340,7 @@ def plot_motion_correction(
                 gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
             )
             if i < 2:
+                l = ("", "low-passed")[i]
                 if cut:
                     sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
                     noise_filt = lambda x: sosfiltfilt(sos, x)
@@ -364,10 +365,14 @@ def plot_motion_correction(
                         label="regressed Iso",
                         alpha=0.5,
                     )
-                    plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"])
+                    plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"]).tick_params(
+                        axis="y", which="both", colors=colors["Iso"]
+                    )
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
-                    plot_psd(ax2.twinx(), df_iso["filtered"], "C1", cut)
+                    plot_psd(ax2.twinx(), df_iso["filtered"], "C1", cut).tick_params(
+                        axis="y", which="both", colors="C1"
+                    )
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
@@ -384,6 +389,7 @@ def plot_motion_correction(
             ax.legend(
                 ncol=3, loc=(0.01, 0.77), borderpad=0.05
             ).get_frame().set_linewidth(0.0)
+            ax2.tick_params(axis="y", which="both", colors=color)
             left_axes.append(ax)
             center_axes.append(ax2)
 
@@ -431,7 +437,7 @@ def plot_motion_correction(
     plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
     for ax in center_axes:
         pos = ax.get_position()
-        ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.01, pos.height])
+        ax.set_position([pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height])
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
@@ -507,7 +513,7 @@ if __name__ == "__main__":
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
-            "  'bright': Robust fit with [Biphasic exponential decay (bleaching)] x "
+            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
             "[Increasing saturating exponential (brightening)] using iteratively "
             "reweighted least squares (IRLS)"
         ),
@@ -595,25 +601,38 @@ if __name__ == "__main__":
 
                 df_fip.insert(0, "session", session_name)
 
-                # now pass the dataframe through the preprocessing function:
-                # df_fip_pp, df_PP_params, coeffs, intercepts = batch_processing(
-                #     df_fip,
-                #     args.dff_methods,
-                #     args.cutoff_freq_motion,
-                #     args.cutoff_freq_noise,
-                # )
-
+                # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
                 df_pp_params = pd.DataFrame()
                 coeffs, intercepts = {}, {}
-
-                fiber_numbers = df_fip["fiber_number"].unique()  # [:1]
-                channels = df_fip["channel"].unique()  # ['G', 'R', 'Iso']
+                fiber_numbers = df_fip["fiber_number"].unique()
+                channels = df_fip["channel"].unique()
                 channels = channels[~pd.isna(channels)]
                 for pp_name in args.dff_methods:
                     if pp_name in ["poly", "exp", "bright"]:
 
-                        def process1fiber(fiber_number):
+                        def process1fiber(
+                            fiber_number: str,
+                        ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+                            """
+                            Preprocesses the fiber photometry signal of one ROI
+                            (dF/F + motion correction).
+                            Args:
+                                fiber_number: str
+                                    Fiber/ROI number
+                            Returns:
+                                df_1fiber: pd.DataFrame
+                                    Dataframe with preprocessed fiber photometry signals
+                                df_pp_params: pd.DataFrame
+                                    Dataframe with the parameters of the preprocessing
+                                coeff: dict
+                                    Dictionary mapping channels to regression
+                                    coefficients for motion correction.
+                                intercept: dict
+                                    Dictionary mapping channels to regression
+                                    intercepts for motion correction.
+                            """
+
                             # dF/F
                             def process1channel(channel):
                                 df_fip_iter = df_fip[
