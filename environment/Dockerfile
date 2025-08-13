@@ -9,8 +9,8 @@ ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
 ENV PIPELINE_URL="https://github.com/AllenNeuralDynamics/aind-fiber-photometry-pipeline"
-ENV PIPELINE_VERSION="10.0"
-ENV VERSION="11.0"
+ENV PIPELINE_VERSION="13.0"
+ENV VERSION="12.0"
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
