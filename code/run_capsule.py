@@ -273,7 +273,7 @@ def plot_motion_correction(
     cutoff_freq_noise: float,
     fs: float = 20,
 ):
-    """Plot dF/F and motio-corrected dF/F photometry traces for multiple channels.
+    """Plot dF/F and motion-corrected dF/F photometry traces for multiple channels.
 
     Parameters
     ----------
@@ -287,18 +287,23 @@ def plot_motion_correction(
         The name of the preprocessing method used ("poly", "exp", or "bright").
     fig_path : str
         The path where the generated plot will be saved.
-    coeffs : list
-        The list of regression coefficients.
-    intercepts : list
-        The list of regression intercepts.
-    cutoff_freq_motion: float
+    coeffs : dict of list of dict
+        The regression coefficients for each method/fiber/channel combination.
+    intercepts : dict of list of dict
+        The regression intercepts for each method/fiber/channel combination.
+    cutoff_freq_motion : float
         Cutoff frequency of the lowpass Butterworth filter that's only
         applied for estimating the regression coefficient, in Hz.
     cutoff_freq_noise : float
         Cutoff frequency of the lowpass Butterworth filter
         that's applied to filter out noise, in Hz.
-    fs : float
-        Sampling rate of the signal, in Hz.
+    fs : float, optional
+        Sampling rate of the signal, in Hz. Defaults to 20.
+
+    Returns
+    -------
+    None
+        The function saves the plot to the specified fig_path.
     """
     cut = cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2
     colors = {"G": "C2", "Iso": "C0", "R": "C3"}
@@ -307,7 +312,24 @@ def plot_motion_correction(
     gs = GridSpec(rows, 3, width_ratios=[11, 1, 3])
 
     def plot_psd(ax, data, color, cut=False):
-        """Helper function to create PSD plots"""
+        """Helper function to create Power Spectral Density plots.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            The axis on which to plot the PSD.
+        data : array-like
+            The data to compute the PSD for.
+        color : str
+            The color to use for the plot.
+        cut : bool, optional
+            Whether to cut the frequency range. Defaults to False.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axis with the PSD plot.
+        """
         psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
@@ -445,6 +467,24 @@ def plot_motion_correction(
 
 
 def create_metric(fiber, method, reference, motion=False):
+    """Create a QC metric for baseline or motion correction.
+
+    Parameters
+    ----------
+    fiber : str
+        The fiber/ROI identifier.
+    method : str
+        The preprocessing method used.
+    reference : str
+        Path to the reference image for this metric.
+    motion : bool, optional
+        Whether this is a motion correction metric. Defaults to False.
+
+    Returns
+    -------
+    QCMetric
+        The created quality control metric.
+    """
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -473,6 +513,20 @@ def create_metric(fiber, method, reference, motion=False):
 
 
 def create_evaluation(method, metrics):
+    """Create a QC evaluation for a specific preprocessing method.
+
+    Parameters
+    ----------
+    method : str
+        The preprocessing method being evaluated.
+    metrics : list of QCMetric
+        The metrics included in this evaluation.
+
+    Returns
+    -------
+    QCEvaluation
+        The created quality control evaluation.
+    """
     name = f"Preprocessing using method '{method}'"
     return QCEvaluation(
         name=name,
@@ -614,23 +668,25 @@ if __name__ == "__main__":
                         def process1fiber(
                             fiber_number: str,
                         ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
-                            """
-                            Preprocesses the fiber photometry signal of one ROI
-                            (dF/F + motion correction).
-                            Args:
-                                fiber_number: str
-                                    Fiber/ROI number
-                            Returns:
-                                df_1fiber: pd.DataFrame
-                                    Dataframe with preprocessed fiber photometry signals
-                                df_pp_params: pd.DataFrame
-                                    Dataframe with the parameters of the preprocessing
-                                coeff: dict
-                                    Dictionary mapping channels to regression
-                                    coefficients for motion correction.
-                                intercept: dict
-                                    Dictionary mapping channels to regression
-                                    intercepts for motion correction.
+                            """Preprocess the fiber photometry signal of one ROI (dF/F + motion correction).
+
+                            Parameters
+                            ----------
+                            fiber_number : str
+                                Fiber/ROI number.
+
+                            Returns
+                            -------
+                            tuple
+                                Contains four elements:
+                                - df_1fiber : pd.DataFrame
+                                    Dataframe with preprocessed fiber photometry signals.
+                                - df_pp_params : pd.DataFrame
+                                    Dataframe with the parameters of the preprocessing.
+                                - coeff : dict
+                                    Dictionary mapping channels to regression coefficients for motion correction.
+                                - intercept : dict
+                                    Dictionary mapping channels to regression intercepts for motion correction.
                             """
 
                             # dF/F
