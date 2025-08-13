@@ -739,29 +739,11 @@ if __name__ == "__main__":
                     for method in methods:
                         metrics = []
                         for fiber in fibers:
-                            # plot_dff(
-                            #     df_fip_pp,
-                            #     fiber,
-                            #     channels,
-                            #     method,
-                            #     os.path.join(args.output_dir, "dff-qc"),
-                            # )
                             metrics.append(
                                 create_metric(
                                     fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
                                 )
                             )
-                            # plot_motion_correction(
-                            #     df_fip_pp,
-                            #     fiber,
-                            #     channels,
-                            #     method,
-                            #     os.path.join(args.output_dir, "dff-qc"),
-                            #     coeffs,
-                            #     intercepts,
-                            #     args.cutoff_freq_motion,
-                            #     args.cutoff_freq_noise,
-                            # )
                             metrics.append(
                                 create_metric(
                                     fiber,
