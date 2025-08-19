@@ -11,10 +11,11 @@ Three baseline estimation methods are implemented:
   Fitting starts with a biphasic exponential, and the brightening and/or 3rd exponential are only included if they substantially improve the fit.
 
 ### Motion Correction
-Motion correction is carried out in three steps:
-1. **Filtering**: A second-order Butterworth filter is applied to smooth the traces.
+Motion correction is carried out in three to four steps:
+1. **Motion filtering**: A second-order Butterworth filter is applied to smooth the traces (parameter: `cutoff_freq_motion`).
 2. **Estimating motion attenuation**: Robust regression is used to estimate the coefficients for each filtered trace.
 3. **Removing the motion component**: The (unfiltered) isosbestic motion signal, scaled by the corresponding coefficients, is subtracted from all channels.
+4. **Noise filtering**: Optionally, a second-order Butterworth filter is applied to filter out noise (parameter: `cutoff_freq_noise`).
 
 
 ## Input
@@ -22,13 +23,24 @@ Motion correction is carried out in three steps:
 All parameters are passed to `run_capule.py` using `python run_capule.py [parameters]`.
 Parameters are defined in `__main__` using argparse.  
 Key parameters include:  
-- '--source_pattern': Specifies the regular expression used to locate input NWB files containing raw fiber data.
-- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F.
+- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F. Default: `["poly", "exp", "bright"]`
+- '--cutoff_freq_motion': Cutoff frequency of the lowpass Butterworth filter that's only applied for estimating the regression coefficient, in Hz. Default: `0.05`
+- '--cutoff_freq_noise': Cutoff frequency of the lowpass Butterworth filter that's applied to filter out noise, in Hz. If `None` or greater than the Nyquist frequency (`10` for `20`Hz sampling rate) no noise filtering is performed. Default: `3`
 
 ## Output
 
 The primary output is the updated NWB file, which includes the newly processed data:
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
-- **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_preprocessed-[method]` (e.g., `G_1_preprocessed-poly`). 
+- **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_dff-[method]_mc-[method]` (e.g., `G_1_dff-poly_mc-iso-IRLS`). 
 
-For quality control (QC), the `dff-qc` subdirectory contains visualizations for each fiber and ΔF/F method. These figures display raw, ΔF/F, and preprocessed (ΔF/F with motion correction) traces of all channels. For example, `ROI1_bright.png`. Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal).
+For quality control (QC), the `dff-qc` subdirectory contains visualizations of the two processing steps for each fiber and ΔF/F method.   
+- The ΔF/F figures (e.g., `ROI0_dff-bright.png`) display raw traces with fitted baseline (F<sub>0</sub>) and ΔF/F traces of all channels.   
+- The motion-correction figures (e.g., `ROI0_dff-bright_mc-iso-IRLS.png`) display, for each non-isosbestic channel:
+  * On the left:
+    - The ΔF/F trace of the regressed and low-pass filtered isosbestic ΔF/F traces (the estimated motion component)
+    - Low-pass filtered ΔF/F traces of the color and isosbestic channels
+    - The motion corrected, and optionally noise filtered, ΔF/F trace
+  * In the middle: The corresponding power spectral densities with motion and (if applicable) noise cutoff frequencies indicated as dashed vertical lines
+  * On the right: A scatter plot of color vs isosbestic ΔF/F values for both the original and low-pass filtered (`cutoff_freq_motion`) data with the fitted regression line
+
+Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal).
