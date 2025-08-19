@@ -4,8 +4,17 @@ import pynwb
 
 
 def is_numeric(obj) -> bool:
-    """
-    Check if an array or object is numeric
+    """Check if an array or object is numeric.
+
+    Parameters
+    ----------
+    obj : object
+        The object to check.
+
+    Returns
+    -------
+    bool
+        True if the object is numeric, False otherwise.
     """
     attrs = ["__add__", "__sub__", "__mul__", "__truediv__", "__pow__"]
     return all(hasattr(obj, attr) for attr in attrs)
@@ -14,19 +23,21 @@ def is_numeric(obj) -> bool:
 def attach_dict_fip(
     nwb: pynwb.NWBFile, dict_fip: dict[str, list[np.ndarray]], suffix: str
 ) -> pynwb.NWBFile:
-    """
-    Attach a dictionary of fiber photometry data to an NWB file.
+    """Attach a dictionary of fiber photometry data to an NWB file.
 
-    Args:
-        nwb: pynwb.NWBFile
-            The NWB file to attach the data to.
-        dict_fip: dict[str, list[np.ndarray]]
-            Dictionary containing fiber photometry data.
-        suffix: str
-            Suffix to add to the name of each TimeSeries.
+    Parameters
+    ----------
+    nwb : pynwb.NWBFile
+        The NWB file to attach the data to.
+    dict_fip : dict[str, list[np.ndarray]]
+        Dictionary containing fiber photometry data.
+    suffix : str
+        Suffix to add to the name of each TimeSeries.
 
-    Returns:
-        pynwb.NWBFile: The NWB file with the attached data.
+    Returns
+    -------
+    pynwb.NWBFile
+        The NWB file with the attached data.
     """
     # Create or retrieve a processing module
     module_name = "fiber_photometry"
@@ -52,19 +63,28 @@ def attach_dict_fip(
 
 
 def split_fip_traces(
-    df_fip: pd.DataFrame, split_by: list[str] = ["channel", "fiber_number"]
+    df_fip: pd.DataFrame,
+    split_by: list[str] = ["channel", "fiber_number"],
+    signal: str = "signal",
 ) -> dict:
-    """
-    split_neural_traces takes in a dataframe with fiber photometry data series and splits it into
-    individual traces for each channel and each channel number.
-    Args:
-        df_fip: pd.DataFrame
-            Time series Dataframe with columns signal, time, channel, and channel number.
-            Has the signals for variations of channel and channel numbers are mixed together
-    Returns:
-        dict_fip: dict
-            Dictionary that takes in channel name and channel number as key, and time series and signal
-            bundled together as a 2x<TIMESERIES_LEN> as the value
+    """Split a dataframe with fiber photometry data into individual traces.
+
+    Parameters
+    ----------
+    df_fip : pd.DataFrame
+        Time series DataFrame with columns signal, time, channel, and channel number.
+        Contains signals for different channels and channel numbers mixed together.
+    split_by : list[str], optional
+        Column names to group by. Default is ["channel", "fiber_number"].
+    signal : str, optional
+        Column name containing the signal values. Default is "signal".
+
+    Returns
+    -------
+    dict
+        Dictionary with keys formed by joining the group values with '_'.
+        Values are 2D arrays where the first row contains timestamps and
+        the second row contains signal values.
     """
     dict_fip = {}
     groups = df_fip.groupby(split_by)
@@ -79,23 +99,30 @@ def split_fip_traces(
         ]
         group_string = "_".join(group_name_string)
         dict_fip[group_string] = np.vstack(
-            [df_group.time_fip.values, df_group.signal.values]
+            [df_group.time_fip.values, df_group[signal].values]
         )
     return dict_fip
 
 
 def nwb_to_dataframe(nwbfile: pynwb.NWBFile) -> pd.DataFrame:
-    """
-    Reads time series data from an NWB file, converts it into a dictionary,
-    including only keys that contain 'R_', 'G_', or 'Iso_', and stores only the 'data' part.
-    Also adds a single 'timestamps' field from the first matching key
-    and converts the dictionary to a pandas DataFrame.
-    Args:
-        nwbfile:
-            NWB zarr file including aligned times
-    Returns: pynwb.NWBFile
-        df: pd.DataFrame
-            A pandas DataFrame with the time series data and timestamps.
+    """Convert NWB file time series data to a pandas DataFrame.
+
+    Reads time series data from an NWB file, extracts data for channels
+    containing 'R_', 'G_', or 'Iso_', and organizes it into a structured DataFrame.
+
+    Parameters
+    ----------
+    nwbfile : pynwb.NWBFile
+        NWB file containing fiber photometry data.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns:
+        - time_fip: timestamps
+        - channel: channel name (R, G, Iso)
+        - fiber_number: fiber/ROI identifier
+        - signal: raw signal values
     """
     # Define the list of required substrings
     required_substrings = ["R_", "G_", "Iso_"]

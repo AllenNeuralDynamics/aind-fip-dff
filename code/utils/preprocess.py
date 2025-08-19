@@ -1,4 +1,3 @@
-import itertools
 import logging
 
 import matplotlib.pyplot as plt
@@ -8,7 +7,7 @@ from scipy.optimize import curve_fit, minimize
 from scipy.signal import butter, medfilt, sosfiltfilt
 from scipy.stats import skew
 from sklearn.linear_model import LinearRegression
-from statsmodels.api import add_constant, RLM
+from statsmodels.api import RLM, add_constant
 from statsmodels.robust import scale
 from statsmodels.robust.norms import RobustNorm, TukeyBiweight
 
@@ -25,7 +24,22 @@ def tc_slidingbase(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
 
 
 def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float) -> np.ndarray:
-    """Obtain dF/F using median of values within sliding baseline."""
+    """Obtain dF/F using median of values within sliding baseline.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Time course signal.
+    tc_base : np.ndarray
+        Baseline signal.
+    b_percentile : float
+        Percentile for baseline calculation.
+
+    Returns
+    -------
+    np.ndarray
+        dF/F signal.
+    """
     tc_dFoF = tc / tc_base
     sorted_dFoF = np.sort(tc_dFoF)
     b_median = np.median(sorted_dFoF[: round(len(sorted_dFoF) * b_percentile)])
@@ -40,18 +54,24 @@ def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
 def tc_polyfit(
     tc: np.ndarray, sampling_rate: float, degree: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit with polynomial to remove bleaching artifact
-    Args:
-        tc: np.ndarray
-            Fiber photometry signal
-        sampling_rate: float
-            Sampling rate of the signal
-    Returns:
-        tc_F0: np.ndarray
-            Fitted baseline
-        popt: np.ndarray
-            Optimal values for the parameters of the preprocessing
+    """Fit with polynomial to remove bleaching artifact.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Fiber photometry signal.
+    sampling_rate : float
+        Sampling rate of the signal in Hz.
+    degree : int
+        Degree of the polynomial to fit.
+
+    Returns
+    -------
+    tuple
+        - tc_poly : np.ndarray
+            Fitted baseline.
+        - coefs : np.ndarray
+            Optimal values for the parameters of the preprocessing.
     """
     time_seconds = np.arange(len(tc)) / sampling_rate
     coefs = np.polyfit(time_seconds, tc, deg=degree)
@@ -62,18 +82,22 @@ def tc_polyfit(
 def tc_expfit(
     tc: np.ndarray, sampling_rate: float = 20
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit with Biphasic exponential decay
-    Args:
-        tc: np.ndarray
-            Fiber photometry signal
-        sampling_rate: float
-            Sampling rate of the signal
-    Returns:
-        tc_F0: np.ndarray
-            Fitted baseline
-        popt: np.ndarray
-            Optimal values for the parameters of the preprocessing
+    """Fit with Biphasic exponential decay.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Fiber photometry signal.
+    sampling_rate : float, optional
+        Sampling rate of the signal in Hz. Default is 20.
+
+    Returns
+    -------
+    tuple
+        - tc_exp : np.ndarray
+            Fitted baseline.
+        - popt : np.ndarray
+            Optimal values for the parameters of the preprocessing.
     """
 
     def func(x, a, b, c, d):
@@ -108,8 +132,38 @@ def baseline(
     T: int = 70000,
     fs: float = 20,
 ) -> np.ndarray:
-    """Baseline with  Triphasic exponential decay (bleaching)
-    x  increasing saturating exponential (brightening)"""
+    """Baseline with Triphasic exponential decay (bleaching) x increasing saturating exponential (brightening).
+
+    Parameters
+    ----------
+    b_inf : float
+        Asymptotic baseline value.
+    b_slow : float, optional
+        Amplitude of the slow decay component. Default is 0.
+    b_fast : float, optional
+        Amplitude of the fast decay component. Default is 0.
+    b_rapid : float, optional
+        Amplitude of the rapid decay component. Default is 0.
+    b_bright : float, optional
+        Amplitude of the brightening component. Default is 0.
+    t_slow : float, optional
+        Time constant of the slow decay component in seconds. Default is np.inf.
+    t_fast : float, optional
+        Time constant of the fast decay component in seconds. Default is np.inf.
+    t_rapid : float, optional
+        Time constant of the rapid decay component in seconds. Default is np.inf.
+    t_bright : float, optional
+        Time constant of the brightening component in seconds. Default is np.inf.
+    T : int, optional
+        Length of the trace in samples. Default is 70000.
+    fs : float, optional
+        Sampling rate in Hz. Default is 20.
+
+    Returns
+    -------
+    np.ndarray
+        Baseline signal.
+    """
     tmp = -np.arange(T)
     return (
         b_inf
@@ -124,6 +178,26 @@ def baseline(
 
 
 def plot_fit(x, trace, fs=20, title=None, color="C0"):
+    """Plot the fitted baseline and residuals.
+
+    Parameters
+    ----------
+    x : array-like
+        Parameters for the baseline function.
+    trace : np.ndarray
+        Original trace data.
+    fs : float, optional
+        Sampling rate in Hz. Default is 20.
+    title : str, optional
+        Title for the plot. Default is None.
+    color : str, optional
+        Color for the trace. Default is "C0".
+
+    Returns
+    -------
+    None
+        The function displays a matplotlib figure.
+    """
     T = len(trace)
     F0 = baseline(*x, T=T)
     logging.info(
@@ -158,47 +232,52 @@ def tc_brightfit(
     rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
     M: RobustNorm | None = TukeyBiweight(3),
     maxiter: int = 10,
-    tol: float = 1e-4,
+    tol: float = 1e-3,
     update_scale: bool = True,
     skewness_factor: float = 1.0,
     plot: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit trace with above baseline (bleaching x brightening) using Ordinary
-    Least Squares (OLS) or Iteratively Reweighted Least Squares (IRLS).
+    """Fit trace with baseline (bleaching x brightening) using OLS or IRLS.
+
     More complex models that include brightening and/or a third exponential
     are only selected if they notably improve the fit by reducing the RSS.
-    Args:
-        trace: np.ndarray
-            Fiber photometry signal
-        fs: float
-            Sampling rate of the signal
-        rss_thresh: float, or (float, float), or str
-            Factor(s) used for model selection.
-            If a list then the order is (brightening, 3rd exponential)
-            A more complex model (with 2 additional parameters)
-            is accepted if the RSS decreases by at least this factor.
-            Automatically calculated if "AIC" or "BIC".
-        M : statsmodels.robust.norms.RobustNorm
-            The robust criterion function for downweighting outliers.
-            See statsmodels.robust.norms for more information.
-        maxiter : int
-            The maximum number of IRLS iterations to try.
-            Has to be >0 for robust regression, 0 uses only OLS.
-        tol : float
-            The convergence tolerance of the estimate.
-        skewness_factor : float
-            Scaling factor to correct for bias by performing asymmetric
-            robust regression based on skewness of the residuals.
-        update_scale : bool
-            If `update_scale` is False then the scale estimate for the
-            weights is held constant over the iteration.  Otherwise, it
-            is updated for each fit in the iteration.
-    Returns:
-        tc_dFoF: np.array
-            Preprocessed fiber photometry signal
-        popt: array
-            Optimal values for the parameters of the preprocessing
+
+    Parameters
+    ----------
+    trace : np.ndarray
+        Fiber photometry signal.
+    fs : float, optional
+        Sampling rate of the signal in Hz. Default is 20.
+    rss_thresh : float or tuple of float or str, optional
+        Factor(s) used for model selection. Default is (0.98, 0.995).
+        If a tuple, then the order is (brightening, 3rd exponential).
+        A more complex model (with 2 additional parameters)
+        is accepted if the RSS decreases by at least this factor.
+        Automatically calculated if "AIC" or "BIC".
+    M : statsmodels.robust.norms.RobustNorm or None, optional
+        The robust criterion function for downweighting outliers.
+        Default is TukeyBiweight(3).
+    maxiter : int, optional
+        The maximum number of IRLS iterations to try. Default is 10.
+        Has to be >0 for robust regression, 0 uses only OLS.
+    tol : float, optional
+        The convergence tolerance of the estimate. Default is 1e-3.
+    update_scale : bool, optional
+        If False, scale estimate for weights is held constant over iteration.
+        If True, it is updated for each fit. Default is True.
+    skewness_factor : float, optional
+        Scaling factor to correct for bias by performing asymmetric
+        robust regression based on skewness of the residuals. Default is 1.0.
+    plot : bool, optional
+        Whether to plot the fits. Default is False.
+
+    Returns
+    -------
+    tuple
+        - baseline : np.ndarray
+            The fitted baseline.
+        - params : np.ndarray
+            Optimal values for the parameters of the preprocessing.
     """
 
     # constants for fancy logging
@@ -305,7 +384,7 @@ def tc_brightfit(
 
     # robust fit down-weighting outliers using IRLS
     # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
-    if maxiter > 0 and M is not None:
+    if maxiter > 0 and M is not None and cost > 0:
         f0 = baseline(*x, T=T, fs=fs)
         resid = trace - f0
         scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
@@ -364,31 +443,40 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
-) -> tuple[np.ndarray, dict]:
-    """
-    Calculates dF/F of the fiber photometry signal.
-    Args:
-        tc: np.ndarray
-            Fiber photometry signal
-        method: str
-            Method to preprocess the data. Options: poly, exp, bright
-        n_frame_to_cut: int
-            Number of frames to crop from the beginning of the signal
-        kernel_size: int
-            Size of the kernel for median filtering
-        sampling_rate: float
-            Sampling rate of the signal
-        degree: int
-            Degree of the polynomial to fit
-        b_percentile: float
-            Percentile to calculate the baseline
-        robust: bool
-            Whether to fit baseline using IRLS (robust regression, only 'bright' method)
-    Returns:
-        tc_F0: np.ndarray
-            dF/F of fiber photometry signal
-        tc_params: dict
-            Dictionary with the parameters of the preprocessing
+) -> tuple[np.ndarray, dict, np.ndarray]:
+    """Calculate dF/F of the fiber photometry signal.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Fiber photometry signal.
+    method : str, optional
+        Method to preprocess the data. Options: poly, exp, bright.
+        Default is "poly".
+    n_frame_to_cut : int, optional
+        Number of frames to crop from the beginning of the signal.
+        Default is 100.
+    kernel_size : int, optional
+        Size of the kernel for median filtering. Default is 1.
+    sampling_rate : float, optional
+        Sampling rate of the signal in Hz. Default is 20.
+    degree : int, optional
+        Degree of the polynomial to fit. Default is 4.
+    b_percentile : float, optional
+        Percentile to calculate the baseline. Default is 0.7.
+    robust : bool, optional
+        Whether to fit baseline using IRLS (robust regression, only 'bright' method).
+        Default is True.
+
+    Returns
+    -------
+    tuple
+        - tc_dFoF : np.ndarray
+            dF/F of fiber photometry signal.
+        - tc_params : dict
+            Dictionary with the parameters of the preprocessing.
+        - tc_fit_filled : np.ndarray
+            The fitted baseline, including the filled beginning portion.
     """
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
@@ -418,149 +506,84 @@ def chunk_processing(
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)
 
-    return tc_dFoF, tc_params
+    return tc_dFoF, tc_params, tc_filling(tc_fit, n_frame_to_cut)
 
 
 def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
-    cutoff_freq: float = 0.3,
+    cutoff_freq_motion: float = 0.05,
+    cutoff_freq_noise: float = 3,
     M: RobustNorm = TukeyBiweight(3),
-) -> pd.DataFrame:
-    """
-    Perform motion correction on a fiber's dF/F traces by regressing out
-    the isosbestic traces.
-    Args:
-        dff: pd.DataFrame
-            DataFrame containing the dF/F traces of the fiber photometry signals.
-        fs: float
-            Sampling rate of the signal, in Hz.
-        cutoff_freq: float
-            Cutoff frequency of the lowpass Butterworth filter
-            (that's only applied for the regression), in Hz.
-        M: statsmodels.robust.norms.RobustNorm
-            Robust criterion function used to downweight outliers.
-            Refer to `statsmodels.robust.norms` for more details.
-    Returns:
-        dff_mc : pd.DataFrame
-            Preprocessed fiber photometry signal with motion correction applied
-            (dF/F + motion correction).
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+    """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
+
+    Parameters
+    ----------
+    dff : pd.DataFrame
+        DataFrame containing the dF/F traces of the fiber photometry signals.
+    fs : float, optional
+        Sampling rate of the signal in Hz. Default is 20.
+    cutoff_freq_motion : float, optional
+        Cutoff frequency of the lowpass Butterworth filter that's only
+        applied for estimating the regression coefficient, in Hz.
+        Default is 0.05.
+    cutoff_freq_noise : float, optional
+        Cutoff frequency of the lowpass Butterworth filter
+        that's applied to filter out noise, in Hz.
+        Default is 3.
+    M : statsmodels.robust.norms.RobustNorm, optional
+        Robust criterion function used to downweight outliers.
+        Default is TukeyBiweight(3).
+
+    Returns
+    -------
+    tuple
+        - dff_mc : pd.DataFrame
+            Preprocessed fiber photometry signal with motion correction applied.
+        - dff_filt : pd.DataFrame
+            Low-pass filtered dF/F fiber photometry signal.
+        - coeffs : dict
+            The regression coefficients.
+        - intercepts : dict
+            The regression intercepts.
     """
     if np.isnan(dff["Iso"]).any():
-        return np.nan * dff
-    sos = butter(N=2, Wn=cutoff_freq, fs=fs, output="sos")
+        c = {ch: np.nan for ch in dff.columns}
+        return np.nan * dff, np.nan * dff, c, c
+    sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     idx_iso = dff.columns.get_loc("Iso")
     motion = dff_filt[idx_iso]
     no_nans = ~np.isnan(dff_filt.sum(1))
     no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
     if M is not None:
-        coef = np.maximum(
-            [
-                RLM(d, add_constant(motion), M=M).fit().params[1:]
-                for d in dff_filt[no_nans]
-            ],
-            0,
+        coef = np.array(
+            [RLM(d, add_constant(motion), M=M).fit().params for d in dff_filt[no_nans]]
         )
+        intercept = coef[:, 0]
+        coef = np.maximum(coef[:, 1:], 0)
     else:
-        coef = (
-            LinearRegression(fit_intercept=True, positive=True)
-            .fit(motion[:, None], dff_filt[no_nans].T)
-            .coef_
+        lr = LinearRegression(fit_intercept=True, positive=True).fit(
+            motion[:, None], dff_filt[no_nans].T
         )
+        coef = lr.coef_
+        intercept = lr.intercept_
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
     motions -= motions.mean(axis=1, keepdims=True)
     dff_mc = dff - motions.T
     dff_mc["Iso"] = 0
-    return dff_mc
-
-
-def batch_processing(
-    df_fip: pd.DataFrame, methods: list[str] = ["poly", "exp", "bright"]
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Preprocesses the fiber photometry signal (dF/F + motion correction).
-    Args:
-        df_fib: pd.DataFrame
-            Fiber photometry signal
-        methods: list[str]
-            Methods to preprocess the data. Options: poly, exp, bright
-    Returns:
-        df_fip_pp: pd.DataFrame
-            dF/F of fiber photometry signal
-        df_pp_params: pd.DataFrame
-            Dataframe with the parameters of the preprocessing
-        df_fip_mc: pd.DataFrame
-            Preprocessed (dF/F + motion correction) of fiber photometry signal
-    """
-    df_fip_pp = pd.DataFrame()
-    df_pp_params = pd.DataFrame()
-    df_mc = pd.DataFrame()
-
-    if len(df_fip) == 0:
-        return df_fip, df_pp_params
-
-    sessions = pd.unique(df_fip["session"].values)
-    sessions = sessions[~pd.isna(sessions)]
-    fiber_numbers = np.unique(df_fip["fiber_number"].values)
-    channels = pd.unique(df_fip["channel"])  # ['G', 'R', 'Iso']
-    channels = channels[~pd.isna(channels)]
-    for pp_name in methods:
-        if pp_name in ["poly", "exp", "bright"]:
-            for i_iter, (session, fiber_number) in enumerate(
-                itertools.product(sessions, fiber_numbers)
-            ):
-                # dF/F
-                df_1fiber = pd.DataFrame()
-                for channel in channels:
-                    df_fip_iter = df_fip[
-                        (df_fip["session"] == session)
-                        & (df_fip["fiber_number"] == fiber_number)
-                        & (df_fip["channel"] == channel)
-                    ].copy()
-                    if len(df_fip_iter) == 0:
-                        continue
-
-                    NM_values = df_fip_iter["signal"].values
-                    NM_preprocessed, NM_fitting_params = chunk_processing(
-                        NM_values, method=pp_name
-                    )
-                    df_fip_iter.loc[:, "signal"] = NM_preprocessed
-                    df_fip_iter.loc[:, "preprocess"] = pp_name
-                    df_fip_pp = pd.concat([df_fip_pp, df_fip_iter], ignore_index=True)
-                    df_1fiber = pd.concat([df_1fiber, df_fip_iter], ignore_index=True)
-
-                    NM_fitting_params.update(
-                        {
-                            "preprocess": pp_name,
-                            "channel": channel,
-                            "fiber_number": fiber_number,
-                            "session": session,
-                        }
-                    )
-                    df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
-                    df_pp_params = pd.concat([df_pp_params, df_pp_params_ses], axis=0)
-
-                # motion correction
-                if len(df_1fiber) == 0:
-                    continue
-                # convert to #frames x #channels
-                df_dff_iter = pd.DataFrame(
-                    np.column_stack(
-                        [
-                            df_1fiber[df_1fiber["channel"] == c]["signal"].values
-                            for c in channels
-                        ]
-                    ),
-                    columns=channels,
-                )
-                # run motion correction
-                df_mc_iter = motion_correct(df_dff_iter)
-                # convert back to a table with columns channel and signal
-                df_mc_iter = df_mc_iter.melt(var_name="channel", value_name="signal")
-                df_mc = pd.concat([df_mc, df_mc_iter], ignore_index=True)
-    df_fip_mc = df_fip_pp.copy()
-    df_fip_mc["signal"] = df_mc["signal"]
-
-    return df_fip_pp, df_pp_params, df_fip_mc
+    dff_filt = pd.DataFrame(dff_filt.T)
+    dff_filt.columns = dff_mc.columns
+    c = np.full(len(motions), np.nan)
+    c[no_nans] = coef.ravel()
+    c[idx_iso] = 1
+    coef = {ch: c_ for ch, c_ in zip(dff.columns, c)}
+    c[no_nans] = intercept
+    c[idx_iso] = 0
+    intercept = {ch: c_ for ch, c_ in zip(dff.columns, c)}
+    if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
+        sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
+        dff_mc = dff_mc.apply(lambda x: sosfiltfilt(sos, x))
+    return dff_mc, dff_filt, coef, intercept
