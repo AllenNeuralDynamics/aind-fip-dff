@@ -3,7 +3,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit, minimize
+from scipy.optimize import curve_fit, least_squares
 from scipy.signal import butter, medfilt, sosfiltfilt
 from scipy.stats import skew
 from sklearn.linear_model import LinearRegression
@@ -120,6 +120,7 @@ def tc_expfit(
 
 
 def baseline(
+    t: np.ndarray,
     b_inf: float,
     b_slow: float = 0,
     b_fast: float = 0,
@@ -129,13 +130,13 @@ def baseline(
     t_fast: float = np.inf,
     t_rapid: float = np.inf,
     t_bright: float = np.inf,
-    T: int = 70000,
-    fs: float = 20,
 ) -> np.ndarray:
     """Baseline with Triphasic exponential decay (bleaching) x increasing saturating exponential (brightening).
 
     Parameters
     ----------
+    t : np.ndarray
+        Time vector.
     b_inf : float
         Asymptotic baseline value.
     b_slow : float, optional
@@ -164,16 +165,15 @@ def baseline(
     np.ndarray
         Baseline signal.
     """
-    tmp = -np.arange(T)
     return (
         b_inf
         * (
             1
-            + b_slow * np.exp(tmp / (t_slow * fs))
-            + b_fast * np.exp(tmp / (t_fast * fs))
-            + b_rapid * np.exp(tmp / (t_rapid * fs))
+            + b_slow * np.exp(-t / t_slow)
+            + b_fast * np.exp(-t / t_fast)
+            + b_rapid * np.exp(-t / t_rapid)
         )
-        * (1 - b_bright * np.exp(tmp / (t_bright * fs)))
+        * (1 - b_bright * np.exp(-t / t_bright))
     )
 
 
@@ -199,7 +199,8 @@ def plot_fit(x, trace, fs=20, title=None, color="C0"):
         The function displays a matplotlib figure.
     """
     T = len(trace)
-    F0 = baseline(*x, T=T)
+    t = np.arange(T) / fs
+    F0 = baseline(t, *x)
     logging.info(
         "b_inf={:9.4f}, b_slow={:6.4f}, b_fast={:6.4f}, b_rapid={:6.4f}, b_bright={:6.4f}, ".format(
             *x[:5]
@@ -211,11 +212,11 @@ def plot_fit(x, trace, fs=20, title=None, color="C0"):
         )
     )
     fig, ax = plt.subplots(2, 1, figsize=(15, 3), sharex=True)
-    ax[0].plot(np.arange(T) / fs, trace, label="data", c=color)
-    ax[0].plot(np.arange(T) / fs, F0, label="fit", c="C1")
+    ax[0].plot(t, trace, label="data", c=color)
+    ax[0].plot(t, F0, label="fit", c="C1")
     ax[0].set_ylabel("Trace")
     ax[0].legend()
-    ax[1].plot(np.arange(T) / fs, trace - F0, c=color)
+    ax[1].plot(t, trace - F0, c=color)
     ax[1].axhline(0, c="k", ls="--")
     ax[1].set_xlabel("Time [seconds]")
     ax[1].set_ylabel("Residual")
@@ -254,14 +255,14 @@ def tc_brightfit(
         A more complex model (with 2 additional parameters)
         is accepted if the RSS decreases by at least this factor.
         Automatically calculated if "AIC" or "BIC".
-    M : statsmodels.robust.norms.RobustNorm or None, optional
+    M : RobustNorm or None, optional
         The robust criterion function for downweighting outliers.
         Default is TukeyBiweight(3).
     maxiter : int, optional
         The maximum number of IRLS iterations to try. Default is 10.
         Has to be >0 for robust regression, 0 uses only OLS.
     tol : float, optional
-        The convergence tolerance of the estimate. Default is 1e-3.
+        IRLS convergence tolerance. Default is 1e-3.
     update_scale : bool, optional
         If False, scale estimate for weights is held constant over iteration.
         If True, it is updated for each fit. Default is True.
@@ -273,19 +274,16 @@ def tc_brightfit(
 
     Returns
     -------
-    tuple
-        - baseline : np.ndarray
-            The fitted baseline.
-        - params : np.ndarray
-            Optimal values for the parameters of the preprocessing.
+    tuple[np.ndarray, np.ndarray]
+        - Fitted baseline signal
+        - Optimized parameters [b_inf, b_slow, b_fast, b_rapid, b_bright,
+                                t_slow, t_fast, t_rapid, t_bright]
     """
 
     # constants for fancy logging
-    CEND = "\33[0m"
-    CBOLD = "\33[1m"
-    CRED = "\33[31m"
-    CGREEN = "\33[32m"
+    CEND, CBOLD, CRED, CGREEN = "\33[0m", "\33[1m", "\33[31m", "\33[32m"
 
+    # Calculate thresholds if using information criteria
     T = len(trace)
     Tds = T // 10
     if rss_thresh == "BIC":
@@ -293,52 +291,56 @@ def tc_brightfit(
     elif rss_thresh == "AIC":
         rss_thresh = [np.exp(-4 / Tds)] * 2
 
-    def optimize(trace, x0, ds=1, maxiter=20000, weights=1, plot=plot):
-        """if item in x0 is set to np.nan it is not optimized but
+    def _optimize_baseline(
+        trace: np.ndarray,
+        x0: np.ndarray,
+        ds: int = 1,
+        max_nfev: int | None = None,
+        weights: float | np.ndarray = 1,
+        plot: bool = plot,
+    ) -> tuple[np.ndarray, float, bool, str]:
+        """Optimize baseline parameters for given trace.
+        If item in x0 is set to np.nan it is not optimized but
         set to its default, i.e. this exponential term is excluded
         """
         trace_ds = trace[: T // ds * ds].reshape(-1, ds).mean(1)
+        t = np.arange(ds // 2, T, ds) / fs
         optimize_param = ~np.isnan(x0)
         params = np.array([0] * 5 + [np.inf] * 4)  # default params if not optimized
 
-        def objective(params_to_optimize):
+        def residuals(params_to_optimize):
             params[optimize_param] = params_to_optimize
-            return np.sum(
-                weights * (trace_ds - baseline(*params, T=T // ds, fs=fs / ds)) ** 2
-            )
+            return np.sqrt(weights) * (trace_ds - baseline(t, *params))
 
-        bounds = np.array(
-            [(0, np.inf)] * 5 + [(300, np.inf), (1, 1200), (1, 180), (60, np.inf)]
-        )
-        res = minimize(
-            objective,
-            np.array(x0)[optimize_param],
-            bounds=bounds[optimize_param],
-            method="Nelder-Mead",
-            options={"maxiter": maxiter},
+        res = least_squares(
+            residuals,
+            x0[optimize_param],
+            bounds=(0, np.inf),
+            xtol=1e-4,
+            max_nfev=max_nfev,
         )
         params[optimize_param] = res.x
         logging.info(
-            f"Cost: {res.fun:.3f}  "
+            f"Cost: {res.cost:.3f}  "
             f"Success: {CGREEN if res.success else CRED} {res.success} {CEND}  "
             f"{res.message}"
         )
         if plot:
             plot_fit(params, trace, fs)
-        return params, res.fun, res.success, res.message
+        return params, res.cost, res.success, res.message
 
     x0 = np.array(
         [trace[-1000:].mean(), 0.35, 0.2, np.nan, np.nan, 3600, 240, np.nan, np.nan]
     )
     logging.info(f"{CBOLD}Fit of 10x decimated trace with double-exp{CEND}")
-    x2, cost2, success2, _ = optimize(trace, x0, 10)
+    x2, cost2, success2, _ = _optimize_baseline(trace, x0, 10)
     if x2[6] > x2[5]:  # swap t_slow and t_fast if optimization returns t_fast > t_slow
         x2[[1, 2, 5, 6]] = x2[[2, 1, 6, 5]]
 
     x0[~np.isnan(x0)] = x2[~np.isnan(x0)]
     x0[[4, 8]] = 0.1, 2000
     logging.info(f"{CBOLD}Fit of 10x decimated trace with brightening{CEND}")
-    xB, costB, successB, _ = optimize(trace, x0, 10, 3000)
+    xB, costB, successB, _ = _optimize_baseline(trace, x0, 10)
 
     cost_ratio = costB / cost2
     include_bright = cost_ratio < rss_thresh[0]
@@ -353,7 +355,7 @@ def tc_brightfit(
         x0[[4, 8]] = np.nan
     x0[[3, 7]] = 0.1, 50
     logging.info(f"{CBOLD}Fit of 10x decimated trace with triple-exp{CEND}")
-    x3, cost3, success3, _ = optimize(trace, x0, 10, 3000)
+    x3, cost3, success3, _ = _optimize_baseline(trace, x0, 10)
     # swap as needed to ensure t_slow > t_fast > t_rapid
     order = np.argsort(x3[5:8])[::-1]
     x3[5:8] = x3[5 + order]
@@ -372,20 +374,21 @@ def tc_brightfit(
         x0[[3, 7]] = np.nan
     params = np.array([0] * 5 + [np.inf] * 4)
     params[~np.isnan(x0)] = x0[~np.isnan(x0)]
+    t = np.arange(T) / fs
     logging.info(
         f"Cost on original trace with params obtained on decimated trace is "
-        f"{np.sum((trace - baseline(*params, T=len(trace), fs=fs)) ** 2):.3f}"
+        f"{np.sum((trace - baseline(t, *params)) ** 2) / 2:.3f}"
     )
     logging.info(
         f"{CBOLD}Fit of original trace with {'triple-exp' if include_3rd else 'double-exp'} "
         f"and {'' if include_bright else 'no '}brightening{CEND}"
     )
-    x, cost, success, msg = optimize(trace, x0)
+    x, cost, success, msg = _optimize_baseline(trace, x0)
 
     # robust fit down-weighting outliers using IRLS
     # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
     if maxiter > 0 and M is not None and cost > 0:
-        f0 = baseline(*x, T=T, fs=fs)
+        f0 = baseline(t, *x)
         resid = trace - f0
         scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
         deviance = M(resid / scl).sum()
@@ -394,9 +397,7 @@ def tc_brightfit(
         while not converged:
             iteration += 1
             if scl == 0.0:
-                import warnings
-
-                warnings.warn(
+                logging.warning(
                     "Estimated scale is 0.0 indicating that the most"
                     " last iteration produced a perfect fit of the "
                     "weighted data."
@@ -409,8 +410,10 @@ def tc_brightfit(
                 resid[resid > 0] *= np.exp(skewness_factor * avg_skew)
             weights = M.weights(resid / scl)
             x[np.isnan(x0)] = np.nan  # set params of excluded terms to nan
-            x, cost, success, msg = optimize(trace, x, weights=weights, plot=False)
-            f0 = baseline(*x, T=T, fs=fs)
+            x, cost, success, msg = _optimize_baseline(
+                trace, x, weights=weights, plot=False
+            )
+            f0 = baseline(t, *x)
             resid = trace - f0
             if update_scale is True:
                 scl = scale.mad(
@@ -430,7 +433,7 @@ def tc_brightfit(
         if plot:
             plot_fit(x, trace, fs)
 
-    return baseline(*x, T=T, fs=fs), x
+    return baseline(t, *x), x
 
 
 # dF/F total function
