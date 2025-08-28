@@ -14,15 +14,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
-from aind_data_schema.core.data_description import DerivedDataDescription
+from aind_data_schema.components.identifiers import Code
+from aind_data_schema.core.data_description import DataDescription
+
 from aind_data_schema.core.processing import (
     DataProcess,
-    PipelineProcess,
     Processing,
     ProcessName,
+    ProcessStage
 )
 from aind_data_schema.core.quality_control import (
-    QCEvaluation,
     QCMetric,
     QCStatus,
     QualityControl,
@@ -31,8 +32,6 @@ from aind_data_schema.core.quality_control import (
 )
 from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
-from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
-from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
@@ -76,53 +75,48 @@ def write_output_metadata(
     """
     proc_path = Path(json_dir) / "processing.json"
 
-    dp = (
-        [
-            DataProcess(
-                name=process_name,
-                software_version=os.getenv("VERSION", ""),
-                start_date_time=start_date_time,
-                end_date_time=dt.now(),
-                input_location=str(input_fp),
-                output_location=str(output_fp),
-                code_url=(os.getenv("DFF_EXTRACTION_URL")),
-                parameters=metadata,
-            )
-        ]
-        if process_name is not None
-        else []
-    )
-
-    if os.path.exists(proc_path):
-        with open(proc_path, "r") as f:
-            proc_data = json.load(f)
-
-        proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
-        processing = proc_upgrader.upgrade(
-            processor_full_name="Fiberphotometry Processing Pipeline"
+    dp = [
+        DataProcess(
+            name=process_name,
+            process_type=ProcessName.DF_F_ESTIMATION,
+            stage=ProcessStage.PROCESSING,
+            start_date_time=start_date_time,
+            end_date_time=dt.now(),
+            experimenters=["Ahad Bawany", "Johannes Friedrich"],
+            code=Code(
+                url=os.getenv("DFF_EXTRACTION_URL"),
+                version=os.getenv("VERSION", ""),
+                parameters=metadata
+            ),
+            output_path=Path(output_fp).parent,
         )
-        p = processing.processing_pipeline
-        p.data_processes += dp
-    else:
-        p = PipelineProcess(
-            processor_full_name="Fiberphotometry Processing Pipeline",
-            data_processes=dp,
-        )
-        processing = Processing(processing_pipeline=p)
+    ]
+
     if u := os.getenv("PIPELINE_URL", ""):
-        p.pipeline_url = u
+        pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
-        p.pipeline_version = v
+        pipeline_version = v
+    
+    processing = Processing(
+        data_processes=dp,
+        pipelines=[
+            Code(
+                name="Fiberphotometry Processing Pipeline",
+                url=pipeline_url,
+                version=pipeline_version
+            )
+        ],
+        dependency_graph={ProcessName.DF_F_ESTIMATION: [dp[0].name]}
+    )
     processing.write_standard_file(output_directory=Path(output_fp).parent)
 
     dd_file = Path(json_dir) / "data_description.json"
     if os.path.exists(dd_file):
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
-        dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
-        new_dd = dd_upgrader.upgrade()
-        derived_dd = DerivedDataDescription.from_data_description(
-            data_description=new_dd, process_name="processed"
+
+        derived_dd = DataDescription.from_raw(
+            data_description=DataDescription(**dd_data), process_name="processed"
         )
         derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
     else:
@@ -495,6 +489,12 @@ def create_metric(fiber, method, reference, motion=False):
                 status=Status.PENDING,
             )
         ],
+        modality=Modality.FIB,
+        stage=Stage.PROCESSING,
+        description=(
+            "Review the preprocessing plots to ensure accurate "
+            "baseline (dF/F) and motion correction."
+        ),
         value=DropdownMetric(
             options=[
                 "Preprocessing successful",
@@ -509,6 +509,7 @@ def create_metric(fiber, method, reference, motion=False):
                 Status.FAIL,
             ],
         ),
+        tags=[method]
     )
 
 
@@ -654,7 +655,7 @@ if __name__ == "__main__":
                     session_name = session_name.split("FIP_")[1]
 
                 df_fip.insert(0, "session", session_name)
-
+                
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
                 df_pp_params = pd.DataFrame()
@@ -810,26 +811,27 @@ if __name__ == "__main__":
                     with Pool(len(fibers)) as pool:
                         pool.map(foo, itertools.product(fibers, methods))
                         pool.map(bar, itertools.product(fibers, methods))
-                    evaluations = []
-                    for method in methods:
-                        metrics = []
-                        for fiber in fibers:
-                            metrics.append(
-                                create_metric(
-                                    fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
-                                )
+                evaluations = []
+
+                for method in methods:
+                    metrics = []
+                    for fiber in fibers:
+                        metrics.append(
+                            create_metric(
+                                fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
                             )
-                            metrics.append(
-                                create_metric(
-                                    fiber,
-                                    method,
-                                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                                    True,
-                                )
+                        )
+                        metrics.append(
+                            create_metric(
+                                fiber,
+                                method,
+                                f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
+                                True,
                             )
-                        evaluations.append(create_evaluation(method, metrics))
+                        )
+                    #evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
-                    qc = QualityControl(evaluations=evaluations)
+                    qc = QualityControl(metrics=metrics, default_grouping=methods)
                     qc.write_standard_file(
                         output_directory=os.path.join(args.output_dir, "dff-qc")
                     )
