@@ -16,20 +16,11 @@ import pandas as pd
 import pynwb
 from aind_data_schema.components.identifiers import Code
 from aind_data_schema.core.data_description import DataDescription
-
-from aind_data_schema.core.processing import (
-    DataProcess,
-    Processing,
-    ProcessName,
-    ProcessStage
-)
-from aind_data_schema.core.quality_control import (
-    QCMetric,
-    QCStatus,
-    QualityControl,
-    Stage,
-    Status,
-)
+from aind_data_schema.core.processing import (DataProcess, Processing,
+                                              ProcessName, ProcessStage)
+from aind_data_schema.core.quality_control import (QCMetric, QCStatus,
+                                                   QualityControl, Stage,
+                                                   Status)
 from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
 from aind_qcportal_schema.metric_value import DropdownMetric
@@ -86,7 +77,7 @@ def write_output_metadata(
             code=Code(
                 url=os.getenv("DFF_EXTRACTION_URL"),
                 version=os.getenv("VERSION", ""),
-                parameters=metadata
+                parameters=metadata,
             ),
             output_path=Path(output_fp).parent,
         )
@@ -96,17 +87,17 @@ def write_output_metadata(
         pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
         pipeline_version = v
-    
+
     processing = Processing(
         data_processes=dp,
         pipelines=[
             Code(
                 name="Fiberphotometry Processing Pipeline",
                 url=pipeline_url,
-                version=pipeline_version
+                version=pipeline_version,
             )
         ],
-        dependency_graph={ProcessName.DF_F_ESTIMATION: [dp[0].name]}
+        dependency_graph={ProcessName.DF_F_ESTIMATION: [dp[0].name]},
     )
     processing.write_standard_file(output_directory=Path(output_fp).parent)
 
@@ -116,7 +107,8 @@ def write_output_metadata(
             dd_data = json.load(f)
 
         derived_dd = DataDescription.from_raw(
-            data_description=DataDescription(**dd_data), process_name="processed"
+            data_description=DataDescription(**dd_data),
+            process_name="processed",
         )
         derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
     else:
@@ -148,14 +140,16 @@ def plot_raw_dff_mc(
         The path where the generated plot will be saved. Defaults to "/results/dff-qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
-    for i, suffix in enumerate(("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")):
+    for i, suffix in enumerate(
+        ("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")
+    ):
         for ch in sorted(channels):
             if i == 0:
                 trace = nwb_file.acquisition[ch + f"_{fiber}"]
             else:
-                trace = nwb_file.processing["fiber_photometry"].data_interfaces[
-                    ch + f"_{fiber}{suffix}"
-                ]
+                trace = nwb_file.processing[
+                    "fiber_photometry"
+                ].data_interfaces[ch + f"_{fiber}{suffix}"]
             t, d = trace.timestamps[:], trace.data[:]
             t -= t[0]
             if ~np.isnan(t).all():
@@ -178,7 +172,9 @@ def plot_raw_dff_mc(
                 r"$\Delta$F/F + motion-correction ('dff_mc')",
             )[i]
         )
-        ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
+        ax[i].set_ylabel(
+            ("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i]
+        )
     tmin, tmax = np.nanmin(t), np.nanmax(t)
     ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
     plt.suptitle(f"Method: {method},  ROI: {fiber}", y=1)
@@ -246,7 +242,9 @@ def plot_dff(
 
     tmin, tmax = np.nanmin(t), np.nanmax(t)
     ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
-    plt.suptitle(f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=1)
+    plt.suptitle(
+        f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=1
+    )
     plt.xlabel("Time [s]")
     plt.tight_layout(pad=0.2, h_pad=0)
 
@@ -353,23 +351,30 @@ def plot_motion_correction(
                 gs[3 * c + i, 0], sharex=(None if c + i == 0 else left_axes[0])
             )
             ax2 = fig.add_subplot(
-                gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
+                gs[3 * c + i, 1],
+                sharex=(None if c + i == 0 else center_axes[0]),
             )
             if i < 2:
                 l = ("", "low-passed")[i]
                 if cut:
-                    sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
+                    sos = butter(
+                        N=2, Wn=cutoff_freq_noise, fs=fs, output="sos"
+                    )
                     noise_filt = lambda x: sosfiltfilt(sos, x)
                 else:
                     noise_filt = lambda x: x
                 ax.plot(
                     t,
-                    (noise_filt(df["dFF"]) if i == 0 else df["filtered"]) * 100,
+                    (noise_filt(df["dFF"]) if i == 0 else df["filtered"])
+                    * 100,
                     c=color,
                     label=(("", "low-passed ")[i] + ch),
                 )
                 plot_psd(
-                    ax2, df["dFF"] if i == 0 else df["filtered"], color, i == 1 and cut
+                    ax2,
+                    df["dFF"] if i == 0 else df["filtered"],
+                    color,
+                    i == 1 and cut,
                 )
                 coef = coeffs[method][int(fiber)][ch]
                 intercept = intercepts[method][int(fiber)][ch]
@@ -381,14 +386,14 @@ def plot_motion_correction(
                         label="regressed Iso",
                         alpha=0.5,
                     )
-                    plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"]).tick_params(
-                        axis="y", which="both", colors=colors["Iso"]
-                    )
+                    plot_psd(
+                        ax2.twinx(), df_iso["dFF"], colors["Iso"]
+                    ).tick_params(axis="y", which="both", colors=colors["Iso"])
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
-                    plot_psd(ax2.twinx(), df_iso["filtered"], "C1", cut).tick_params(
-                        axis="y", which="both", colors="C1"
-                    )
+                    plot_psd(
+                        ax2.twinx(), df_iso["filtered"], "C1", cut
+                    ).tick_params(axis="y", which="both", colors="C1")
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
@@ -397,7 +402,10 @@ def plot_motion_correction(
                 )
             else:
                 ax.plot(
-                    t, df["motion_corrected"] * 100, c=color, label=f"corrected {ch}"
+                    t,
+                    df["motion_corrected"] * 100,
+                    c=color,
+                    label=f"corrected {ch}",
                 )
                 plot_psd(ax2, df["motion_corrected"], color, cut)
                 if cut:
@@ -411,10 +419,15 @@ def plot_motion_correction(
 
         # Create subplots in the right column, each spanning 3 rows
         ax = fig.add_subplot(
-            gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
+            gs[3 * c : 3 * c + 3, 2],
+            sharex=(None if c == 0 else right_axes[0]),
         )
         ax.scatter(
-            df_iso["dFF"] * 100, df["dFF"] * 100, s=0.1, c="C0", label="original"
+            df_iso["dFF"] * 100,
+            df["dFF"] * 100,
+            s=0.1,
+            c="C0",
+            label="original",
         )
         ax.scatter(
             df_iso["filtered"] * 100,
@@ -438,7 +451,9 @@ def plot_motion_correction(
         plt.setp(ax.get_xticklabels(), visible=False)
 
     tmin, tmax = np.nanmin(t), np.nanmax(t)
-    left_axes[-1].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
+    left_axes[-1].set_xlim(
+        tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100
+    )
     left_axes[-1].set_xlabel("Time [s]")
     left_axes[rows // 2].set_ylabel(
         "$\Delta$F/F [%]", y=(1.1, 0.5)[rows % 2], labelpad=10
@@ -453,10 +468,14 @@ def plot_motion_correction(
     plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
     for ax in center_axes:
         pos = ax.get_position()
-        ax.set_position([pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height])
+        ax.set_position(
+            [pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height]
+        )
 
     os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
+    fig_file = os.path.join(
+        fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png"
+    )
     plt.savefig(fig_file, dpi=300)
 
 
@@ -509,7 +528,7 @@ def create_metric(fiber, method, reference, motion=False):
                 Status.FAIL,
             ],
         ),
-        tags=[method]
+        tags=[method],
     )
 
 
@@ -552,7 +571,11 @@ if __name__ == "__main__":
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
-        "-o", "--output-dir", type=str, default="/results/", help="Output directory"
+        "-o",
+        "--output-dir",
+        type=str,
+        default="/results/",
+        help="Output directory",
     )
     parser.add_argument(
         "--fiber_path",
@@ -635,9 +658,9 @@ if __name__ == "__main__":
         shutil.copytree(source_path, destination_path)
         # Update path to the NWB file within the copied directory
         nwb_file_path = destination_path
-        if os.path.isdir(os.path.join(args.fiber_path, "FIP")) or os.path.isdir(
-            os.path.join(args.fiber_path, "fib")
-        ):
+        if os.path.isdir(
+            os.path.join(args.fiber_path, "FIP")
+        ) or os.path.isdir(os.path.join(args.fiber_path, "fib")):
             # Print the path to ensure correctness
             logging.info(f"Processing NWB file: {nwb_file_path}")
 
@@ -655,7 +678,7 @@ if __name__ == "__main__":
                     session_name = session_name.split("FIP_")[1]
 
                 df_fip.insert(0, "session", session_name)
-                
+
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
                 df_pp_params = pd.DataFrame()
@@ -729,9 +752,9 @@ if __name__ == "__main__":
                                 pd.DataFrame(  # convert to #frames x #channels
                                     np.column_stack(
                                         [
-                                            df_1fiber[df_1fiber["channel"] == c][
-                                                "dFF"
-                                            ].values
+                                            df_1fiber[
+                                                df_1fiber["channel"] == c
+                                            ]["dFF"].values
                                             for c in channels
                                         ]
                                     ),
@@ -739,14 +762,17 @@ if __name__ == "__main__":
                                 )
                             )
                             # run motion correction
-                            df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(
-                                df_dff_iter,
-                                cutoff_freq_motion=args.cutoff_freq_motion,
-                                cutoff_freq_noise=args.cutoff_freq_noise,
+                            df_mc_iter, df_filt_iter, coeff, intercept = (
+                                motion_correct(
+                                    df_dff_iter,
+                                    cutoff_freq_motion=args.cutoff_freq_motion,
+                                    cutoff_freq_noise=args.cutoff_freq_noise,
+                                )
                             )
                             # convert back to a table with columns channel and signal
                             df_1fiber["motion_corrected"] = df_mc_iter.melt(
-                                var_name="channel", value_name="motion_corrected"
+                                var_name="channel",
+                                value_name="motion_corrected",
                             ).motion_corrected
                             df_1fiber["filtered"] = df_filt_iter.melt(
                                 var_name="channel", value_name="filtered"
@@ -755,8 +781,12 @@ if __name__ == "__main__":
 
                         with Pool(len(fiber_numbers)) as pool:
                             res = pool.map(process1fiber, fiber_numbers)
-                        df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
-                        df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
+                        df_fip_pp = pd.concat(
+                            [df_fip_pp] + [r[0] for r in res]
+                        )
+                        df_pp_params = pd.concat(
+                            [df_pp_params] + [r[1] for r in res]
+                        )
                         coeffs[pp_name] = [r[2] for r in res]
                         intercepts[pp_name] = [r[3] for r in res]
 
@@ -768,7 +798,8 @@ if __name__ == "__main__":
                     ):
                         # format the processed traces as dict for conversion to nwb
                         dict_from_df = nwb_utils.split_fip_traces(
-                            df_fip_pp[df_fip_pp.preprocess == method], signal=signal
+                            df_fip_pp[df_fip_pp.preprocess == method],
+                            signal=signal,
                         )
                         # and add them to the original nwb
                         nwb_file = nwb_utils.attach_dict_fip(
@@ -818,7 +849,9 @@ if __name__ == "__main__":
                     for fiber in fibers:
                         metrics.append(
                             create_metric(
-                                fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
+                                fiber,
+                                method,
+                                f"dff-qc/ROI{fiber}_dff-{method}.png",
                             )
                         )
                         metrics.append(
@@ -829,26 +862,36 @@ if __name__ == "__main__":
                                 True,
                             )
                         )
-                    #evaluations.append(create_evaluation(method, metrics))
+                    # evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
-                    qc = QualityControl(metrics=metrics, default_grouping=methods)
+                    qc = QualityControl(
+                        metrics=metrics, default_grouping=methods
+                    )
                     qc.write_standard_file(
-                        output_directory=os.path.join(args.output_dir, "dff-qc")
+                        output_directory=os.path.join(
+                            args.output_dir, "dff-qc"
+                        )
                     )
             process_name = (
                 ProcessName.DF_F_ESTIMATION
             )  # append DataProcess to processing.json
 
         else:
-            logging.info("NO Fiber but only Behavior data, preprocessing not needed")
+            logging.info(
+                "NO Fiber but only Behavior data, preprocessing not needed"
+            )
             os.mkdir(os.path.join(args.output_dir, "dff-qc"))
-            qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
+            qc_file_path = (
+                Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
+            )
             # Create an empty file
             with open(qc_file_path, "w") as file:
                 file.write(
                     "FIP data files are missing. This may be a behavior session."
                 )
-            process_name = None  # update processing.json w/o appending DataProcess
+            process_name = (
+                None  # update processing.json w/o appending DataProcess
+            )
 
         write_output_metadata(
             metadata=vars(args),
@@ -862,7 +905,12 @@ if __name__ == "__main__":
     src_directory = args.fiber_path
     # Iterate over all .json files in the source directory
     if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
+        for filename in [
+            "subject.json",
+            "procedures.json",
+            "session.json",
+            "rig.json",
+        ]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
                 dest_file = os.path.join(args.output_dir, filename)
