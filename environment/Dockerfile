@@ -14,12 +14,14 @@ ENV VERSION="12.0"
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
-    aind-data-schema>=1.2.0 \
+    aind-data-schema>2.0\
     aind-log-utils \
-    aind-metadata-upgrader \
     aind-qcportal-schema \
     hdmf-zarr \
     matplotlib \
     pynwb \
     scikit-learn \
     statsmodels
+
+COPY postInstall /
+RUN /postInstall
