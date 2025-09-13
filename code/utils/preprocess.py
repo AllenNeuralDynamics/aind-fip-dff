@@ -52,7 +52,7 @@ def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
 
 
 def tc_polyfit(
-    tc: np.ndarray, sampling_rate: float, degree: int
+    tc: np.ndarray, timestamps: np.ndarray, degree: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit with polynomial to remove bleaching artifact.
 
@@ -60,8 +60,8 @@ def tc_polyfit(
     ----------
     tc : np.ndarray
         Fiber photometry signal.
-    sampling_rate : float
-        Sampling rate of the signal in Hz.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     degree : int
         Degree of the polynomial to fit.
 
@@ -73,23 +73,20 @@ def tc_polyfit(
         - coefs : np.ndarray
             Optimal values for the parameters of the preprocessing.
     """
-    time_seconds = np.arange(len(tc)) / sampling_rate
-    coefs = np.polyfit(time_seconds, tc, deg=degree)
-    tc_poly = np.polyval(coefs, time_seconds)
+    coefs = np.polyfit(timestamps, tc, deg=degree)
+    tc_poly = np.polyval(coefs, timestamps)
     return tc_poly, coefs
 
 
-def tc_expfit(
-    tc: np.ndarray, sampling_rate: float = 20
-) -> tuple[np.ndarray, np.ndarray]:
+def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Fit with Biphasic exponential decay.
 
     Parameters
     ----------
     tc : np.ndarray
         Fiber photometry signal.
-    sampling_rate : float, optional
-        Sampling rate of the signal in Hz. Default is 20.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
 
     Returns
     -------
@@ -103,23 +100,23 @@ def tc_expfit(
     def func(x, a, b, c, d):
         return a * np.exp(-b * x) + c * np.exp(-d * x)
 
-    time_seconds = np.arange(len(tc)) / sampling_rate
     try:  # try first providing initial estimates
-        tc0 = tc[: int(sampling_rate)].mean()
+        tc0 = tc[:20].mean()
         popt, pcov = curve_fit(
             func,
-            time_seconds,
+            timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
             maxfev=10000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, time_seconds, tc, maxfev=10000)
-    tc_exp = func(time_seconds, *popt)
+        popt, pcov = curve_fit(func, timestamps, tc, maxfev=10000)
+    tc_exp = func(timestamps, *popt)
     return tc_exp, popt
 
 
 def baseline(
+    timestamps: np.ndarray,
     b_inf: float,
     b_slow: float = 0,
     b_fast: float = 0,
@@ -129,13 +126,13 @@ def baseline(
     t_fast: float = np.inf,
     t_rapid: float = np.inf,
     t_bright: float = np.inf,
-    T: int = 70000,
-    fs: float = 20,
 ) -> np.ndarray:
     """Baseline with Triphasic exponential decay (bleaching) x increasing saturating exponential (brightening).
 
     Parameters
     ----------
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     b_inf : float
         Asymptotic baseline value.
     b_slow : float, optional
@@ -154,26 +151,21 @@ def baseline(
         Time constant of the rapid decay component in seconds. Default is np.inf.
     t_bright : float, optional
         Time constant of the brightening component in seconds. Default is np.inf.
-    T : int, optional
-        Length of the trace in samples. Default is 70000.
-    fs : float, optional
-        Sampling rate in Hz. Default is 20.
 
     Returns
     -------
     np.ndarray
         Baseline signal.
     """
-    tmp = -np.arange(T)
     return (
         b_inf
         * (
             1
-            + b_slow * np.exp(tmp / (t_slow * fs))
-            + b_fast * np.exp(tmp / (t_fast * fs))
-            + b_rapid * np.exp(tmp / (t_rapid * fs))
+            + b_slow * np.exp(-timestamps / t_slow)
+            + b_fast * np.exp(-timestamps / t_fast)
+            + b_rapid * np.exp(-timestamps / t_rapid)
         )
-        * (1 - b_bright * np.exp(tmp / (t_bright * fs)))
+        * (1 - b_bright * np.exp(-timestamps / t_bright))
     )
 
 
@@ -228,7 +220,7 @@ def plot_fit(x, trace, fs=20, title=None, color="C0"):
 
 def tc_brightfit(
     trace: np.ndarray,
-    fs: float = 20,
+    timestamps: np.ndarray,
     rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
     M: RobustNorm | None = TukeyBiweight(3),
     maxiter: int = 10,
@@ -246,8 +238,8 @@ def tc_brightfit(
     ----------
     trace : np.ndarray
         Fiber photometry signal.
-    fs : float, optional
-        Sampling rate of the signal in Hz. Default is 20.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     rss_thresh : float or tuple of float or str, optional
         Factor(s) used for model selection. Default is (0.98, 0.995).
         If a tuple, then the order is (brightening, 3rd exponential).
@@ -304,7 +296,12 @@ def tc_brightfit(
         def objective(params_to_optimize):
             params[optimize_param] = params_to_optimize
             return np.sum(
-                weights * (trace_ds - baseline(*params, T=T // ds, fs=fs / ds)) ** 2
+                weights
+                * (
+                    trace_ds
+                    - baseline(timestamps[ds // 2::ds][: len(trace_ds)], *params)
+                )
+                ** 2
             )
 
         bounds = np.array(
@@ -324,7 +321,7 @@ def tc_brightfit(
             f"{res.message}"
         )
         if plot:
-            plot_fit(params, trace, fs)
+            plot_fit(params, trace, timestamps)
         return params, res.fun, res.success, res.message
 
     x0 = np.array(
@@ -374,7 +371,7 @@ def tc_brightfit(
     params[~np.isnan(x0)] = x0[~np.isnan(x0)]
     logging.info(
         f"Cost on original trace with params obtained on decimated trace is "
-        f"{np.sum((trace - baseline(*params, T=len(trace), fs=fs)) ** 2):.3f}"
+        f"{np.sum((trace - baseline(timestamps, *params)) ** 2):.3f}"
     )
     logging.info(
         f"{CBOLD}Fit of original trace with {'triple-exp' if include_3rd else 'double-exp'} "
@@ -385,7 +382,7 @@ def tc_brightfit(
     # robust fit down-weighting outliers using IRLS
     # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
     if maxiter > 0 and M is not None and cost > 0:
-        f0 = baseline(*x, T=T, fs=fs)
+        f0 = baseline(timestamps, *x)
         resid = trace - f0
         scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
         deviance = M(resid / scl).sum()
@@ -410,7 +407,7 @@ def tc_brightfit(
             weights = M.weights(resid / scl)
             x[np.isnan(x0)] = np.nan  # set params of excluded terms to nan
             x, cost, success, msg = optimize(trace, x, weights=weights, plot=False)
-            f0 = baseline(*x, T=T, fs=fs)
+            f0 = baseline(timestamps, *x)
             resid = trace - f0
             if update_scale is True:
                 scl = scale.mad(
@@ -428,14 +425,15 @@ def tc_brightfit(
             f"Cost: {cost:.3f}  Success: {CGREEN if success else CRED} {success} {CEND} {msg}"
         )
         if plot:
-            plot_fit(x, trace, fs)
+            plot_fit(x, trace, timestamps)
 
-    return baseline(*x, T=T, fs=fs), x
+    return baseline(timestamps, *x), x
 
 
 # dF/F total function
 def chunk_processing(
     tc: np.ndarray,
+    timestamps: np.ndarray,
     method: str = "poly",
     n_frame_to_cut: int = 100,
     kernel_size: int = 1,
@@ -450,6 +448,8 @@ def chunk_processing(
     ----------
     tc : np.ndarray
         Fiber photometry signal.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     method : str, optional
         Method to preprocess the data. Options: poly, exp, bright.
         Default is "poly".
@@ -479,14 +479,15 @@ def chunk_processing(
             The fitted baseline, including the filled beginning portion.
     """
     tc_cropped = tc_crop(tc, n_frame_to_cut)
+    ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
     try:
         if method == "poly":
-            tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
+            tc_fit, tc_coefs = tc_polyfit(tc_filtered, ts, degree)
         if method == "exp":
-            tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
+            tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
         if method == "bright":
-            tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate)
+            tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit

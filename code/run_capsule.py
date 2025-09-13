@@ -697,8 +697,10 @@ if __name__ == "__main__":
                                 ].copy()
 
                                 NM_values = df_fip_iter["signal"].values
+                                timestamps = df_fip_iter["time_fip"].values
+                                timestamps -= timestamps[0]
                                 NM_preprocessed, NM_fitting_params, NM_fit = (
-                                    chunk_processing(NM_values, method=pp_name)
+                                    chunk_processing(NM_values, timestamps, method=pp_name)
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
                                 df_fip_iter.loc[:, "preprocess"] = pp_name
