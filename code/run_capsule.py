@@ -33,7 +33,6 @@ from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
-from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
 from scipy.signal import butter, sosfiltfilt, welch
@@ -42,7 +41,7 @@ import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
 
 """
-This capsule takes in an NWB file containing raw fiber photometry data 
+This capsule takes in an NWB file containing raw fiber photometry data
 then process each channel (usually 4) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
@@ -362,7 +361,6 @@ def plot_motion_correction(
                 gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
             )
             if i < 2:
-                l = ("", "low-passed")[i]
                 if cut:
                     sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
                     noise_filt = lambda x: sosfiltfilt(sos, x)
@@ -466,7 +464,7 @@ def plot_motion_correction(
     plt.savefig(fig_file, dpi=300)
 
 
-def create_metric(fiber, method, reference, motion=False):
+def create_metric(fiber, method, reference, motion=False, value=None):
     """Create a QC metric for baseline or motion correction.
 
     Parameters
@@ -479,6 +477,8 @@ def create_metric(fiber, method, reference, motion=False):
         Path to the reference image for this metric.
     motion : bool, optional
         Whether this is a motion correction metric. Defaults to False.
+    value : float | None
+        Metric value.
 
     Returns
     -------
@@ -490,25 +490,15 @@ def create_metric(fiber, method, reference, motion=False):
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator="Pending review",
+                evaluator=(
+                    "Pending review" if (value is None or value < 10) else "Automatic"
+                ),
                 timestamp=dt.now(),
-                status=Status.PENDING,
+                status=Status.PENDING if (value is None or value < 10) else Status.FAIL,
             )
         ],
-        value=DropdownMetric(
-            options=[
-                "Preprocessing successful",
-                (
-                    "Motion correction failed"
-                    if motion
-                    else "Baseline correction (dF/F) failed"
-                ),
-            ],
-            status=[
-                Status.PASS,
-                Status.FAIL,
-            ],
-        ),
+        value=value,
+        description="Maximum regression coefficient" if motion else None,
     )
 
 
@@ -700,7 +690,9 @@ if __name__ == "__main__":
                                 timestamps = df_fip_iter["time_fip"].values
                                 timestamps -= timestamps[0]
                                 NM_preprocessed, NM_fitting_params, NM_fit = (
-                                    chunk_processing(NM_values, timestamps, method=pp_name)
+                                    chunk_processing(
+                                        NM_values, timestamps, method=pp_name
+                                    )
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
                                 df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -827,6 +819,11 @@ if __name__ == "__main__":
                                     method,
                                     f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
                                     True,
+                                    max(
+                                        v
+                                        for k, v in coeffs[method][int(fiber)].items()
+                                        if k != "Iso"
+                                    ),
                                 )
                             )
                         evaluations.append(create_evaluation(method, metrics))

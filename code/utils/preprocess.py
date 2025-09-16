@@ -223,7 +223,7 @@ def tc_brightfit(
     timestamps: np.ndarray,
     rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
     M: RobustNorm | None = TukeyBiweight(3),
-    maxiter: int = 10,
+    maxiter: int = 5,
     tol: float = 1e-3,
     update_scale: bool = True,
     skewness_factor: float = 1.0,
@@ -250,7 +250,7 @@ def tc_brightfit(
         The robust criterion function for downweighting outliers.
         Default is TukeyBiweight(3).
     maxiter : int, optional
-        The maximum number of IRLS iterations to try. Default is 10.
+        The maximum number of IRLS iterations to try. Default is 5.
         Has to be >0 for robust regression, 0 uses only OLS.
     tol : float, optional
         The convergence tolerance of the estimate. Default is 1e-3.
