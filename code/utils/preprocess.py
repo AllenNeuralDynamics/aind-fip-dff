@@ -299,7 +299,7 @@ def tc_brightfit(
                 weights
                 * (
                     trace_ds
-                    - baseline(timestamps[ds // 2::ds][: len(trace_ds)], *params)
+                    - baseline(timestamps[ds // 2 :: ds][: len(trace_ds)], *params)
                 )
                 ** 2
             )
@@ -510,12 +510,149 @@ def chunk_processing(
     return tc_dFoF, tc_params, tc_filling(tc_fit, n_frame_to_cut)
 
 
+class OneSidedHuber(RobustNorm):
+    """
+    One-sided Huber norm for robust regression.
+
+    This norm applies standard quadratic loss to residuals less than or equal to
+    the threshold value (z ≤ c), and a linear loss to residuals greater than the
+    threshold (z > c). This makes the estimator robust against positive outliers
+    while treating negative residuals as in ordinary least squares.
+
+    Parameters
+    ----------
+    c : float, optional
+        Threshold parameter that controls the transition from quadratic to linear
+        loss. Default is 1.345, which gives 95% efficiency under the normal
+        distribution (same as statsmodels HuberT).
+    """
+
+    def __init__(self, c=1.345):  # default same as statsmodels HuberT
+        self.c = c
+
+    def rho(self, z):
+        # Loss function
+        return np.where(z <= self.c, 0.5 * z**2, self.c * (z - 0.5 * self.c))
+
+    def psi(self, z):
+        # Influence function
+        return np.where(z <= self.c, z, self.c)
+
+    def weights(self, z):
+        # Weights for IRLS
+        return np.where(z <= self.c, 1.0, self.c / z)
+
+    def psi_deriv(self, z):
+        # Derivative of influence function
+        return np.where(z <= self.c, 1.0, 0.0)
+
+
+class AsymmetricTukeyBiweight(RobustNorm):
+    """
+    Asymmetric Tukey Biweight norm for robust regression.
+
+    Allows different tuning constants for positive and negative residuals,
+    providing more flexibility in handling asymmetric outliers.
+
+    Parameters
+    ----------
+    c_pos : float, optional
+        Tuning constant for positive residuals, default is 4.685
+    c_neg : float, optional
+        Tuning constant for negative residuals, default is 4.685
+    """
+
+    def __init__(self, c_pos=4.685, c_neg=4.685):
+        if c_pos <= 0 or c_neg <= 0:
+            raise ValueError("Tuning constants must be positive")
+        self.c_pos = c_pos
+        self.c_neg = c_neg
+        self.factor_pos = c_pos**2 / 6
+        self.factor_neg = c_neg**2 / 6
+
+    def rho(self, z):
+        z = np.asarray(z)
+        res = np.empty_like(z)
+        # Handle positive side
+        pos_mask = z > 0
+        if np.isinf(self.c_pos):
+            res[pos_mask] = 0.5 * z[pos_mask] ** 2
+        else:
+            pos_inside = pos_mask & (z <= self.c_pos)
+            pos_outside = z > self.c_pos
+            res[pos_inside] = self.factor_pos * (
+                1 - (1 - (z[pos_inside] / self.c_pos) ** 2) ** 3
+            )
+            res[pos_outside] = self.factor_pos
+        # Handle negative side
+        neg_mask = z <= 0
+        if np.isinf(self.c_neg):
+            res[neg_mask] = 0.5 * z[neg_mask] ** 2
+        else:
+            neg_inside = neg_mask & (z >= -self.c_neg)
+            neg_outside = z < -self.c_neg
+            res[neg_inside] = self.factor_neg * (
+                1 - (1 - (z[neg_inside] / self.c_neg) ** 2) ** 3
+            )
+            res[neg_outside] = self.factor_neg
+
+        return res
+
+    def psi(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        res[pos_inside] = z[pos_inside] * (1 - (z[pos_inside] / self.c_pos) ** 2) ** 2
+        res[neg_inside] = z[neg_inside] * (1 - (z[neg_inside] / self.c_neg) ** 2) ** 2
+        return res
+
+    def weights(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        res[pos_inside] = (1 - (z[pos_inside] / self.c_pos) ** 2) ** 2
+        res[neg_inside] = (1 - (z[neg_inside] / self.c_neg) ** 2) ** 2
+        return res
+
+    def psi_deriv(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        t_pos = z[pos_inside] / self.c_pos
+        t_pos_sq = t_pos**2
+        res[pos_inside] = (1 - t_pos_sq) ** 2 - 4 * t_pos_sq * (
+            1 - t_pos_sq
+        ) / self.c_pos**2
+        t_neg = z[neg_inside] / self.c_neg
+        t_neg_sq = t_neg**2
+        res[neg_inside] = (1 - t_neg_sq) ** 2 - 4 * t_neg_sq * (
+            1 - t_neg_sq
+        ) / self.c_neg**2
+        return res
+
+
+class OneSidedTukeyBiweight(AsymmetricTukeyBiweight):
+    """
+    A one-sided Tukey Biweight norm that applies quadratic loss to negative
+    residuals and Tukey biweight loss to positive residuals.
+
+    This is implemented as a special case of AsymmetricTukeyBiweight
+    with c_neg=np.inf, which simplifies to quadratic loss for negative values.
+    """
+
+    def __init__(self, c=4.685):
+        super().__init__(c_pos=c, c_neg=np.inf)
+
+
 def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
-    M: RobustNorm = TukeyBiweight(3),
+    M: RobustNorm = AsymmetricTukeyBiweight(2),
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
 
@@ -533,9 +670,9 @@ def motion_correct(
         Cutoff frequency of the lowpass Butterworth filter
         that's applied to filter out noise, in Hz.
         Default is 3.
-    M : statsmodels.robust.norms.RobustNorm, optional
+    M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
-        Default is TukeyBiweight(3).
+        Default is AsymmetricTukeyBiweight(2).
 
     Returns
     -------
