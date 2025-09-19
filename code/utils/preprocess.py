@@ -685,6 +685,8 @@ def motion_correct(
             The regression coefficients.
         - intercepts : dict
             The regression intercepts.
+        - weights : dict
+            The final regression weights.
     """
     if np.isnan(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
@@ -696,10 +698,13 @@ def motion_correct(
     no_nans = ~np.isnan(dff_filt.sum(1))
     no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
     if M is not None:
-        coef = np.array(
-            [RLM(d, add_constant(motion), M=M).fit().params for d in dff_filt[no_nans]]
-        )
-        intercept = coef[:, 0]
+        coef = np.empty((no_nans.sum(), 2))
+        w = np.empty((no_nans.sum(), len(motion)))
+        for i, d in enumerate(dff_filt[no_nans]):
+            model = RLM(d, add_constant(motion), M=M).fit()
+            coef[i] = model.params
+            w[i] = model.weights
+        intercept = np.array(coef)[:, 0]
         coef = np.maximum(coef[:, 1:], 0)
     else:
         lr = LinearRegression(fit_intercept=True, positive=True).fit(
@@ -707,6 +712,11 @@ def motion_correct(
         )
         coef = lr.coef_
         intercept = lr.intercept_
+        w = np.ones((no_nans.sum(), len(motion)))
+    weights = np.full_like(dff_filt, np.nan)
+    weights[no_nans] = w
+    weights[idx_iso] = 1
+    weights = {ch: w for ch, w in zip(dff.columns, weights)}
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
     motions -= motions.mean(axis=1, keepdims=True)
@@ -724,4 +734,4 @@ def motion_correct(
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
         dff_mc = dff_mc.apply(lambda x: sosfiltfilt(sos, x))
-    return dff_mc, dff_filt, coef, intercept
+    return dff_mc, dff_filt, coef, intercept, weights
