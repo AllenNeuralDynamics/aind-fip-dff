@@ -309,7 +309,7 @@ def plot_motion_correction(
     """
     cut = cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2
     # more color-blind-friendly g, b, and r
-    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00", "filtered": "#F0E442"} 
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00", "filtered": "#F0E442"}
     rows = 3 * len(channels) - 3
     fig = plt.figure(figsize=(15, rows))
     gs = GridSpec(rows, 3, width_ratios=[11, 1, 3.4])
@@ -395,9 +395,9 @@ def plot_motion_correction(
                     )
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
-                    plot_psd(ax2.twinx(), df_iso["filtered"], colors["filtered"], cut).tick_params(
-                        axis="y", which="both", colors=colors["filtered"]
-                    )
+                    plot_psd(
+                        ax2.twinx(), df_iso["filtered"], colors["filtered"], cut
+                    ).tick_params(axis="y", which="both", colors=colors["filtered"])
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
@@ -425,12 +425,12 @@ def plot_motion_correction(
         sc = ax.scatter(
             df_iso["filtered"] * 100,
             df["filtered"] * 100,
-            s=0.02 + 0.08*weight,
+            s=0.02 + 0.08 * weight,
             c=weight,
             label="low-passed",
             alpha=0.5,
-        )        
-        plt.colorbar(sc, fraction=0.05, pad=0.03).set_label('IRLS weight')
+        )
+        plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
         ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
         ax.set_ylim(y)
@@ -692,10 +692,11 @@ if __name__ == "__main__":
 
                                 NM_values = df_fip_iter["signal"].values
                                 timestamps = df_fip_iter["time_fip"].values
-                                timestamps -= timestamps[0]
                                 NM_preprocessed, NM_fitting_params, NM_fit = (
                                     chunk_processing(
-                                        NM_values, timestamps, method=pp_name
+                                        NM_values,
+                                        timestamps - timestamps[0],
+                                        method=pp_name,
                                     )
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
@@ -736,10 +737,12 @@ if __name__ == "__main__":
                                 )
                             )
                             # run motion correction
-                            df_mc_iter, df_filt_iter, coeff, intercept, weight = motion_correct(
-                                df_dff_iter,
-                                cutoff_freq_motion=args.cutoff_freq_motion,
-                                cutoff_freq_noise=args.cutoff_freq_noise,
+                            df_mc_iter, df_filt_iter, coeff, intercept, weight = (
+                                motion_correct(
+                                    df_dff_iter,
+                                    cutoff_freq_motion=args.cutoff_freq_motion,
+                                    cutoff_freq_noise=args.cutoff_freq_noise,
+                                )
                             )
                             # convert back to a table with columns channel and signal
                             df_1fiber["motion_corrected"] = df_mc_iter.melt(
