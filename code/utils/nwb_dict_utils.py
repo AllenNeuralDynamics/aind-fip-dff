@@ -125,7 +125,7 @@ def nwb_to_dataframe(nwbfile: pynwb.NWBFile) -> pd.DataFrame:
         - signal: raw signal values
     """
     # Define the list of required substrings
-    required_substrings = ["R_", "G_", "Iso_"]
+    required_substrings = ["R_", "G_", "Iso_", "Signal_"]
 
     data_dict = {}
     timestamps = {}
