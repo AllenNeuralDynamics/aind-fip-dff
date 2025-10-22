@@ -33,7 +33,6 @@ from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
-from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
 from scipy.signal import butter, sosfiltfilt, welch
@@ -42,7 +41,7 @@ import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
 
 """
-This capsule takes in an NWB file containing raw fiber photometry data 
+This capsule takes in an NWB file containing raw fiber photometry data
 then process each channel (usually 4) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
@@ -192,7 +191,7 @@ def plot_raw_dff_mc(
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
-    plt.savefig(fig_file, dpi=300)
+    plt.savefig(fig_file, dpi=200)
     return fig_file
 
 
@@ -258,7 +257,7 @@ def plot_dff(
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
-    plt.savefig(fig_file, dpi=300)
+    plt.savefig(fig_file, dpi=200)
 
 
 def plot_motion_correction(
@@ -269,6 +268,7 @@ def plot_motion_correction(
     fig_path: str,
     coeffs: list[dict],
     intercepts: list[dict],
+    weights: list[dict],
     cutoff_freq_motion: float,
     cutoff_freq_noise: float,
     fs: float = 20,
@@ -291,6 +291,8 @@ def plot_motion_correction(
         The regression coefficients for each method/fiber/channel combination.
     intercepts : dict of list of dict
         The regression intercepts for each method/fiber/channel combination.
+    weights : dict of list of dict
+        The regression weights for each method/fiber/channel combination.
     cutoff_freq_motion : float
         Cutoff frequency of the lowpass Butterworth filter that's only
         applied for estimating the regression coefficient, in Hz.
@@ -306,10 +308,11 @@ def plot_motion_correction(
         The function saves the plot to the specified fig_path.
     """
     cut = cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2
-    colors = {"G": "C2", "Iso": "C0", "R": "C3"}
+    # more color-blind-friendly g, b, and r
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00", "filtered": "#F0E442"}
     rows = 3 * len(channels) - 3
     fig = plt.figure(figsize=(15, rows))
-    gs = GridSpec(rows, 3, width_ratios=[11, 1, 3])
+    gs = GridSpec(rows, 3, width_ratios=[11, 1, 3.4])
 
     def plot_psd(ax, data, color, cut=False):
         """Helper function to create Power Spectral Density plots.
@@ -353,6 +356,9 @@ def plot_motion_correction(
             & (df_fip_pp.preprocess == method)
         ]
         color = colors.get(ch, f"C{c}")
+        coef = coeffs[method][int(fiber)][ch]
+        intercept = intercepts[method][int(fiber)][ch]
+        weight = weights[method][int(fiber)][ch]
         # Create subplots in the left and center column (sharing x-axis)
         for i in range(3):
             ax = fig.add_subplot(
@@ -362,7 +368,6 @@ def plot_motion_correction(
                 gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
             )
             if i < 2:
-                l = ("", "low-passed")[i]
                 if cut:
                     sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
                     noise_filt = lambda x: sosfiltfilt(sos, x)
@@ -377,29 +382,27 @@ def plot_motion_correction(
                 plot_psd(
                     ax2, df["dFF"] if i == 0 else df["filtered"], color, i == 1 and cut
                 )
-                coef = coeffs[method][int(fiber)][ch]
-                intercept = intercepts[method][int(fiber)][ch]
                 if i == 0:
                     ax.plot(
                         t,
                         (intercept + noise_filt(df_iso["dFF"]) * coef) * 100,
                         c=colors["Iso"],
                         label="regressed Iso",
-                        alpha=0.5,
+                        alpha=0.8,
                     )
                     plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"]).tick_params(
                         axis="y", which="both", colors=colors["Iso"]
                     )
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
-                    plot_psd(ax2.twinx(), df_iso["filtered"], "C1", cut).tick_params(
-                        axis="y", which="both", colors="C1"
-                    )
+                    plot_psd(
+                        ax2.twinx(), df_iso["filtered"], colors["filtered"], cut
+                    ).tick_params(axis="y", which="both", colors=colors["filtered"])
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
-                    c="C1",
-                    label="low-passed Iso",
+                    c=colors["filtered"],
+                    label="low-passed Iso (scaled)",
                 )
             else:
                 ax.plot(
@@ -419,18 +422,17 @@ def plot_motion_correction(
         ax = fig.add_subplot(
             gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        ax.scatter(
-            df_iso["dFF"] * 100, df["dFF"] * 100, s=0.1, c="C0", label="original"
-        )
-        ax.scatter(
+        sc = ax.scatter(
             df_iso["filtered"] * 100,
             df["filtered"] * 100,
-            s=0.1,
-            c="C1",
+            s=0.02 + 0.08 * weight,
+            c=weight,
             label="low-passed",
+            alpha=0.5,
         )
+        plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
-        ax.plot(x, intercept * 100 + coef * x, c="r", label="regression")
+        ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
         ax.set_ylim(y)
         ax.legend(
             loc="lower right", markerscale=12, borderpad=0.05
@@ -459,14 +461,14 @@ def plot_motion_correction(
     plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
     for ax in center_axes:
         pos = ax.get_position()
-        ax.set_position([pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height])
+        ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.015, pos.height])
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
-    plt.savefig(fig_file, dpi=300)
+    plt.savefig(fig_file, dpi=200)
 
 
-def create_metric(fiber, method, reference, motion=False):
+def create_metric(fiber, method, reference, motion=False, value=None):
     """Create a QC metric for baseline or motion correction.
 
     Parameters
@@ -479,6 +481,8 @@ def create_metric(fiber, method, reference, motion=False):
         Path to the reference image for this metric.
     motion : bool, optional
         Whether this is a motion correction metric. Defaults to False.
+    value : float | None
+        Metric value.
 
     Returns
     -------
@@ -490,25 +494,15 @@ def create_metric(fiber, method, reference, motion=False):
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator="Pending review",
+                evaluator=(
+                    "Pending review" if (value is None or value < 10) else "Automatic"
+                ),
                 timestamp=dt.now(),
-                status=Status.PENDING,
+                status=Status.PENDING if (value is None or value < 10) else Status.FAIL,
             )
         ],
-        value=DropdownMetric(
-            options=[
-                "Preprocessing successful",
-                (
-                    "Motion correction failed"
-                    if motion
-                    else "Baseline correction (dF/F) failed"
-                ),
-            ],
-            status=[
-                Status.PASS,
-                Status.FAIL,
-            ],
-        ),
+        value=value,
+        description="Maximum regression coefficient" if motion else None,
     )
 
 
@@ -658,7 +652,7 @@ if __name__ == "__main__":
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
                 df_pp_params = pd.DataFrame()
-                coeffs, intercepts = {}, {}
+                coeffs, intercepts, weights = {}, {}, {}
                 fiber_numbers = df_fip["fiber_number"].unique()
                 channels = df_fip["channel"].unique()
                 channels = channels[~pd.isna(channels)]
@@ -697,8 +691,13 @@ if __name__ == "__main__":
                                 ].copy()
 
                                 NM_values = df_fip_iter["signal"].values
+                                timestamps = df_fip_iter["time_fip"].values
                                 NM_preprocessed, NM_fitting_params, NM_fit = (
-                                    chunk_processing(NM_values, method=pp_name)
+                                    chunk_processing(
+                                        NM_values,
+                                        timestamps - timestamps[0],
+                                        method=pp_name,
+                                    )
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
                                 df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -738,10 +737,12 @@ if __name__ == "__main__":
                                 )
                             )
                             # run motion correction
-                            df_mc_iter, df_filt_iter, coeff, intercept = motion_correct(
-                                df_dff_iter,
-                                cutoff_freq_motion=args.cutoff_freq_motion,
-                                cutoff_freq_noise=args.cutoff_freq_noise,
+                            df_mc_iter, df_filt_iter, coeff, intercept, weight = (
+                                motion_correct(
+                                    df_dff_iter,
+                                    cutoff_freq_motion=args.cutoff_freq_motion,
+                                    cutoff_freq_noise=args.cutoff_freq_noise,
+                                )
                             )
                             # convert back to a table with columns channel and signal
                             df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -750,7 +751,7 @@ if __name__ == "__main__":
                             df_1fiber["filtered"] = df_filt_iter.melt(
                                 var_name="channel", value_name="filtered"
                             ).filtered
-                            return df_1fiber, df_pp_params, coeff, intercept
+                            return df_1fiber, df_pp_params, coeff, intercept, weight
 
                         with Pool(len(fiber_numbers)) as pool:
                             res = pool.map(process1fiber, fiber_numbers)
@@ -758,6 +759,7 @@ if __name__ == "__main__":
                         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
                         coeffs[pp_name] = [r[2] for r in res]
                         intercepts[pp_name] = [r[3] for r in res]
+                        weights[pp_name] = [r[4] for r in res]
 
                 methods = df_fip_pp.preprocess.unique()
                 for method in methods:
@@ -803,6 +805,7 @@ if __name__ == "__main__":
                             os.path.join(args.output_dir, "dff-qc"),
                             coeffs,
                             intercepts,
+                            weights,
                             args.cutoff_freq_motion,
                             args.cutoff_freq_noise,
                         )
@@ -825,6 +828,11 @@ if __name__ == "__main__":
                                     method,
                                     f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
                                     True,
+                                    max(
+                                        v
+                                        for k, v in coeffs[method][int(fiber)].items()
+                                        if k != "Iso"
+                                    ),
                                 )
                             )
                         evaluations.append(create_evaluation(method, metrics))
