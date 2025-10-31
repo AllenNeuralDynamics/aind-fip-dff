@@ -51,6 +51,81 @@ def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
     return np.append(np.ones([n_frame_to_cut, 1]) * tc[0], tc)
 
 
+def triple_exp(x, params):
+    """
+    Triple exponential function: a * exp(-b * x) + c * exp(-d * x) + e * exp(-f * x) + g
+    """
+    return (
+        params[0] * np.exp(-params[1] * x) +
+        params[2] * np.exp(-params[3] * x) +
+        params[4] * np.exp(-params[5] * x) +
+        params[6]
+    )
+
+
+def tc_triexpfit(tc: np.ndarray, sampling_rate: float, xtol=1e-8):
+    """Perform a triple exponential fit to the given data.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Fiber photometry signal.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
+
+    Returns
+    -------
+    tuple
+        - tc_triexp : np.ndarray
+            Fitted baseline.
+        - popt : np.ndarray
+            Optimal values for the parameters of the preprocessing.
+    """
+    # Low-pass filter
+    sos = butter(2, 0.01, btype="low", fs=sampling_rate, output="sos")
+    tc = sosfiltfilt(sos, tc)
+    
+    # Calculate initial parameter estimates
+    fs = int(sampling_rate)  # shorthand
+    # Basic statistics for initial values
+    start_mean = np.mean(tc[:fs])
+    end_mean = np.mean(tc[-60*fs:])
+    late_10min = np.mean(tc[-10*60*fs:-10*60*fs + 10*fs])
+    late_5min = np.mean(tc[-5*60*fs:-5*60*fs + 10*fs])
+    # intercept
+    p0 = np.zeros(7)
+    p0[6] = end_mean
+    # Fastest decay parameters
+    p0[0] = start_mean - np.mean(tc[2*60*fs:2*60*fs + fs])
+    p0[1] = -np.log(1 - (start_mean - np.mean(tc[60*fs:61*fs]))/p0[0])/(60*fs)
+    # Slowest decay parameters
+    p0[5] = np.log((late_10min - end_mean)/(late_5min - end_mean))/(5*60*fs)
+    p0[4] = (late_10min - end_mean) / np.exp(p0[5] * (-10*60*fs))
+    # Middle decay parameters
+    p0[2] = start_mean - end_mean - p0[4]
+    p0[3] = (p0[1] + p0[5])/2
+
+    # Clean up invalid values
+    p0 = np.maximum(0, np.nan_to_num(p0))
+    
+    # Time scaling for numerical stability
+    time_scaling = 0.0001
+    p0[[1, 3, 5]] /= time_scaling
+    x = time_scaling * np.arange(len(tc)) / sampling_rate
+    
+    # Fit curve
+    popt, _ = curve_fit(
+        lambda x, a, b, c, d, e, f, g: triple_exp(x, [a, b, c, d, e, f, g]), 
+        x, tc, p0=p0, maxfev=10000, bounds=(0, np.inf), xtol=xtol
+    )
+    tc_triexp = triple_exp(x, popt)
+    
+    # Scale rates back
+    popt[[1, 3, 5]] *= time_scaling
+    
+    return tc_triexp, popt
+
+
 def tc_polyfit(
     tc: np.ndarray, timestamps: np.ndarray, degree: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -484,8 +559,13 @@ def chunk_processing(
     try:
         if method == "poly":
             tc_fit, tc_coefs = tc_polyfit(tc_filtered, ts, degree)
-        if method == "exp":
+        elif method == "exp":
             tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
+        elif method == "tri-exp":
+            try:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, sampling_rate, xtol=1e-8)
+            except:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, sampling_rate, xtol=1e-6)
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
             tc_dFoF = tc_filtered / tc_fit - 1
@@ -502,7 +582,7 @@ def chunk_processing(
         tc_dFoF = np.nan * tc
         tc_params = {
             i_coef: np.nan
-            for i_coef in range({"poly": 5, "exp": 4, "bright": 9}[method])
+            for i_coef in range({"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method])
         }
     tc_qualitymetrics = {"QC_metric": np.nan}
     tc_params.update(tc_qualitymetrics)

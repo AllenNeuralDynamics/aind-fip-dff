@@ -561,6 +561,7 @@ if __name__ == "__main__":
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
+            "  'tri-exp': Fit with triphasic exponential using OLS\n"
             "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
             "[Increasing saturating exponential (brightening)] using iteratively "
             "reweighted least squares (IRLS)"
@@ -657,7 +658,7 @@ if __name__ == "__main__":
                 channels = df_fip["channel"].unique()
                 channels = channels[~pd.isna(channels)]
                 for pp_name in args.dff_methods:
-                    if pp_name in ["poly", "exp", "bright"]:
+                    if pp_name in ["poly", "exp", "tri-exp", "bright"]:
 
                         def process1fiber(
                             fiber_number: str,
