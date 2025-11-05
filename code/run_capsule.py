@@ -716,8 +716,9 @@ if __name__ == "__main__":
                                 )
                                 return df_fip_iter, df_pp_params_ses
 
-                            with ThreadPool(len(channels)) as tp:
-                                res = tp.map(process1channel, channels)
+                            # with ThreadPool(len(channels)) as tp:
+                            #     res = tp.map(process1channel, channels)
+                            res = list(map(process1channel, channels))
                             df_1fiber = pd.concat(
                                 [r[0] for r in res], ignore_index=True
                             )
@@ -754,8 +755,9 @@ if __name__ == "__main__":
                             ).filtered
                             return df_1fiber, df_pp_params, coeff, intercept, weight
 
-                        with Pool(len(fiber_numbers)) as pool:
-                            res = pool.map(process1fiber, fiber_numbers)
+                        # with Pool(len(fiber_numbers)) as pool:
+                        #     res = pool.map(process1fiber, fiber_numbers)
+                        res = list(map(process1fiber, fiber_numbers))
                         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
                         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
                         coeffs[pp_name] = [r[2] for r in res]

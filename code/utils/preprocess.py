@@ -64,7 +64,7 @@ def triple_exp(x, params):
 
 
 def tc_triexpfit(
-    tc: np.ndarray, timestamps: np.ndarray, sampling_rate: float, xtol=1e-8
+    tc: np.ndarray, timestamps: np.ndarray, sampling_rate: float, xtol: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Perform a triple exponential fit to the given data.
 
@@ -100,37 +100,40 @@ def tc_triexpfit(
     # Fastest decay parameters
     p0[0] = start_mean - np.mean(tc[2 * 60 * fs : 2 * 60 * fs + fs])
     tmp = 1 - (start_mean - np.mean(tc[60 * fs : 61 * fs])) / p0[0]
-    p0[1] = 0.02 if tmp <= 0 else -np.log(tmp) / 60
+    p0[1] = 0.05 if tmp <= 0 else -np.log(tmp) / 60
     # Slowest decay parameters
     tmp = (late_10min - end_mean) / (late_5min - end_mean)
-    p0[5] = 1 / 3600 if tmp <= 0 else np.log(tmp) / (5 * 60)
+    p0[5] = 1 / 3600 if tmp <= 1 else np.log(tmp) / (5 * 60)
     p0[4] = (late_10min - end_mean) / np.exp(p0[5] * (-10 * 60))
     # Middle decay parameters
     p0[2] = start_mean - end_mean - p0[4]
     p0[3] = (p0[1] + p0[5]) / 2
-
     # Clean up invalid values
     p0 = np.maximum(0, np.nan_to_num(p0))
-
-    # Time scaling for numerical stability
-    time_scaling = 0.0001
-    p0[[1, 3, 5]] /= time_scaling
-    x = time_scaling * timestamps
 
     # Fit curve
     popt, _ = curve_fit(
         lambda x, a, b, c, d, e, f, g: triple_exp(x, [a, b, c, d, e, f, g]),
-        x,
+        timestamps,
         tc,
         p0=p0,
         maxfev=10000,
         bounds=(0, np.inf),
         xtol=xtol,
+        x_scale=[1, 0.0001, 1, 0.0001, 1, 0.0001, 1],
     )
-    tc_triexp = triple_exp(x, popt)
+    tc_triexp = triple_exp(timestamps, popt)
 
-    # Scale rates back
-    popt[[1, 3, 5]] *= time_scaling
+    logging.info(f"Initial params: {[f'{x:.5g}' for x in p0]}")
+    logging.info(f"Optimal params: {[f'{x:.5g}' for x in popt]}")
+    # Calculate goodness-of-fit metrics
+    ss_res = np.sum((tc - tc_triexp) ** 2)
+    ss_tot = np.sum((tc - np.mean(tc)) ** 2)
+    logging.info(
+        f"R-squared: {1 - (ss_res / ss_tot):.5f}  "
+        f"SS_res: {ss_res:.5g}  "
+        f"SS_tot: {ss_tot:.5g}"
+    )
 
     return tc_triexp, popt
 
@@ -571,7 +574,10 @@ def chunk_processing(
         elif method == "exp":
             tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
         elif method == "tri-exp":
-            tc_fit, tc_coefs = tc_triexpfit(tc_filtered, ts, sampling_rate, xtol=1e-6)
+            try:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, ts, sampling_rate, xtol=1e-5)
+            except RuntimeError:
+                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, ts, sampling_rate, xtol=1e-4)
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
             tc_dFoF = tc_filtered / tc_fit - 1
@@ -585,7 +591,8 @@ def chunk_processing(
         logging.warning(
             f"Processing with method {method} failed with Error {e}. Setting dF/F to nans."
         )
-        tc_dFoF = np.nan * tc
+        tc_dFoF = np.full(tc.shape, np.nan)
+        tc_fit = np.full(tc_filtered.shape, np.nan)
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
@@ -741,7 +748,7 @@ def motion_correct(
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
     M: RobustNorm = AsymmetricTukeyBiweight(2),
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
 
     Parameters
@@ -778,7 +785,7 @@ def motion_correct(
     """
     if np.isnan(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
-        return np.nan * dff, np.nan * dff, c, c
+        return np.nan * dff, np.nan * dff, c, c, c
     sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     idx_iso = dff.columns.get_loc("Iso")
