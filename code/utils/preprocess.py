@@ -575,9 +575,13 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
         elif method == "tri-exp":
             try:
-                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, ts, sampling_rate, xtol=1e-5)
+                tc_fit, tc_coefs = tc_triexpfit(
+                    tc_filtered, ts, sampling_rate, xtol=1e-5
+                )
             except RuntimeError:
-                tc_fit, tc_coefs = tc_triexpfit(tc_filtered, ts, sampling_rate, xtol=1e-4)
+                tc_fit, tc_coefs = tc_triexpfit(
+                    tc_filtered, ts, sampling_rate, xtol=1e-4
+                )
         if method == "bright":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
             tc_dFoF = tc_filtered / tc_fit - 1

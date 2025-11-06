@@ -468,7 +468,7 @@ def plot_motion_correction(
     plt.savefig(fig_file, dpi=200)
 
 
-def create_metric(fiber, method, reference, motion=False, value=None):
+def create_metric(fiber, method, reference, value, motion=False):
     """Create a QC metric for baseline or motion correction.
 
     Parameters
@@ -479,30 +479,43 @@ def create_metric(fiber, method, reference, motion=False, value=None):
         The preprocessing method used.
     reference : str
         Path to the reference image for this metric.
+    value : float | dict
+        Metric value.
     motion : bool, optional
         Whether this is a motion correction metric. Defaults to False.
-    value : float | None
-        Metric value.
 
     Returns
     -------
     QCMetric
         The created quality control metric.
     """
+    baselines = {
+        "poly": "a*t^4 + b*t^3 + c*t^2 + d*t + e",
+        "exp": "a*exp(-b*t) + c*exp(-d*t)",
+        "tri-exp": "a*exp(-b*t) + c*exp(-d*t) + e*exp(-f*t) + g",
+        "bright": (
+            "b_inf * (1 + b_slow*exp(-t/t_slow) + b_fast*exp(-t/t_fast) + "
+            "b_rapid*exp(-t/t_rapid)) * (1 - b_bright*exp(-t/t_bright))"
+        ),
+    }
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
                 evaluator=(
-                    "Pending review" if (value is None or value < 10) else "Automatic"
+                    "Automatic" if (motion and value > 10) else "Pending review"
                 ),
                 timestamp=dt.now(),
-                status=Status.PENDING if (value is None or value < 10) else Status.FAIL,
+                status=Status.FAIL if (motion and value > 10) else Status.PENDING,
             )
         ],
         value=value,
-        description="Maximum regression coefficient" if motion else None,
+        description=(
+            "Maximum regression coefficient"
+            if motion
+            else "Baseline F_0(t) fit with  " + baselines[method]
+        ),
     )
 
 
@@ -584,6 +597,11 @@ if __name__ == "__main__":
             "Cutoff frequency of the lowpass Butterworth filter "
             "that's applied to filter out noise, in Hz."
         ),
+    )
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="Do not use multiple processes and threads to parallelize fibers and channels.",
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
@@ -716,9 +734,11 @@ if __name__ == "__main__":
                                 )
                                 return df_fip_iter, df_pp_params_ses
 
-                            # with ThreadPool(len(channels)) as tp:
-                            #     res = tp.map(process1channel, channels)
-                            res = list(map(process1channel, channels))
+                            if args.serial:
+                                res = list(map(process1channel, channels))
+                            else:
+                                with ThreadPool(len(channels)) as tp:
+                                    res = tp.map(process1channel, channels)
                             df_1fiber = pd.concat(
                                 [r[0] for r in res], ignore_index=True
                             )
@@ -755,9 +775,11 @@ if __name__ == "__main__":
                             ).filtered
                             return df_1fiber, df_pp_params, coeff, intercept, weight
 
-                        # with Pool(len(fiber_numbers)) as pool:
-                        #     res = pool.map(process1fiber, fiber_numbers)
-                        res = list(map(process1fiber, fiber_numbers))
+                        if args.serial:
+                            res = list(map(process1fiber, fiber_numbers))
+                        else:
+                            with Pool(len(fiber_numbers)) as pool:
+                                res = pool.map(process1fiber, fiber_numbers)
                         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
                         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
                         coeffs[pp_name] = [r[2] for r in res]
@@ -788,19 +810,15 @@ if __name__ == "__main__":
                     channels = df_fip_pp["channel"].unique()
                     fibers = df_fip_pp["fiber_number"].unique()
 
-                    def foo(a):
-                        fiber, method = a
-                        return plot_dff(
+                    def plot_both(fiber, method):
+                        plot_dff(
                             df_fip_pp,
                             fiber,
                             channels,
                             method,
                             os.path.join(args.output_dir, "dff-qc"),
                         )
-
-                    def bar(a):
-                        fiber, method = a
-                        return plot_motion_correction(
+                        plot_motion_correction(
                             df_fip_pp,
                             fiber,
                             channels,
@@ -813,16 +831,57 @@ if __name__ == "__main__":
                             args.cutoff_freq_noise,
                         )
 
-                    with Pool(len(fibers)) as pool:
-                        pool.map(foo, itertools.product(fibers, methods))
-                        pool.map(bar, itertools.product(fibers, methods))
+                    def params_as_dict(fiber, method):
+                        df = df_pp_params[
+                            (df_pp_params["fiber_number"] == str(fiber))
+                            & (df_pp_params["preprocess"] == method)
+                        ][
+                            ["channel"]
+                            + list(
+                                range(
+                                    {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[
+                                        method
+                                    ]
+                                )
+                            )
+                        ]
+                        param_names = {
+                            "poly": [*"abcde"],
+                            "exp": [*"abcd"],
+                            "tri-exp": [*"abcdefg"],
+                            "bright": [
+                                "b_inf",
+                                "b_slow",
+                                "b_fast",
+                                "b_rapid",
+                                "b_bright",
+                                "t_slow",
+                                "t_fast",
+                                "t_rapid",
+                                "t_bright",
+                            ],
+                        }
+                        df.columns = ["channel"] + param_names[method]
+                        return df.to_dict("list")
+
+                    tasks = list(itertools.product(fibers, methods))
+                    if args.serial:
+                        for fiber, method in tasks:
+                            plot_both(fiber, method)
+                    else:
+                        with Pool(len(fibers)) as pool:
+                            pool.starmap(plot_both, tasks)
+
                     evaluations = []
                     for method in methods:
                         metrics = []
                         for fiber in fibers:
                             metrics.append(
                                 create_metric(
-                                    fiber, method, f"dff-qc/ROI{fiber}_dff-{method}.png"
+                                    fiber,
+                                    method,
+                                    f"dff-qc/ROI{fiber}_dff-{method}.png",
+                                    params_as_dict(fiber, method),
                                 )
                             )
                             metrics.append(
@@ -830,12 +889,12 @@ if __name__ == "__main__":
                                     fiber,
                                     method,
                                     f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                                    True,
                                     max(
                                         v
                                         for k, v in coeffs[method][int(fiber)].items()
                                         if k != "Iso"
                                     ),
+                                    True,
                                 )
                             )
                         evaluations.append(create_evaluation(method, metrics))
