@@ -202,6 +202,7 @@ def plot_dff(
     channels: list[str],
     method: str,
     fig_path: str,
+    n_frame_to_cut: int = 100,
 ):
     """Plot raw and dF/F photometry traces for multiple channels.
 
@@ -217,6 +218,9 @@ def plot_dff(
         The name of the preprocessing method used ("poly", "exp", or "bright").
     fig_path : str
         The path where the generated plot will be saved.
+    n_frame_to_cut : int, optional
+        Frames trimmed from the start and not used to set the raw plot’s y-range.
+        Default is 100.
     """
     fig, ax = plt.subplots(
         2 * len(channels), 1, figsize=(12, 2 * len(channels)), sharex=True
@@ -243,10 +247,12 @@ def plot_dff(
                 )
                 if i == 0:
                     a.plot(t, df.F0, label=r"fitted F$_0$", c="#F0E442")
+                    mi, ma = min(df.signal[n_frame_to_cut:]), max(df.signal[n_frame_to_cut:])
+                    a.set_ylim(mi - .06 * (ma - mi), ma + .14 * (ma - mi))
                 else:
                     a.axhline(0, c="k", ls="--")
                 a.legend(
-                    loc=(0.01, 0.77), ncol=2 - i, borderpad=0.05
+                    loc=(0.8, 0.77), ncol=2 - i, borderpad=0.05
                 ).get_frame().set_linewidth(0.0)
                 a.set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]")[i])
 
