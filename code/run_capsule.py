@@ -192,6 +192,7 @@ def plot_raw_dff_mc(
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
     plt.savefig(fig_file, dpi=200)
+    plt.close()
     return fig_file
 
 
@@ -258,6 +259,7 @@ def plot_dff(
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
     plt.savefig(fig_file, dpi=200)
+    plt.close()
 
 
 def plot_motion_correction(
@@ -466,6 +468,7 @@ def plot_motion_correction(
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
     plt.savefig(fig_file, dpi=200)
+    plt.close()
 
 
 def create_metric(fiber, method, reference, value, motion=False):
@@ -717,6 +720,13 @@ if __name__ == "__main__":
                                         timestamps - timestamps[0],
                                         method=pp_name,
                                     )
+                                )
+                                params_str = ", ".join(
+                                    f"{v:.5g}" for v in NM_fitting_params.values()
+                                )
+                                logging.info(
+                                    f"Fitted parameters for {channel:>3}{fiber_number} "
+                                    f"using method '{pp_name}':  {params_str}"
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
                                 df_fip_iter.loc[:, "preprocess"] = pp_name

@@ -110,6 +110,8 @@ def tc_triexpfit(
     p0[3] = (p0[1] + p0[5]) / 2
     # Clean up invalid values
     p0 = np.maximum(0, np.nan_to_num(p0))
+    params_str = ", ".join(f"{v:.5g}" for v in p0)
+    logging.info(f"Initial parameters for method 'tri-exp':  {params_str}")
 
     # Fit curve
     popt, _ = curve_fit(
@@ -124,8 +126,6 @@ def tc_triexpfit(
     )
     tc_triexp = triple_exp(timestamps, popt)
 
-    logging.info(f"Initial params: {[f'{x:.5g}' for x in p0]}")
-    logging.info(f"Optimal params: {[f'{x:.5g}' for x in popt]}")
     # Calculate goodness-of-fit metrics
     ss_res = np.sum((tc - tc_triexp) ** 2)
     ss_tot = np.sum((tc - np.mean(tc)) ** 2)
@@ -603,8 +603,8 @@ def chunk_processing(
                 {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]
             )
         }
-    tc_qualitymetrics = {"QC_metric": np.nan}
-    tc_params.update(tc_qualitymetrics)
+    # tc_qualitymetrics = {"QC_metric": np.nan}
+    # tc_params.update(tc_qualitymetrics)
 
     return tc_dFoF, tc_params, tc_filling(tc_fit, n_frame_to_cut)
 
