@@ -308,7 +308,7 @@ def plot_fit(x, trace, fs=20, title=None, color="C0"):
 def tc_brightfit(
     trace: np.ndarray,
     timestamps: np.ndarray,
-    rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
+    rss_thresh: float | tuple[float, float] | str = (0.98, 0.997),
     M: RobustNorm | None = TukeyBiweight(3),
     maxiter: int = 5,
     tol: float = 1e-3,
@@ -328,7 +328,7 @@ def tc_brightfit(
     timestamps : np.ndarray
         Fiber photometry timestamps.
     rss_thresh : float or tuple of float or str, optional
-        Factor(s) used for model selection. Default is (0.98, 0.995).
+        Factor(s) used for model selection. Default is (0.98, 0.997).
         If a tuple, then the order is (brightening, 3rd exponential).
         A more complex model (with 2 additional parameters)
         is accepted if the RSS decreases by at least this factor.
