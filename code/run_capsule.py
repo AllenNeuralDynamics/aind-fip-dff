@@ -35,6 +35,7 @@ from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgra
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
@@ -203,28 +204,39 @@ def plot_dff(
     method: str,
     fig_path: str,
     n_frame_to_cut: int = 100,
+    zoom_duration: float = 60.0,
 ):
-    """Plot raw and dF/F photometry traces for multiple channels.
+    """Plot raw and dF/F photometry traces for multiple channels with zoomed insets."""
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
+    from matplotlib.gridspec import GridSpec
 
-    Parameters
-    ----------
-    df_fip_pp : pd.DataFrame
-        The dataframe with the preprocessed FIP data containing F, dF/F and F0 traces.
-    fiber : str
-        The name of the fiber for which the signals should be plotted.
-    channels : list of str
-        A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
-    method : str
-        The name of the preprocessing method used ("poly", "exp", or "bright").
-    fig_path : str
-        The path where the generated plot will be saved.
-    n_frame_to_cut : int, optional
-        Frames trimmed from the start and not used to set the raw plot’s y-range.
-        Default is 100.
-    """
-    fig, ax = plt.subplots(
-        2 * len(channels), 1, figsize=(12, 2 * len(channels)), sharex=True
+    # Create figure with custom spacing using GridSpec
+    fig = plt.figure(figsize=(12, 3 * len(channels)))
+
+    # Create height ratios: 3 rows per channel with extra space between channels
+    height_ratios = []
+    for c in range(len(channels)):
+        height_ratios.extend([1, 1, 1])  # 3 rows for each channel
+        if c < len(channels) - 1:  # Add spacing between channels
+            height_ratios.append(0.15)
+
+    gs = GridSpec(
+        len(height_ratios), 1, figure=fig, height_ratios=height_ratios, hspace=0.1
     )
+
+    # Create subplots
+    ax = []
+    subplot_idx = 0
+    for c in range(len(channels)):
+        for i in range(3):  # Add 3 subplots for each channel
+            ax.append(fig.add_subplot(gs[subplot_idx]))
+            subplot_idx += 1
+        if c < len(channels) - 1:  # Skip the spacing row
+            subplot_idx += 1
+
+    # Channel colors
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}
+
     for c, ch in enumerate(sorted(channels)):
         df = df_fip_pp[
             (df_fip_pp.channel == ch)
@@ -233,38 +245,112 @@ def plot_dff(
         ]
         t = df.time_fip.values
         t -= t[0]
-        if ~np.isnan(t).all():
-            for i in (0, 1):
-                a = ax[2 * c + i]
-                a.plot(
-                    t,
-                    (df.signal, df.dFF * 100)[i],
-                    label=(("raw ", r"$\Delta$F/F ")[i] + ch),
-                    # more color-blind-friendly g, b, and r
-                    c={"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}.get(
-                        ch, f"C{c}"
-                    ),
-                )
-                if i == 0:
-                    a.plot(t, df.F0, label=r"fitted F$_0$", c="#F0E442")
-                    mi, ma = min(df.signal[n_frame_to_cut:]), max(df.signal[n_frame_to_cut:])
-                    a.set_ylim(mi - .06 * (ma - mi), ma + .14 * (ma - mi))
-                else:
-                    a.axhline(0, c="k", ls="--")
-                a.legend(
-                    loc=(0.8, 0.77), ncol=2 - i, borderpad=0.05
-                ).get_frame().set_linewidth(0.0)
-                a.set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]")[i])
 
+        if np.isnan(t).all():
+            continue
+
+        # Calculate time windows for zoom
+        t_total = t[-1] - t[0]
+        zoom_windows = [
+            (t[0], t[0] + zoom_duration),
+            (
+                t[0] + (t_total - zoom_duration) / 2,
+                t[0] + (t_total + zoom_duration) / 2,
+            ),
+            (max(t[-1] - zoom_duration, t[0]), t[-1]),
+        ]
+
+        color = colors.get(ch, f"C{c}")
+
+        # Row 1: Raw signal
+        ax[3 * c].plot(t, df.signal, label=f"raw {ch}", c=color)
+        ax[3 * c].plot(t, df.F0, label=r"fitted F$_0$", c="#F0E442")
+        mi, ma = df.signal[n_frame_to_cut:].min(), df.signal[n_frame_to_cut:].max()
+        ax[3 * c].set_ylim(mi - 0.06 * (ma - mi), ma + 0.14 * (ma - mi))
+        ax[3 * c].legend(
+            loc=(0.77, 0.77), ncol=2, borderpad=0.05
+        ).get_frame().set_linewidth(0.0)
+        ax[3 * c].set_ylabel("F [a.u.]")
+
+        # Row 2: Inset zoom plots
+        ax[3 * c + 1].axis("off")
+
+        for j, (start_time, end_time) in enumerate(zoom_windows):
+            inset_ax = inset_axes(
+                ax[3 * c + 1],
+                width="100%",
+                height="100%",
+                loc="center",
+                bbox_to_anchor=([0.01, 0.34, 0.67][j], 0.0, 0.32, 0.8),
+                bbox_transform=ax[3 * c + 1].transAxes,
+            )
+
+            mask = (t >= start_time) & (t <= end_time)
+            if np.any(mask):
+                t_zoom, dff_zoom = t[mask], df.dFF.values[mask] * 100
+
+                inset_ax.plot(t_zoom, dff_zoom, c=color, linewidth=1.5)
+                inset_ax.axhline(0, c="k", ls="--")
+                inset_ax.grid(True, alpha=0.8)
+                inset_ax.set_xlim(start_time, end_time)
+
+                if len(dff_zoom) > 0:
+                    y_margin = 0.1 * (dff_zoom.max() - dff_zoom.min())
+                    inset_ax.set_ylim(
+                        dff_zoom.min() - y_margin, dff_zoom.max() + y_margin
+                    )
+
+                inset_ax.set_title(
+                    ["First", "Middle", "Last"][j] + f" {zoom_duration:.0f}s",
+                    fontsize=10,
+                    y=0.94,
+                )
+                inset_ax.set_xticks([])
+                inset_ax.set_yticks([])
+
+                mark_inset(
+                    ax[3 * c + 2],
+                    inset_ax,
+                    loc1=1,
+                    loc2=3,
+                    fc="none",
+                    ec="purple",
+                    alpha=0.8,
+                    linestyle="--",
+                    linewidth=1,
+                )
+
+        # Row 3: dF/F signal
+        ax[3 * c + 2].plot(
+            t, df.dFF * 100, label=f"$\\Delta$F/F {ch}", c=color, zorder=-1
+        )
+        ax[3 * c + 2].axhline(0, c="k", ls="--")
+        ax[3 * c + 2].legend(
+            loc=(0.77, 0.77), ncol=1, borderpad=0.05
+        ).get_frame().set_linewidth(0.0)
+        ax[3 * c + 2].set_ylabel(r"$\Delta$F/F [%]", y=1)
+        ax[3 * c + 2].sharex(ax[3 * c])
+
+    # Set x-limits and labels
     tmin, tmax = np.nanmin(t), np.nanmax(t)
-    ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
-    plt.suptitle(f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=1)
-    plt.xlabel("Time [s]")
-    plt.tight_layout(pad=0.2, h_pad=0)
+    margin = (tmax - tmin) / 100
+
+    for c in range(len(channels)):
+        ax[3 * c].set_xlim(tmin - margin, tmax + margin)
+        ax[3 * c + 2].set_xlim(tmin - margin, tmax + margin)
+        plt.setp(ax[3 * c].get_xticklabels(), visible=False)
+
+        if c < len(channels) - 1:
+            plt.setp(ax[3 * c + 2].get_xticklabels(), visible=False)
+        else:
+            ax[-1].set_xlabel("Time [s]")
+
+    plt.suptitle(f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=0.995)
+    plt.subplots_adjust(hspace=0.3, top=0.97, bottom=0.02)
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
-    plt.savefig(fig_file, dpi=200)
+    plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
 
 
