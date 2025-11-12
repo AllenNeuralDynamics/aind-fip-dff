@@ -709,7 +709,7 @@ def create_metric(fiber, method, reference, value, motion=False):
         description=(
             "Maximum regression coefficient"
             if motion
-            else "Baseline $F_0(t)$ fit with  " + baselines[method]
+            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
     )
 
