@@ -685,12 +685,12 @@ def create_metric(fiber, method, reference, value, motion=False):
         The created quality control metric.
     """
     baselines = {
-        "poly": "a*t^4 + b*t^3 + c*t^2 + d*t + e",
-        "exp": "a*exp(-b*t) + c*exp(-d*t)",
-        "tri-exp": "a*exp(-b*t) + c*exp(-d*t) + e*exp(-f*t) + g",
+        "poly": "$a t^4 + b t^3 + c t^2 + d t + e$",
+        "exp": "$a \exp(-b t) + c \exp(-d t)$",
+        "tri-exp": "$a \exp(-b t) + c \exp(-d t) + e \exp(-f t) + g$",
         "bright": (
-            "b_inf * (1 + b_slow*exp(-t/t_slow) + b_fast*exp(-t/t_fast) + "
-            "b_rapid*exp(-t/t_rapid)) * (1 - b_bright*exp(-t/t_bright))"
+            "$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
+            "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$"
         ),
     }
     return QCMetric(
@@ -709,7 +709,7 @@ def create_metric(fiber, method, reference, value, motion=False):
         description=(
             "Maximum regression coefficient"
             if motion
-            else "Baseline F_0(t) fit with  " + baselines[method]
+            else "Baseline $F_0(t)$ fit with  " + baselines[method]
         ),
     )
 
