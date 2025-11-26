@@ -1125,7 +1125,6 @@ if __name__ == "__main__":
                                     True,
                                 )
                             )
-                        )
                     # evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
                     qc = QualityControl(
