@@ -438,7 +438,6 @@ def plot_dff(
             f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=0.985
         )
         plt.tight_layout(pad=0.2, h_pad=0)
->>>>>>> main
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
