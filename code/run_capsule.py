@@ -26,13 +26,14 @@ from aind_log_utils import log
 from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
 
 """
-This capsule takes in an NWB file containing raw fiber photometry data 
+This capsule takes in an NWB file containing raw fiber photometry data
 then process each channel (usually 4) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
@@ -182,7 +183,8 @@ def plot_raw_dff_mc(
     plt.tight_layout(pad=0.2)
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
-    plt.savefig(fig_file, dpi=300)
+    plt.savefig(fig_file, dpi=200)
+    plt.close()
     return fig_file
 
 
@@ -192,25 +194,115 @@ def plot_dff(
     channels: list[str],
     method: str,
     fig_path: str,
-):
-    """Plot raw and dF/F photometry traces for multiple channels.
+    n_frame_to_cut: int = 100,
+    zoom_duration: float | None = 60.0,
+) -> None:
+    """Plot raw and dF/F photometry traces for multiple channels with optional zoomed insets.
+
+    Creates a multi-panel plot showing raw fluorescence signals and baseline-corrected
+    dF/F traces for each channel. When zoom_duration is specified, includes three
+    zoomed inset plots showing detailed views of the beginning, middle, and end of
+    the recording session.
 
     Parameters
     ----------
     df_fip_pp : pd.DataFrame
-        The dataframe with the preprocessed FIP data containing F, dF/F and F0 traces.
+        Preprocessed fiber photometry dataframe containing columns:
+        - 'channel': Channel names (e.g., 'G', 'R', 'Iso')
+        - 'fiber_number': Fiber/ROI identifier
+        - 'preprocess': Preprocessing method name
+        - 'time_fip': Timestamps in seconds
+        - 'signal': Raw fluorescence signal
+        - 'F0': Fitted baseline signal
+        - 'dFF': Baseline-corrected dF/F signal
     fiber : str
-        The name of the fiber for which the signals should be plotted.
-    channels : list of str
-        A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
+        Fiber/ROI identifier to plot (should match 'fiber_number' in dataframe).
+    channels : list[str]
+        List of channel names to include in the plot (e.g., ['G', 'R', 'Iso']).
+        Channels will be plotted in sorted order.
     method : str
-        The name of the preprocessing method used ("poly", "exp", or "bright").
+        Preprocessing method name (should match 'preprocess' in dataframe).
+        Used for filtering data and in plot title.
     fig_path : str
-        The path where the generated plot will be saved.
+        Directory path where the generated plot will be saved.
+        Directory will be created if it doesn't exist.
+    n_frame_to_cut : int, optional
+        Number of frames to exclude from the beginning when setting y-axis limits
+        for raw signal plots. Helps avoid artifacts from recording start.
+        Default is 100.
+    zoom_duration : float or None, optional
+        Duration in seconds for each zoomed inset window. If None or 0,
+        creates a simpler 2-row layout without insets. If positive, creates
+        a 3-row layout with inset zoom plots. Default is 60.0.
+
+    Returns
+    -------
+    None
+        Saves the plot as a PNG file to the specified path and closes the figure.
+
+    Notes
+    -----
+    The function creates different layouts based on zoom_duration:
+
+    - If zoom_duration is None or 0: 2 rows per channel (raw + dF/F)
+    - If zoom_duration > 0: 3 rows per channel (raw + insets + dF/F)
+
+    Inset windows show:
+    - First: Beginning of recording (0 to zoom_duration seconds)
+    - Middle: Center portion of recording
+    - Last: End of recording (last zoom_duration seconds)
+
+    Color coding follows a consistent scheme:
+    - Green ('G'): #009E73
+    - Blue ('Iso'): #0072B2
+    - Red ('R'): #D55E00
+    - Baseline F0: #F0E442 (yellow)
+
+    The saved filename follows the pattern: 'ROI{fiber}_dff-{method}.png'
+
+    Examples
+    --------
+    >>> # Simple 2-row plot without insets
+    >>> plot_dff(df, fiber='1', channels=['G', 'R'], method='poly',
+    ...          fig_path='/results/', zoom_duration=None)
+
+    >>> # 3-row plot with 30-second zoom windows
+    >>> plot_dff(df, fiber='2', channels=['G', 'Iso', 'R'], method='exp',
+    ...          fig_path='/results/', zoom_duration=30.0)
     """
-    fig, ax = plt.subplots(
-        2 * len(channels), 1, figsize=(12, 2 * len(channels)), sharex=True
-    )
+    # Check if we should show insets
+    show_insets = zoom_duration is not None and zoom_duration > 0
+    rows_per_channel = 3 if show_insets else 2
+
+    # Create figure and axes
+    if show_insets:
+        # 3-row layout with spacing between channels
+        fig = plt.figure(figsize=(12, rows_per_channel * len(channels) + 0.5))
+        height_ratios = []
+        for c in range(len(channels)):
+            height_ratios.extend([1, 1, 1])
+            if c < len(channels) - 1:
+                height_ratios.append(0.15)
+
+        gs = GridSpec(
+            len(height_ratios), 1, figure=fig, height_ratios=height_ratios, hspace=0.1
+        )
+        ax = []
+        subplot_idx = 0
+        for c in range(len(channels)):
+            for i in range(3):
+                ax.append(fig.add_subplot(gs[subplot_idx]))
+                subplot_idx += 1
+            if c < len(channels) - 1:
+                subplot_idx += 1
+    else:
+        # 2-row layout
+        fig, ax = plt.subplots(
+            2 * len(channels), 1, figsize=(12, 2 * len(channels)), sharex=True
+        )
+
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}
+
     for c, ch in enumerate(sorted(channels)):
         df = df_fip_pp[
             (df_fip_pp.channel == ch)
@@ -219,38 +311,147 @@ def plot_dff(
         ]
         t = df.time_fip.values
         t -= t[0]
-        if ~np.isnan(t).all():
-            for i in (0, 1):
-                a = ax[2 * c + i]
-                a.plot(
-                    t,
-                    (df.signal, df.dFF * 100)[i],
-                    label=(("raw ", r"$\Delta$F/F ")[i] + ch),
-                    # more color-blind-friendly g, b, and r
-                    c={"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}.get(
-                        ch, f"C{c}"
-                    ),
-                )
-                if i == 0:
-                    a.plot(t, df.F0, label=r"fitted F$_0$", c="#F0E442")
-                else:
-                    a.axhline(0, c="k", ls="--")
-                a.legend(
-                    loc=(0.01, 0.77), ncol=2 - i, borderpad=0.05
-                ).get_frame().set_linewidth(0.0)
-                a.set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]")[i])
 
+        if np.isnan(t).all():
+            continue
+
+        color = colors.get(ch, f"C{c}")
+
+        # Calculate row indices based on layout
+        raw_idx = 3 * c if show_insets else 2 * c
+        dff_idx = 3 * c + 2 if show_insets else 2 * c + 1
+        inset_idx = 3 * c + 1 if show_insets else None
+
+        # Plot raw signal (always first row of each channel)
+        ax[raw_idx].plot(t, df.signal, label=f"raw {ch}", c=color)
+        ax[raw_idx].plot(t, df.F0, label=r"fitted F$_0$", c="#F0E442")
+        mi, ma = df.signal[n_frame_to_cut:].min(), df.signal[n_frame_to_cut:].max()
+        ax[raw_idx].set_ylim(mi - 0.06 * (ma - mi), ma + 0.14 * (ma - mi))
+        ax[raw_idx].legend(
+            loc=(0.805, 0.77), ncol=2, borderpad=0.05
+        ).get_frame().set_linewidth(0.0)
+        ax[raw_idx].set_ylabel("F [a.u.]")
+
+        # Plot dF/F signal (always last row of each channel)
+        ax[dff_idx].plot(
+            t, df.dFF * 100, label=f"$\\Delta$F/F {ch}", c=color, zorder=-1
+        )
+        ax[dff_idx].axhline(0, c="k", ls="--")
+        ax[dff_idx].legend(
+            loc=(0.805, 0.77), ncol=1, borderpad=0.05
+        ).get_frame().set_linewidth(0.0)
+        ax[dff_idx].set_ylabel(r"$\Delta$F/F [%]", y=1 if show_insets else 0.5)
+
+        # Share x-axis between raw and dF/F
+        if show_insets:
+            ax[dff_idx].sharex(ax[raw_idx])
+
+        # Add insets if requested
+        if show_insets:
+            t_total = t[-1] - t[0]
+            zoom_windows = [
+                (t[0], t[0] + zoom_duration),
+                (
+                    t[0] + (t_total - zoom_duration) / 2,
+                    t[0] + (t_total + zoom_duration) / 2,
+                ),
+                (max(t[-1] - zoom_duration, t[0]), t[-1]),
+            ]
+
+            ax[inset_idx].axis("off")
+
+            for j, (start_time, end_time) in enumerate(zoom_windows):
+                inset_ax = inset_axes(
+                    ax[inset_idx],
+                    width="100%",
+                    height="100%",
+                    loc="center",
+                    bbox_to_anchor=([0.01, 0.34, 0.67][j], 0.0, 0.32, 0.8),
+                    bbox_transform=ax[inset_idx].transAxes,
+                )
+
+                mask = (t >= start_time) & (t <= end_time)
+                if np.any(mask):
+                    t_zoom, dff_zoom = t[mask], df.dFF.values[mask] * 100
+
+                    inset_ax.plot(t_zoom, dff_zoom, c=color, linewidth=1.5)
+                    inset_ax.axhline(0, c="k", ls="--")
+                    inset_ax.grid(True, alpha=0.8)
+                    inset_ax.set_xlim(start_time, end_time)
+
+                    if len(dff_zoom) > 0:
+                        y_margin = 0.1 * (dff_zoom.max() - dff_zoom.min())
+                        inset_ax.set_ylim(
+                            dff_zoom.min() - y_margin, dff_zoom.max() + y_margin
+                        )
+
+                    inset_ax.set_title(
+                        f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
+                        fontsize=10,
+                        y=0.94,
+                    )
+                    inset_ax.set_xticks([])
+                    inset_ax.set_yticks([])
+
+                    mark_inset(
+                        ax[dff_idx],
+                        inset_ax,
+                        loc1=1,
+                        loc2=3,
+                        fc="none",
+                        ec="#333333",
+                        alpha=0.8,
+                        linestyle="--",
+                        linewidth=1,
+                    )
+
+    # Set x-limits and labels
     tmin, tmax = np.nanmin(t), np.nanmax(t)
+<<<<<<< HEAD
     ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
     plt.suptitle(
         f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=1
     )
     plt.xlabel("Time [s]")
     plt.tight_layout(pad=0.2, h_pad=0)
+=======
+    margin = (tmax - tmin) / 100
+
+    for c in range(len(channels)):
+        raw_idx = 3 * c if show_insets else 2 * c
+        dff_idx = 3 * c + 2 if show_insets else 2 * c + 1
+
+        ax[raw_idx].set_xlim(tmin - margin, tmax + margin)
+        ax[dff_idx].set_xlim(tmin - margin, tmax + margin)
+        plt.setp(ax[raw_idx].get_xticklabels(), visible=False)
+
+        # Show x-labels only on last channel's dF/F row
+        if c < len(channels) - 1:
+            plt.setp(ax[dff_idx].get_xticklabels(), visible=False)
+        else:
+            ax[dff_idx].set_xlabel("Time [s]")
+
+    # Layout adjustments
+    if show_insets:
+        plt.suptitle(
+            f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=0.995
+        )
+        layout_params = {1: (0.935, 0.13), 2: (0.96, 0.07), 3: (0.97, 0.05)}
+        top, bottom = layout_params.get(
+            len(channels), (0.98, 0.04)
+        )  # Default for 4+ channels
+        plt.subplots_adjust(hspace=0.3, top=top, bottom=bottom, left=0.06, right=0.995)
+    else:
+        plt.suptitle(
+            f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=0.985
+        )
+        plt.tight_layout(pad=0.2, h_pad=0)
+>>>>>>> main
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
-    plt.savefig(fig_file, dpi=300)
+    plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
+    plt.close()
 
 
 def plot_motion_correction(
@@ -261,10 +462,11 @@ def plot_motion_correction(
     fig_path: str,
     coeffs: list[dict],
     intercepts: list[dict],
+    weights: list[dict],
     cutoff_freq_motion: float,
     cutoff_freq_noise: float,
     fs: float = 20,
-):
+) -> None:
     """Plot dF/F and motion-corrected dF/F photometry traces for multiple channels.
 
     Parameters
@@ -283,6 +485,8 @@ def plot_motion_correction(
         The regression coefficients for each method/fiber/channel combination.
     intercepts : dict of list of dict
         The regression intercepts for each method/fiber/channel combination.
+    weights : dict of list of dict
+        The regression weights for each method/fiber/channel combination.
     cutoff_freq_motion : float
         Cutoff frequency of the lowpass Butterworth filter that's only
         applied for estimating the regression coefficient, in Hz.
@@ -298,10 +502,11 @@ def plot_motion_correction(
         The function saves the plot to the specified fig_path.
     """
     cut = cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2
-    colors = {"G": "C2", "Iso": "C0", "R": "C3"}
+    # more color-blind-friendly g, b, and r
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00", "filtered": "#F0E442"}
     rows = 3 * len(channels) - 3
     fig = plt.figure(figsize=(15, rows))
-    gs = GridSpec(rows, 3, width_ratios=[11, 1, 3])
+    gs = GridSpec(rows, 3, width_ratios=[11, 1, 3.4])
 
     def plot_psd(ax, data, color, cut=False):
         """Helper function to create Power Spectral Density plots.
@@ -345,6 +550,9 @@ def plot_motion_correction(
             & (df_fip_pp.preprocess == method)
         ]
         color = colors.get(ch, f"C{c}")
+        coef = coeffs[method][int(fiber)][ch]
+        intercept = intercepts[method][int(fiber)][ch]
+        weight = weights[method][int(fiber)][ch]
         # Create subplots in the left and center column (sharing x-axis)
         for i in range(3):
             ax = fig.add_subplot(
@@ -355,7 +563,6 @@ def plot_motion_correction(
                 sharex=(None if c + i == 0 else center_axes[0]),
             )
             if i < 2:
-                l = ("", "low-passed")[i]
                 if cut:
                     sos = butter(
                         N=2, Wn=cutoff_freq_noise, fs=fs, output="sos"
@@ -376,15 +583,13 @@ def plot_motion_correction(
                     color,
                     i == 1 and cut,
                 )
-                coef = coeffs[method][int(fiber)][ch]
-                intercept = intercepts[method][int(fiber)][ch]
                 if i == 0:
                     ax.plot(
                         t,
                         (intercept + noise_filt(df_iso["dFF"]) * coef) * 100,
                         c=colors["Iso"],
                         label="regressed Iso",
-                        alpha=0.5,
+                        alpha=0.8,
                     )
                     plot_psd(
                         ax2.twinx(), df_iso["dFF"], colors["Iso"]
@@ -392,13 +597,18 @@ def plot_motion_correction(
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
                     plot_psd(
+<<<<<<< HEAD
                         ax2.twinx(), df_iso["filtered"], "C1", cut
                     ).tick_params(axis="y", which="both", colors="C1")
+=======
+                        ax2.twinx(), df_iso["filtered"], colors["filtered"], cut
+                    ).tick_params(axis="y", which="both", colors=colors["filtered"])
+>>>>>>> main
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
-                    c="C1",
-                    label="low-passed Iso",
+                    c=colors["filtered"],
+                    label="low-passed Iso (scaled)",
                 )
             else:
                 ax.plot(
@@ -422,6 +632,7 @@ def plot_motion_correction(
             gs[3 * c : 3 * c + 3, 2],
             sharex=(None if c == 0 else right_axes[0]),
         )
+<<<<<<< HEAD
         ax.scatter(
             df_iso["dFF"] * 100,
             df["dFF"] * 100,
@@ -430,14 +641,19 @@ def plot_motion_correction(
             label="original",
         )
         ax.scatter(
+=======
+        sc = ax.scatter(
+>>>>>>> main
             df_iso["filtered"] * 100,
             df["filtered"] * 100,
-            s=0.1,
-            c="C1",
+            s=0.02 + 0.08 * weight,
+            c=weight,
             label="low-passed",
+            alpha=0.5,
         )
+        plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
-        ax.plot(x, intercept * 100 + coef * x, c="r", label="regression")
+        ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
         ax.set_ylim(y)
         ax.legend(
             loc="lower right", markerscale=12, borderpad=0.05
@@ -463,11 +679,12 @@ def plot_motion_correction(
     right_axes[-1].set_xlabel("Iso", color=colors["Iso"])
     plt.suptitle(
         f"$\\bf{{Motion\;correction}}$   Methods: {method} & iso-IRLS,  ROI: {fiber}",
-        y=1,
+        y=0.99,
     )
     plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
     for ax in center_axes:
         pos = ax.get_position()
+<<<<<<< HEAD
         ax.set_position(
             [pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height]
         )
@@ -477,9 +694,17 @@ def plot_motion_correction(
         fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png"
     )
     plt.savefig(fig_file, dpi=300)
+=======
+        ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.015, pos.height])
+
+    os.makedirs(fig_path, exist_ok=True)
+    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
+    plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
+    plt.close()
+>>>>>>> main
 
 
-def create_metric(fiber, method, reference, motion=False):
+def create_metric(fiber, method, reference, value, motion=False):
     """Create a QC metric for baseline or motion correction.
 
     Parameters
@@ -490,6 +715,8 @@ def create_metric(fiber, method, reference, motion=False):
         The preprocessing method used.
     reference : str
         Path to the reference image for this metric.
+    value : float | dict
+        Metric value.
     motion : bool, optional
         Whether this is a motion correction metric. Defaults to False.
 
@@ -498,16 +725,28 @@ def create_metric(fiber, method, reference, motion=False):
     QCMetric
         The created quality control metric.
     """
+    baselines = {
+        "poly": "$$a t^4 + b t^3 + c t^2 + d t + e$$",
+        "exp": "$$a \exp(-b t) + c \exp(-d t)$$",
+        "tri-exp": "$$a \exp(-b t) + c \exp(-d t) + e \exp(-f t) + g$$",
+        "bright": (
+            "$$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
+            "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
+        ),
+    }
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator="Pending review",
+                evaluator=(
+                    "Automatic" if (motion and value > 10) else "Pending review"
+                ),
                 timestamp=dt.now(),
-                status=Status.PENDING,
+                status=Status.FAIL if (motion and value > 10) else Status.PENDING,
             )
         ],
+<<<<<<< HEAD
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
         description=(
@@ -527,6 +766,13 @@ def create_metric(fiber, method, reference, motion=False):
                 Status.PASS,
                 Status.FAIL,
             ],
+=======
+        value=value,
+        description=(
+            "Maximum regression coefficient"
+            if motion
+            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
+>>>>>>> main
         ),
         tags=[method],
     )
@@ -591,6 +837,7 @@ if __name__ == "__main__":
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
+            "  'tri-exp': Fit with triphasic exponential using OLS\n"
             "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
             "[Increasing saturating exponential (brightening)] using iteratively "
             "reweighted least squares (IRLS)"
@@ -613,6 +860,11 @@ if __name__ == "__main__":
             "Cutoff frequency of the lowpass Butterworth filter "
             "that's applied to filter out noise, in Hz."
         ),
+    )
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="Do not use multiple processes and threads to parallelize fibers and channels.",
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
@@ -682,12 +934,12 @@ if __name__ == "__main__":
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
                 df_pp_params = pd.DataFrame()
-                coeffs, intercepts = {}, {}
+                coeffs, intercepts, weights = {}, {}, {}
                 fiber_numbers = df_fip["fiber_number"].unique()
                 channels = df_fip["channel"].unique()
                 channels = channels[~pd.isna(channels)]
                 for pp_name in args.dff_methods:
-                    if pp_name in ["poly", "exp", "bright"]:
+                    if pp_name in ["poly", "exp", "tri-exp", "bright"]:
 
                         def process1fiber(
                             fiber_number: str,
@@ -721,8 +973,20 @@ if __name__ == "__main__":
                                 ].copy()
 
                                 NM_values = df_fip_iter["signal"].values
+                                timestamps = df_fip_iter["time_fip"].values
                                 NM_preprocessed, NM_fitting_params, NM_fit = (
-                                    chunk_processing(NM_values, method=pp_name)
+                                    chunk_processing(
+                                        NM_values,
+                                        timestamps - timestamps[0],
+                                        method=pp_name,
+                                    )
+                                )
+                                params_str = ", ".join(
+                                    f"{v:.5g}" for v in NM_fitting_params.values()
+                                )
+                                logging.info(
+                                    f"Fitted parameters for {channel:>3}{fiber_number} "
+                                    f"using method '{pp_name}':  {params_str}"
                                 )
                                 df_fip_iter.loc[:, "dFF"] = NM_preprocessed
                                 df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -740,8 +1004,11 @@ if __name__ == "__main__":
                                 )
                                 return df_fip_iter, df_pp_params_ses
 
-                            with ThreadPool(len(channels)) as tp:
-                                res = tp.map(process1channel, channels)
+                            if args.serial:
+                                res = list(map(process1channel, channels))
+                            else:
+                                with ThreadPool(len(channels)) as tp:
+                                    res = tp.map(process1channel, channels)
                             df_1fiber = pd.concat(
                                 [r[0] for r in res], ignore_index=True
                             )
@@ -762,7 +1029,11 @@ if __name__ == "__main__":
                                 )
                             )
                             # run motion correction
+<<<<<<< HEAD
                             df_mc_iter, df_filt_iter, coeff, intercept = (
+=======
+                            df_mc_iter, df_filt_iter, coeff, intercept, weight = (
+>>>>>>> main
                                 motion_correct(
                                     df_dff_iter,
                                     cutoff_freq_motion=args.cutoff_freq_motion,
@@ -777,8 +1048,9 @@ if __name__ == "__main__":
                             df_1fiber["filtered"] = df_filt_iter.melt(
                                 var_name="channel", value_name="filtered"
                             ).filtered
-                            return df_1fiber, df_pp_params, coeff, intercept
+                            return df_1fiber, df_pp_params, coeff, intercept, weight
 
+<<<<<<< HEAD
                         with Pool(len(fiber_numbers)) as pool:
                             res = pool.map(process1fiber, fiber_numbers)
                         df_fip_pp = pd.concat(
@@ -787,8 +1059,18 @@ if __name__ == "__main__":
                         df_pp_params = pd.concat(
                             [df_pp_params] + [r[1] for r in res]
                         )
+=======
+                        if args.serial:
+                            res = list(map(process1fiber, fiber_numbers))
+                        else:
+                            with Pool(len(fiber_numbers)) as pool:
+                                res = pool.map(process1fiber, fiber_numbers)
+                        df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
+                        df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
+>>>>>>> main
                         coeffs[pp_name] = [r[2] for r in res]
                         intercepts[pp_name] = [r[3] for r in res]
+                        weights[pp_name] = [r[4] for r in res]
 
                 methods = df_fip_pp.preprocess.unique()
                 for method in methods:
@@ -815,19 +1097,15 @@ if __name__ == "__main__":
                     channels = df_fip_pp["channel"].unique()
                     fibers = df_fip_pp["fiber_number"].unique()
 
-                    def foo(a):
-                        fiber, method = a
-                        return plot_dff(
+                    def plot_both(fiber, method):
+                        plot_dff(
                             df_fip_pp,
                             fiber,
                             channels,
                             method,
                             os.path.join(args.output_dir, "dff-qc"),
                         )
-
-                    def bar(a):
-                        fiber, method = a
-                        return plot_motion_correction(
+                        plot_motion_correction(
                             df_fip_pp,
                             fiber,
                             channels,
@@ -835,10 +1113,12 @@ if __name__ == "__main__":
                             os.path.join(args.output_dir, "dff-qc"),
                             coeffs,
                             intercepts,
+                            weights,
                             args.cutoff_freq_motion,
                             args.cutoff_freq_noise,
                         )
 
+<<<<<<< HEAD
                     with Pool(len(fibers)) as pool:
                         pool.map(foo, itertools.product(fibers, methods))
                         pool.map(bar, itertools.product(fibers, methods))
@@ -860,6 +1140,73 @@ if __name__ == "__main__":
                                 method,
                                 f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
                                 True,
+=======
+                    def params_as_dict(fiber, method):
+                        df = df_pp_params[
+                            (df_pp_params["fiber_number"] == str(fiber))
+                            & (df_pp_params["preprocess"] == method)
+                        ][
+                            ["channel"]
+                            + list(
+                                range(
+                                    {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[
+                                        method
+                                    ]
+                                )
+                            )
+                        ]
+                        param_names = {
+                            "poly": [*"abcde"],
+                            "exp": [*"abcd"],
+                            "tri-exp": [*"abcdefg"],
+                            "bright": [
+                                "b_inf",
+                                "b_slow",
+                                "b_fast",
+                                "b_rapid",
+                                "b_bright",
+                                "t_slow",
+                                "t_fast",
+                                "t_rapid",
+                                "t_bright",
+                            ],
+                        }
+                        df.columns = ["channel"] + param_names[method]
+                        return df.to_dict("list")
+
+                    tasks = list(itertools.product(fibers, methods))
+                    if args.serial:
+                        for fiber, method in tasks:
+                            plot_both(fiber, method)
+                    else:
+                        with Pool(len(fibers)) as pool:
+                            pool.starmap(plot_both, tasks)
+
+                    evaluations = []
+                    for method in methods:
+                        metrics = []
+                        for fiber in fibers:
+                            metrics.append(
+                                create_metric(
+                                    fiber,
+                                    method,
+                                    f"dff-qc/ROI{fiber}_dff-{method}.png",
+                                    params_as_dict(fiber, method),
+                                )
+                            )
+                            metrics.append(
+                                create_metric(
+                                    fiber,
+                                    method,
+                                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
+                                    max(
+                                        v
+                                        for k, v in coeffs[method][int(fiber)].items()
+                                        if k != "Iso"
+                                    ),
+                                    True,
+                                )
+>>>>>>> main
                             )
                         )
                     # evaluations.append(create_evaluation(method, metrics))

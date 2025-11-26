@@ -51,8 +51,95 @@ def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
     return np.append(np.ones([n_frame_to_cut, 1]) * tc[0], tc)
 
 
+def triple_exp(x, params):
+    """
+    Triple exponential function: a * exp(-b * x) + c * exp(-d * x) + e * exp(-f * x) + g
+    """
+    return (
+        params[0] * np.exp(-params[1] * x)
+        + params[2] * np.exp(-params[3] * x)
+        + params[4] * np.exp(-params[5] * x)
+        + params[6]
+    )
+
+
+def tc_triexpfit(
+    tc: np.ndarray, timestamps: np.ndarray, sampling_rate: float, xtol: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Perform a triple exponential fit to the given data.
+
+    Parameters
+    ----------
+    tc : np.ndarray
+        Fiber photometry signal.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
+
+    Returns
+    -------
+    tuple
+        - tc_triexp : np.ndarray
+            Fitted baseline.
+        - popt : np.ndarray
+            Optimal values for the parameters of the preprocessing.
+    """
+    # Low-pass filter
+    sos = butter(2, 0.01, btype="low", fs=sampling_rate, output="sos")
+    tc = sosfiltfilt(sos, tc)
+
+    # Calculate initial parameter estimates
+    fs = int(sampling_rate)  # shorthand
+    # Basic statistics for initial values
+    start_mean = np.mean(tc[:fs])
+    end_mean = np.mean(tc[-60 * fs :])
+    late_10min = np.mean(tc[-10 * 60 * fs : -10 * 60 * fs + 10 * fs])
+    late_5min = np.mean(tc[-5 * 60 * fs : -5 * 60 * fs + 10 * fs])
+    # intercept
+    p0 = np.zeros(7)
+    p0[6] = end_mean
+    # Fastest decay parameters
+    p0[0] = start_mean - np.mean(tc[2 * 60 * fs : 2 * 60 * fs + fs])
+    tmp = 1 - (start_mean - np.mean(tc[60 * fs : 61 * fs])) / p0[0]
+    p0[1] = 0.05 if tmp <= 0 else -np.log(tmp) / 60
+    # Slowest decay parameters
+    tmp = (late_10min - end_mean) / (late_5min - end_mean)
+    p0[5] = 1 / 3600 if tmp <= 1 else np.log(tmp) / (5 * 60)
+    p0[4] = (late_10min - end_mean) / np.exp(p0[5] * (-10 * 60))
+    # Middle decay parameters
+    p0[2] = start_mean - end_mean - p0[4]
+    p0[3] = (p0[1] + p0[5]) / 2
+    # Clean up invalid values
+    p0 = np.maximum(0, np.nan_to_num(p0))
+    params_str = ", ".join(f"{v:.5g}" for v in p0)
+    logging.info(f"Initial parameters for method 'tri-exp':  {params_str}")
+
+    # Fit curve
+    popt, _ = curve_fit(
+        lambda x, a, b, c, d, e, f, g: triple_exp(x, [a, b, c, d, e, f, g]),
+        timestamps,
+        tc,
+        p0=p0,
+        maxfev=10000,
+        bounds=(0, np.inf),
+        xtol=xtol,
+        x_scale=[1, 0.0001, 1, 0.0001, 1, 0.0001, 1],
+    )
+    tc_triexp = triple_exp(timestamps, popt)
+
+    # Calculate goodness-of-fit metrics
+    ss_res = np.sum((tc - tc_triexp) ** 2)
+    ss_tot = np.sum((tc - np.mean(tc)) ** 2)
+    logging.info(
+        f"R-squared: {1 - (ss_res / ss_tot):.5f}  "
+        f"SS_res: {ss_res:.5g}  "
+        f"SS_tot: {ss_tot:.5g}"
+    )
+
+    return tc_triexp, popt
+
+
 def tc_polyfit(
-    tc: np.ndarray, sampling_rate: float, degree: int
+    tc: np.ndarray, timestamps: np.ndarray, degree: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit with polynomial to remove bleaching artifact.
 
@@ -60,8 +147,8 @@ def tc_polyfit(
     ----------
     tc : np.ndarray
         Fiber photometry signal.
-    sampling_rate : float
-        Sampling rate of the signal in Hz.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     degree : int
         Degree of the polynomial to fit.
 
@@ -73,23 +160,20 @@ def tc_polyfit(
         - coefs : np.ndarray
             Optimal values for the parameters of the preprocessing.
     """
-    time_seconds = np.arange(len(tc)) / sampling_rate
-    coefs = np.polyfit(time_seconds, tc, deg=degree)
-    tc_poly = np.polyval(coefs, time_seconds)
+    coefs = np.polyfit(timestamps, tc, deg=degree)
+    tc_poly = np.polyval(coefs, timestamps)
     return tc_poly, coefs
 
 
-def tc_expfit(
-    tc: np.ndarray, sampling_rate: float = 20
-) -> tuple[np.ndarray, np.ndarray]:
+def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Fit with Biphasic exponential decay.
 
     Parameters
     ----------
     tc : np.ndarray
         Fiber photometry signal.
-    sampling_rate : float, optional
-        Sampling rate of the signal in Hz. Default is 20.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
 
     Returns
     -------
@@ -103,23 +187,23 @@ def tc_expfit(
     def func(x, a, b, c, d):
         return a * np.exp(-b * x) + c * np.exp(-d * x)
 
-    time_seconds = np.arange(len(tc)) / sampling_rate
     try:  # try first providing initial estimates
-        tc0 = tc[: int(sampling_rate)].mean()
+        tc0 = tc[:20].mean()
         popt, pcov = curve_fit(
             func,
-            time_seconds,
+            timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
             maxfev=10000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, time_seconds, tc, maxfev=10000)
-    tc_exp = func(time_seconds, *popt)
+        popt, pcov = curve_fit(func, timestamps, tc, maxfev=10000)
+    tc_exp = func(timestamps, *popt)
     return tc_exp, popt
 
 
 def baseline(
+    timestamps: np.ndarray,
     b_inf: float,
     b_slow: float = 0,
     b_fast: float = 0,
@@ -129,13 +213,13 @@ def baseline(
     t_fast: float = np.inf,
     t_rapid: float = np.inf,
     t_bright: float = np.inf,
-    T: int = 70000,
-    fs: float = 20,
 ) -> np.ndarray:
     """Baseline with Triphasic exponential decay (bleaching) x increasing saturating exponential (brightening).
 
     Parameters
     ----------
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     b_inf : float
         Asymptotic baseline value.
     b_slow : float, optional
@@ -154,26 +238,21 @@ def baseline(
         Time constant of the rapid decay component in seconds. Default is np.inf.
     t_bright : float, optional
         Time constant of the brightening component in seconds. Default is np.inf.
-    T : int, optional
-        Length of the trace in samples. Default is 70000.
-    fs : float, optional
-        Sampling rate in Hz. Default is 20.
 
     Returns
     -------
     np.ndarray
         Baseline signal.
     """
-    tmp = -np.arange(T)
     return (
         b_inf
         * (
             1
-            + b_slow * np.exp(tmp / (t_slow * fs))
-            + b_fast * np.exp(tmp / (t_fast * fs))
-            + b_rapid * np.exp(tmp / (t_rapid * fs))
+            + b_slow * np.exp(-timestamps / t_slow)
+            + b_fast * np.exp(-timestamps / t_fast)
+            + b_rapid * np.exp(-timestamps / t_rapid)
         )
-        * (1 - b_bright * np.exp(tmp / (t_bright * fs)))
+        * (1 - b_bright * np.exp(-timestamps / t_bright))
     )
 
 
@@ -228,10 +307,10 @@ def plot_fit(x, trace, fs=20, title=None, color="C0"):
 
 def tc_brightfit(
     trace: np.ndarray,
-    fs: float = 20,
-    rss_thresh: float | tuple[float, float] | str = (0.98, 0.995),
+    timestamps: np.ndarray,
+    rss_thresh: float | tuple[float, float] | str = (0.98, 0.997),
     M: RobustNorm | None = TukeyBiweight(3),
-    maxiter: int = 10,
+    maxiter: int = 5,
     tol: float = 1e-3,
     update_scale: bool = True,
     skewness_factor: float = 1.0,
@@ -246,10 +325,10 @@ def tc_brightfit(
     ----------
     trace : np.ndarray
         Fiber photometry signal.
-    fs : float, optional
-        Sampling rate of the signal in Hz. Default is 20.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     rss_thresh : float or tuple of float or str, optional
-        Factor(s) used for model selection. Default is (0.98, 0.995).
+        Factor(s) used for model selection. Default is (0.98, 0.997).
         If a tuple, then the order is (brightening, 3rd exponential).
         A more complex model (with 2 additional parameters)
         is accepted if the RSS decreases by at least this factor.
@@ -258,7 +337,7 @@ def tc_brightfit(
         The robust criterion function for downweighting outliers.
         Default is TukeyBiweight(3).
     maxiter : int, optional
-        The maximum number of IRLS iterations to try. Default is 10.
+        The maximum number of IRLS iterations to try. Default is 5.
         Has to be >0 for robust regression, 0 uses only OLS.
     tol : float, optional
         The convergence tolerance of the estimate. Default is 1e-3.
@@ -304,7 +383,12 @@ def tc_brightfit(
         def objective(params_to_optimize):
             params[optimize_param] = params_to_optimize
             return np.sum(
-                weights * (trace_ds - baseline(*params, T=T // ds, fs=fs / ds)) ** 2
+                weights
+                * (
+                    trace_ds
+                    - baseline(timestamps[ds // 2 :: ds][: len(trace_ds)], *params)
+                )
+                ** 2
             )
 
         bounds = np.array(
@@ -324,7 +408,7 @@ def tc_brightfit(
             f"{res.message}"
         )
         if plot:
-            plot_fit(params, trace, fs)
+            plot_fit(params, trace, timestamps)
         return params, res.fun, res.success, res.message
 
     x0 = np.array(
@@ -374,7 +458,7 @@ def tc_brightfit(
     params[~np.isnan(x0)] = x0[~np.isnan(x0)]
     logging.info(
         f"Cost on original trace with params obtained on decimated trace is "
-        f"{np.sum((trace - baseline(*params, T=len(trace), fs=fs)) ** 2):.3f}"
+        f"{np.sum((trace - baseline(timestamps, *params)) ** 2):.3f}"
     )
     logging.info(
         f"{CBOLD}Fit of original trace with {'triple-exp' if include_3rd else 'double-exp'} "
@@ -385,7 +469,7 @@ def tc_brightfit(
     # robust fit down-weighting outliers using IRLS
     # see https://github.com/statsmodels/statsmodels/blob/main/statsmodels/robust/robust_linear_model.py#L196
     if maxiter > 0 and M is not None and cost > 0:
-        f0 = baseline(*x, T=T, fs=fs)
+        f0 = baseline(timestamps, *x)
         resid = trace - f0
         scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
         deviance = M(resid / scl).sum()
@@ -410,7 +494,7 @@ def tc_brightfit(
             weights = M.weights(resid / scl)
             x[np.isnan(x0)] = np.nan  # set params of excluded terms to nan
             x, cost, success, msg = optimize(trace, x, weights=weights, plot=False)
-            f0 = baseline(*x, T=T, fs=fs)
+            f0 = baseline(timestamps, *x)
             resid = trace - f0
             if update_scale is True:
                 scl = scale.mad(
@@ -428,14 +512,15 @@ def tc_brightfit(
             f"Cost: {cost:.3f}  Success: {CGREEN if success else CRED} {success} {CEND} {msg}"
         )
         if plot:
-            plot_fit(x, trace, fs)
+            plot_fit(x, trace, timestamps)
 
-    return baseline(*x, T=T, fs=fs), x
+    return baseline(timestamps, *x), x
 
 
 # dF/F total function
 def chunk_processing(
     tc: np.ndarray,
+    timestamps: np.ndarray,
     method: str = "poly",
     n_frame_to_cut: int = 100,
     kernel_size: int = 1,
@@ -450,6 +535,8 @@ def chunk_processing(
     ----------
     tc : np.ndarray
         Fiber photometry signal.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
     method : str, optional
         Method to preprocess the data. Options: poly, exp, bright.
         Default is "poly".
@@ -479,14 +566,24 @@ def chunk_processing(
             The fitted baseline, including the filled beginning portion.
     """
     tc_cropped = tc_crop(tc, n_frame_to_cut)
+    ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
     try:
         if method == "poly":
-            tc_fit, tc_coefs = tc_polyfit(tc_filtered, sampling_rate, degree)
-        if method == "exp":
-            tc_fit, tc_coefs = tc_expfit(tc_filtered, sampling_rate)
+            tc_fit, tc_coefs = tc_polyfit(tc_filtered, ts, degree)
+        elif method == "exp":
+            tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
+        elif method == "tri-exp":
+            try:
+                tc_fit, tc_coefs = tc_triexpfit(
+                    tc_filtered, ts, sampling_rate, xtol=1e-5
+                )
+            except RuntimeError:
+                tc_fit, tc_coefs = tc_triexpfit(
+                    tc_filtered, ts, sampling_rate, xtol=1e-4
+                )
         if method == "bright":
-            tc_fit, tc_coefs = tc_brightfit(tc_filtered, sampling_rate)
+            tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -498,15 +595,155 @@ def chunk_processing(
         logging.warning(
             f"Processing with method {method} failed with Error {e}. Setting dF/F to nans."
         )
-        tc_dFoF = np.nan * tc
+        tc_dFoF = np.full(tc.shape, np.nan)
+        tc_fit = np.full(tc_filtered.shape, np.nan)
         tc_params = {
             i_coef: np.nan
-            for i_coef in range({"poly": 5, "exp": 4, "bright": 9}[method])
+            for i_coef in range(
+                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]
+            )
         }
-    tc_qualitymetrics = {"QC_metric": np.nan}
-    tc_params.update(tc_qualitymetrics)
+    # tc_qualitymetrics = {"QC_metric": np.nan}
+    # tc_params.update(tc_qualitymetrics)
 
     return tc_dFoF, tc_params, tc_filling(tc_fit, n_frame_to_cut)
+
+
+class OneSidedHuber(RobustNorm):
+    """
+    One-sided Huber norm for robust regression.
+
+    This norm applies standard quadratic loss to residuals less than or equal to
+    the threshold value (z ≤ c), and a linear loss to residuals greater than the
+    threshold (z > c). This makes the estimator robust against positive outliers
+    while treating negative residuals as in ordinary least squares.
+
+    Parameters
+    ----------
+    c : float, optional
+        Threshold parameter that controls the transition from quadratic to linear
+        loss. Default is 1.345, which gives 95% efficiency under the normal
+        distribution (same as statsmodels HuberT).
+    """
+
+    def __init__(self, c=1.345):  # default same as statsmodels HuberT
+        self.c = c
+
+    def rho(self, z):
+        # Loss function
+        return np.where(z <= self.c, 0.5 * z**2, self.c * (z - 0.5 * self.c))
+
+    def psi(self, z):
+        # Influence function
+        return np.where(z <= self.c, z, self.c)
+
+    def weights(self, z):
+        # Weights for IRLS
+        return np.where(z <= self.c, 1.0, self.c / z)
+
+    def psi_deriv(self, z):
+        # Derivative of influence function
+        return np.where(z <= self.c, 1.0, 0.0)
+
+
+class AsymmetricTukeyBiweight(RobustNorm):
+    """
+    Asymmetric Tukey Biweight norm for robust regression.
+
+    Allows different tuning constants for positive and negative residuals,
+    providing more flexibility in handling asymmetric outliers.
+
+    Parameters
+    ----------
+    c_pos : float, optional
+        Tuning constant for positive residuals, default is 4.685
+    c_neg : float, optional
+        Tuning constant for negative residuals, default is 4.685
+    """
+
+    def __init__(self, c_pos=4.685, c_neg=4.685):
+        if c_pos <= 0 or c_neg <= 0:
+            raise ValueError("Tuning constants must be positive")
+        self.c_pos = c_pos
+        self.c_neg = c_neg
+        self.factor_pos = c_pos**2 / 6
+        self.factor_neg = c_neg**2 / 6
+
+    def rho(self, z):
+        z = np.asarray(z)
+        res = np.empty_like(z)
+        # Handle positive side
+        pos_mask = z > 0
+        if np.isinf(self.c_pos):
+            res[pos_mask] = 0.5 * z[pos_mask] ** 2
+        else:
+            pos_inside = pos_mask & (z <= self.c_pos)
+            pos_outside = z > self.c_pos
+            res[pos_inside] = self.factor_pos * (
+                1 - (1 - (z[pos_inside] / self.c_pos) ** 2) ** 3
+            )
+            res[pos_outside] = self.factor_pos
+        # Handle negative side
+        neg_mask = z <= 0
+        if np.isinf(self.c_neg):
+            res[neg_mask] = 0.5 * z[neg_mask] ** 2
+        else:
+            neg_inside = neg_mask & (z >= -self.c_neg)
+            neg_outside = z < -self.c_neg
+            res[neg_inside] = self.factor_neg * (
+                1 - (1 - (z[neg_inside] / self.c_neg) ** 2) ** 3
+            )
+            res[neg_outside] = self.factor_neg
+
+        return res
+
+    def psi(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        res[pos_inside] = z[pos_inside] * (1 - (z[pos_inside] / self.c_pos) ** 2) ** 2
+        res[neg_inside] = z[neg_inside] * (1 - (z[neg_inside] / self.c_neg) ** 2) ** 2
+        return res
+
+    def weights(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        res[pos_inside] = (1 - (z[pos_inside] / self.c_pos) ** 2) ** 2
+        res[neg_inside] = (1 - (z[neg_inside] / self.c_neg) ** 2) ** 2
+        return res
+
+    def psi_deriv(self, z):
+        z = np.asarray(z)
+        res = np.zeros_like(z)
+        pos_inside = (z > 0) & (z <= self.c_pos)
+        neg_inside = (z <= 0) & (z >= -self.c_neg)
+        t_pos = z[pos_inside] / self.c_pos
+        t_pos_sq = t_pos**2
+        res[pos_inside] = (1 - t_pos_sq) ** 2 - 4 * t_pos_sq * (
+            1 - t_pos_sq
+        ) / self.c_pos**2
+        t_neg = z[neg_inside] / self.c_neg
+        t_neg_sq = t_neg**2
+        res[neg_inside] = (1 - t_neg_sq) ** 2 - 4 * t_neg_sq * (
+            1 - t_neg_sq
+        ) / self.c_neg**2
+        return res
+
+
+class OneSidedTukeyBiweight(AsymmetricTukeyBiweight):
+    """
+    A one-sided Tukey Biweight norm that applies quadratic loss to negative
+    residuals and Tukey biweight loss to positive residuals.
+
+    This is implemented as a special case of AsymmetricTukeyBiweight
+    with c_neg=np.inf, which simplifies to quadratic loss for negative values.
+    """
+
+    def __init__(self, c=4.685):
+        super().__init__(c_pos=c, c_neg=np.inf)
 
 
 def motion_correct(
@@ -514,8 +751,8 @@ def motion_correct(
     fs: float = 20,
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
-    M: RobustNorm = TukeyBiweight(3),
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+    M: RobustNorm = AsymmetricTukeyBiweight(2),
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
 
     Parameters
@@ -532,9 +769,9 @@ def motion_correct(
         Cutoff frequency of the lowpass Butterworth filter
         that's applied to filter out noise, in Hz.
         Default is 3.
-    M : statsmodels.robust.norms.RobustNorm, optional
+    M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
-        Default is TukeyBiweight(3).
+        Default is AsymmetricTukeyBiweight(2).
 
     Returns
     -------
@@ -547,10 +784,12 @@ def motion_correct(
             The regression coefficients.
         - intercepts : dict
             The regression intercepts.
+        - weights : dict
+            The final regression weights.
     """
     if np.isnan(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
-        return np.nan * dff, np.nan * dff, c, c
+        return np.nan * dff, np.nan * dff, c, c, c
     sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
     dff_filt = sosfiltfilt(sos, dff, axis=0).T
     idx_iso = dff.columns.get_loc("Iso")
@@ -558,10 +797,13 @@ def motion_correct(
     no_nans = ~np.isnan(dff_filt.sum(1))
     no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
     if M is not None:
-        coef = np.array(
-            [RLM(d, add_constant(motion), M=M).fit().params for d in dff_filt[no_nans]]
-        )
-        intercept = coef[:, 0]
+        coef = np.empty((no_nans.sum(), 2))
+        w = np.empty((no_nans.sum(), len(motion)))
+        for i, d in enumerate(dff_filt[no_nans]):
+            model = RLM(d, add_constant(motion), M=M).fit()
+            coef[i] = model.params
+            w[i] = model.weights
+        intercept = np.array(coef)[:, 0]
         coef = np.maximum(coef[:, 1:], 0)
     else:
         lr = LinearRegression(fit_intercept=True, positive=True).fit(
@@ -569,6 +811,11 @@ def motion_correct(
         )
         coef = lr.coef_
         intercept = lr.intercept_
+        w = np.ones((no_nans.sum(), len(motion)))
+    weights = np.full_like(dff_filt, np.nan)
+    weights[no_nans] = w
+    weights[idx_iso] = 1
+    weights = {ch: w for ch, w in zip(dff.columns, weights)}
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
     motions -= motions.mean(axis=1, keepdims=True)
@@ -586,4 +833,4 @@ def motion_correct(
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
         dff_mc = dff_mc.apply(lambda x: sosfiltfilt(sos, x))
-    return dff_mc, dff_filt, coef, intercept
+    return dff_mc, dff_filt, coef, intercept, weights
