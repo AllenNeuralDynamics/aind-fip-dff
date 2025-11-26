@@ -407,14 +407,6 @@ def plot_dff(
 
     # Set x-limits and labels
     tmin, tmax = np.nanmin(t), np.nanmax(t)
-<<<<<<< HEAD
-    ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
-    plt.suptitle(
-        f"$\\bf{{\Delta F/F_0}}$  Method: {method},  ROI: {fiber}", y=1
-    )
-    plt.xlabel("Time [s]")
-    plt.tight_layout(pad=0.2, h_pad=0)
-=======
     margin = (tmax - tmin) / 100
 
     for c in range(len(channels)):
@@ -597,13 +589,8 @@ def plot_motion_correction(
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
                     plot_psd(
-<<<<<<< HEAD
-                        ax2.twinx(), df_iso["filtered"], "C1", cut
-                    ).tick_params(axis="y", which="both", colors="C1")
-=======
                         ax2.twinx(), df_iso["filtered"], colors["filtered"], cut
                     ).tick_params(axis="y", which="both", colors=colors["filtered"])
->>>>>>> main
                 ax.plot(
                     t,
                     (intercept + df_iso["filtered"] * coef) * 100,
@@ -632,18 +619,7 @@ def plot_motion_correction(
             gs[3 * c : 3 * c + 3, 2],
             sharex=(None if c == 0 else right_axes[0]),
         )
-<<<<<<< HEAD
-        ax.scatter(
-            df_iso["dFF"] * 100,
-            df["dFF"] * 100,
-            s=0.1,
-            c="C0",
-            label="original",
-        )
-        ax.scatter(
-=======
         sc = ax.scatter(
->>>>>>> main
             df_iso["filtered"] * 100,
             df["filtered"] * 100,
             s=0.02 + 0.08 * weight,
@@ -684,24 +660,12 @@ def plot_motion_correction(
     plt.tight_layout(pad=0.2, h_pad=0, w_pad=0)
     for ax in center_axes:
         pos = ax.get_position()
-<<<<<<< HEAD
-        ax.set_position(
-            [pos.x0 - 0.025, pos.y0, pos.width + 0.015, pos.height]
-        )
-
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(
-        fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png"
-    )
-    plt.savefig(fig_file, dpi=300)
-=======
         ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.015, pos.height])
 
     os.makedirs(fig_path, exist_ok=True)
     fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
     plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
->>>>>>> main
 
 
 def create_metric(fiber, method, reference, value, motion=False):
@@ -746,7 +710,6 @@ def create_metric(fiber, method, reference, value, motion=False):
                 status=Status.FAIL if (motion and value > 10) else Status.PENDING,
             )
         ],
-<<<<<<< HEAD
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
         description=(
@@ -766,13 +729,6 @@ def create_metric(fiber, method, reference, value, motion=False):
                 Status.PASS,
                 Status.FAIL,
             ],
-=======
-        value=value,
-        description=(
-            "Maximum regression coefficient"
-            if motion
-            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
->>>>>>> main
         ),
         tags=[method],
     )
@@ -1029,11 +985,7 @@ if __name__ == "__main__":
                                 )
                             )
                             # run motion correction
-<<<<<<< HEAD
-                            df_mc_iter, df_filt_iter, coeff, intercept = (
-=======
                             df_mc_iter, df_filt_iter, coeff, intercept, weight = (
->>>>>>> main
                                 motion_correct(
                                     df_dff_iter,
                                     cutoff_freq_motion=args.cutoff_freq_motion,
@@ -1050,16 +1002,6 @@ if __name__ == "__main__":
                             ).filtered
                             return df_1fiber, df_pp_params, coeff, intercept, weight
 
-<<<<<<< HEAD
-                        with Pool(len(fiber_numbers)) as pool:
-                            res = pool.map(process1fiber, fiber_numbers)
-                        df_fip_pp = pd.concat(
-                            [df_fip_pp] + [r[0] for r in res]
-                        )
-                        df_pp_params = pd.concat(
-                            [df_pp_params] + [r[1] for r in res]
-                        )
-=======
                         if args.serial:
                             res = list(map(process1fiber, fiber_numbers))
                         else:
@@ -1067,7 +1009,6 @@ if __name__ == "__main__":
                                 res = pool.map(process1fiber, fiber_numbers)
                         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
                         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
->>>>>>> main
                         coeffs[pp_name] = [r[2] for r in res]
                         intercepts[pp_name] = [r[3] for r in res]
                         weights[pp_name] = [r[4] for r in res]
@@ -1118,29 +1059,6 @@ if __name__ == "__main__":
                             args.cutoff_freq_noise,
                         )
 
-<<<<<<< HEAD
-                    with Pool(len(fibers)) as pool:
-                        pool.map(foo, itertools.product(fibers, methods))
-                        pool.map(bar, itertools.product(fibers, methods))
-                evaluations = []
-
-                for method in methods:
-                    metrics = []
-                    for fiber in fibers:
-                        metrics.append(
-                            create_metric(
-                                fiber,
-                                method,
-                                f"dff-qc/ROI{fiber}_dff-{method}.png",
-                            )
-                        )
-                        metrics.append(
-                            create_metric(
-                                fiber,
-                                method,
-                                f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                                True,
-=======
                     def params_as_dict(fiber, method):
                         df = df_pp_params[
                             (df_pp_params["fiber_number"] == str(fiber))
@@ -1206,7 +1124,6 @@ if __name__ == "__main__":
                                     ),
                                     True,
                                 )
->>>>>>> main
                             )
                         )
                     # evaluations.append(create_evaluation(method, metrics))
