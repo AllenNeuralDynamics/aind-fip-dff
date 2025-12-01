@@ -110,6 +110,9 @@ def write_output_metadata(
         derived_dd = DataDescription.from_raw(
             data_description=DataDescription(**dd_data),
             process_name="processed",
+            modalities=[
+                Modality.FIB
+            ]
         )
         derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
     else:
