@@ -80,7 +80,7 @@ def write_output_metadata(
                 version=os.getenv("VERSION", ""),
                 parameters=metadata,
             ),
-            output_path=Path(output_fp).parent,
+            output_path=Path(output_fp).parent.as_posix(),
         )
     ]
 
