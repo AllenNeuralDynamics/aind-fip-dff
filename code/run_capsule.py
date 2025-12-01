@@ -1172,6 +1172,8 @@ if __name__ == "__main__":
             "procedures.json",
             "session.json",
             "rig.json",
+            "acquisition.json",
+            "instrument.json"
         ]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
