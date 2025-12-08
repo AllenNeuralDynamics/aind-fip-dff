@@ -117,8 +117,13 @@ def write_output_metadata(
 
     dd_file = Path(json_dir) / "data_description.json"
     if os.path.exists(dd_file):
+        # Remove behavior modality from original asset
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
+            dd_data["modality"] = [
+            m for m in dd_data.get("modality", [])
+            if m.get("abbreviation") != "behavior"
+            ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
         new_dd = dd_upgrader.upgrade()
         derived_dd = DerivedDataDescription.from_data_description(
