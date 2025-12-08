@@ -23,7 +23,6 @@ from aind_data_schema.core.quality_control import (QCMetric, QCStatus,
                                                    Status)
 from aind_data_schema_models.modalities import Modality
 from aind_log_utils import log
-from aind_qcportal_schema.metric_value import DropdownMetric
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
@@ -714,23 +713,11 @@ def create_metric(fiber, method, reference, value, motion=False):
         ],
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
+        value=value,
         description=(
-            "Review the preprocessing plots to ensure accurate "
-            "baseline (dF/F) and motion correction."
-        ),
-        value=DropdownMetric(
-            options=[
-                "Preprocessing successful",
-                (
-                    "Motion correction failed"
-                    if motion
-                    else "Baseline correction (dF/F) failed"
-                ),
-            ],
-            status=[
-                Status.PASS,
-                Status.FAIL,
-            ],
+            "Maximum regression coefficient"
+            if motion
+            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
         tags=[method],
     )
