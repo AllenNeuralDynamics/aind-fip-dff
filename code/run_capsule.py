@@ -723,34 +723,6 @@ def create_metric(fiber, method, reference, value, motion=False):
     )
 
 
-def create_evaluation(method, metrics):
-    """Create a QC evaluation for a specific preprocessing method.
-
-    Parameters
-    ----------
-    method : str
-        The preprocessing method being evaluated.
-    metrics : list of QCMetric
-        The metrics included in this evaluation.
-
-    Returns
-    -------
-    QCEvaluation
-        The created quality control evaluation.
-    """
-    name = f"Preprocessing using method '{method}'"
-    return QCEvaluation(
-        name=name,
-        modality=Modality.FIB,
-        stage=Stage.PROCESSING,
-        metrics=metrics,
-        allow_failed_metrics=False,
-        description=(
-            "Review the preprocessing plots to ensure accurate "
-            "baseline (dF/F) and motion correction."
-        ),
-    )
-
 
 if __name__ == "__main__":
     start_time = dt.now()
@@ -1106,7 +1078,6 @@ if __name__ == "__main__":
                                     True,
                                 )
                             )
-                    # evaluations.append(create_evaluation(method, metrics))
                     # Create QC object and save
                     qc = QualityControl(
                         metrics=metrics, default_grouping=methods
