@@ -121,8 +121,8 @@ def write_output_metadata(
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
             dd_data["modality"] = [
-            m for m in dd_data.get("modality", [])
-            if m.get("abbreviation") != "behavior"
+                m for m in dd_data.get("modality", [])
+                if isinstance(m, dict) and m.get("abbreviation") == "fib"
             ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
         new_dd = dd_upgrader.upgrade()
