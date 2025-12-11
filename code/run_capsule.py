@@ -92,7 +92,7 @@ def write_output_metadata(
         data_processes=dp,
         pipelines=[
             Code(
-                name="Fiberphotometry Processing Pipeline",
+                name="Fiberphotometry Schema 2.0 Processing Pipeline",
                 url=pipeline_url,
                 version=pipeline_version,
             )
