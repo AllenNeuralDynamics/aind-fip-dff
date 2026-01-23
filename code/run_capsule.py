@@ -719,7 +719,9 @@ def create_metric(fiber, method, reference, value, motion=False):
             if motion
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
-        tags=[method],
+        tags={
+            fiber: method
+        },
     )
 
 
@@ -1080,7 +1082,7 @@ if __name__ == "__main__":
                             )
                     # Create QC object and save
                     qc = QualityControl(
-                        metrics=metrics, default_grouping=methods
+                        metrics=metrics, default_grouping=[tuple(fibers)]
                     )
                     qc.write_standard_file(
                         output_directory=os.path.join(
