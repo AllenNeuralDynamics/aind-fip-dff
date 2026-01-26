@@ -10,7 +10,7 @@ ENV VERSION=14.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
-    aind-data-schema>2.0\
+    aind-data-schema>=2.4.0\
     aind-log-utils \
     aind-qcportal-schema \
     hdmf-zarr \
