@@ -1083,7 +1083,7 @@ if __name__ == "__main__":
                             )
                     # Create QC object and save
                     qc = QualityControl(
-                        metrics=metrics, default_grouping=[tuple(fibers)]
+                        metrics=metrics, default_grouping=[tuple(f"Fiber ROI {fiber}" for fiber in fibers)]
                     )
                     qc.write_standard_file(
                         output_directory=os.path.join(
