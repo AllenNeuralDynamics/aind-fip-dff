@@ -721,7 +721,7 @@ def create_metric(fiber, method, reference, value, motion=False):
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
         tags={
-            f"Fiber ROI {fiber}": metric_tag
+            f"Fiber ROI {fiber}": "preprocess_plots"
         },
     )
 
