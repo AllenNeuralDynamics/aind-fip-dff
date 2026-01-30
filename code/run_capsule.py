@@ -699,7 +699,7 @@ def create_metric(fiber, method, reference, value, motion=False):
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
         ),
     }
-    metric_tag = f"{'Motion' if motion else 'Baseline'}_correction_{method}"
+
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
