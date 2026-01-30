@@ -699,6 +699,7 @@ def create_metric(fiber, method, reference, value, motion=False):
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
         ),
     }
+
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -719,7 +720,9 @@ def create_metric(fiber, method, reference, value, motion=False):
             if motion
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
-        tags=[method],
+        tags={
+            f"Fiber ROI {fiber}": "preprocess_plots"
+        },
     )
 
 
@@ -1080,7 +1083,7 @@ if __name__ == "__main__":
                             )
                     # Create QC object and save
                     qc = QualityControl(
-                        metrics=metrics, default_grouping=methods
+                        metrics=metrics, default_grouping=[tuple(fibers)]
                     )
                     qc.write_standard_file(
                         output_directory=os.path.join(
