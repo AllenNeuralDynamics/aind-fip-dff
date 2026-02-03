@@ -721,7 +721,7 @@ def create_metric(fiber, method, reference, value, motion=False):
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
         tags={
-            f"Fiber ROI {fiber}": "preprocess_plots"
+            f"Fiber ROI": f"Fiber ROI {fiber}"
         },
     )
 
@@ -1083,7 +1083,7 @@ if __name__ == "__main__":
                             )
                     # Create QC object and save
                     qc = QualityControl(
-                        metrics=metrics, default_grouping=[tuple(f"Fiber ROI {fiber}" for fiber in fibers)]
+                        metrics=metrics, default_grouping=["modality", ("Fiber ROI")]
                     )
                     qc.write_standard_file(
                         output_directory=os.path.join(
