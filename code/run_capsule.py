@@ -132,7 +132,7 @@ def write_output_metadata(
         else []
     )
 
-    if os.path.exists(proc_path):
+    if proc_path.exists():
         with open(proc_path, "r") as f:
             proc_data = json.load(f)
 
@@ -155,7 +155,7 @@ def write_output_metadata(
     processing.write_standard_file(output_directory=Path(output_fp).parent)
 
     dd_file = Path(json_dir) / "data_description.json"
-    if os.path.exists(dd_file):
+    if dd_file.exists():
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
@@ -173,7 +173,7 @@ def plot_raw_dff_mc(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str = "/results/dff-qc/",
+    fig_path: Path = Path("/results/dff-qc/"),
 ):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
@@ -189,7 +189,7 @@ def plot_raw_dff_mc(
         A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
-    fig_path : str, optional
+    fig_path : Path, optional
         The path where the generated plot will be saved. Defaults to "/results/dff-qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
@@ -229,8 +229,8 @@ def plot_raw_dff_mc(
     plt.suptitle(f"Method: {method},  ROI: {fiber}", y=1)
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_{method}.png"
     plt.savefig(fig_file, dpi=200)
     plt.close()
     return fig_file
@@ -929,7 +929,7 @@ def process_nwb_file(
         df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
 
     # Add the session column
-    filename = os.path.basename(nwb_file_path)
+    filename = nwb_file_path.name
     if "behavior" in filename:
         session_name = filename.split(".")[0].split("behavior_")[1]
     else:
@@ -1228,7 +1228,7 @@ if __name__ == "__main__":
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = output_dir / "nwb" / os.path.basename(source_path)
+        destination_path = output_dir / "nwb" / Path(source_path).name
         shutil.copytree(source_path, destination_path)
 
         # Check if fiber photometry data exists
@@ -1280,13 +1280,10 @@ if __name__ == "__main__":
             start_date_time=start_time,
         )
 
-    src_directory = args.fiber_path
     # Iterate over all .json files in the source directory
-    if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
-            src_file = os.path.join(src_directory, filename)
-            if os.path.exists(src_file):
-                dest_file = output_dir / filename
-                # Move the file
-                shutil.copy2(src_file, dest_file)
-                logging.info(f"Moved: {src_file} to {dest_file}")
+    for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
+        src_file = fiber_path / filename
+        if src_file.exists():
+            dest_file = output_dir / filename
+            shutil.copy2(src_file, dest_file)
+            logging.info(f"Copied: {src_file} to {dest_file}")

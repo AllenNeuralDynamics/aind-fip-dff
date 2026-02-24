@@ -44,20 +44,21 @@ def process1dataset(source_path, args, start_time):
     start_time : dt
         Start time of the processing run.
     """
-    fiber_path = Path(source_path).parent.parent
+    source_path = Path(source_path)
+    fiber_path = source_path.parent.parent
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
 
     # Copy files to the destination directory
-    destination_path = Path(args.output_dir) / fiber_path.name
+    destination_path = args.output_dir / fiber_path.name
     shutil.copytree(
         fiber_path,
         destination_path,
         ignore=shutil.ignore_patterns("output", "dff-qc", "processing.json"),
     )
     # Update path to the NWB file within the copied directory
-    nwb_file_path = destination_path / "nwb" / os.path.basename(source_path)
+    nwb_file_path = destination_path / "nwb" / source_path.name
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
@@ -138,7 +139,11 @@ if __name__ == "__main__":
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
-        "-o", "--output-dir", type=str, default="/results/", help="Output directory"
+        "-o",
+        "--output-dir",
+        type=Path,
+        default=Path("/results/"),
+        help="Output directory",
     )
     parser.add_argument(
         "--dff_methods",
@@ -182,7 +187,7 @@ if __name__ == "__main__":
     args.serial = not args.parallel
 
     # Create the destination directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
