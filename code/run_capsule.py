@@ -90,7 +90,7 @@ def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
 
 def write_output_metadata(
     metadata: dict,
-    json_dir: str,
+    json_dir: Union[str, Path],
     process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -102,7 +102,7 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    json_dir : str
+    json_dir : Union[str, Path]
         Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
@@ -241,7 +241,7 @@ def plot_dff(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str,
+    fig_path: Path,
     n_frame_to_cut: int = 100,
     zoom_duration: float | None = 60.0,
 ) -> None:
@@ -271,7 +271,7 @@ def plot_dff(
     method : str
         Preprocessing method name (should match 'preprocess' in dataframe).
         Used for filtering data and in plot title.
-    fig_path : str
+    fig_path : Path
         Directory path where the generated plot will be saved.
         Directory will be created if it doesn't exist.
     n_frame_to_cut : int, optional
@@ -487,8 +487,8 @@ def plot_dff(
         )
         plt.tight_layout(pad=0.2, h_pad=0)
 
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_dff-{method}.png"
     plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
 
@@ -498,7 +498,7 @@ def plot_motion_correction(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str,
+    fig_path: Path,
     coeffs: list[dict],
     intercepts: list[dict],
     weights: list[dict],
@@ -518,7 +518,7 @@ def plot_motion_correction(
         A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
-    fig_path : str
+    fig_path : Path
         The path where the generated plot will be saved.
     coeffs : dict of list of dict
         The regression coefficients for each method/fiber/channel combination.
@@ -696,8 +696,8 @@ def plot_motion_correction(
         pos = ax.get_position()
         ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.015, pos.height])
 
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png"
     plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
 
@@ -1014,19 +1014,20 @@ def _plot_both(
     cutoff_freq_noise,
 ):
     """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
+    output_dir = Path(output_dir)
     plot_dff(
         df_fip_pp,
         fiber,
         channels,
         method,
-        os.path.join(output_dir, "dff-qc"),
+        output_dir / "dff-qc",
     )
     plot_motion_correction(
         df_fip_pp,
         fiber,
         channels,
         method,
-        os.path.join(output_dir, "dff-qc"),
+        output_dir / "dff-qc",
         coeffs,
         intercepts,
         weights,
@@ -1152,7 +1153,7 @@ def generate_qc_plots(
 
     # Create QC object and save
     qc = QualityControl(evaluations=evaluations)
-    qc.write_standard_file(output_directory=os.path.join(output_dir, "dff-qc"))
+    qc.write_standard_file(output_directory=output_dir / "dff-qc")
     return qc
 
 
@@ -1214,37 +1215,32 @@ if __name__ == "__main__":
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
+    output_dir = Path(args.output_dir)
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
 
     # Create the destination directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = os.path.join(
-            args.output_dir, "nwb", os.path.basename(source_path)
-        )
+        destination_path = output_dir / "nwb" / os.path.basename(source_path)
         shutil.copytree(source_path, destination_path)
-        # Update path to the NWB file within the copied directory
-        nwb_file_path = Path(destination_path)
 
         # Check if fiber photometry data exists
-        has_fiber = os.path.isdir(
-            os.path.join(args.fiber_path, "FIP")
-        ) or os.path.isdir(os.path.join(args.fiber_path, "fib"))
+        has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
 
         if has_fiber:
             # Print the path to ensure correctness
-            logging.info(f"Processing NWB file: {nwb_file_path}")
+            logging.info(f"Processing NWB file: {destination_path}")
 
             # Process the NWB file
             df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
-                process_nwb_file(nwb_file_path, args)
+                process_nwb_file(destination_path, args)
             )
 
             # Generate QC plots if requested
@@ -1257,7 +1253,7 @@ if __name__ == "__main__":
                     weights,
                     methods,
                     args,
-                    Path(args.output_dir),
+                    output_dir,
                 )
 
             process_name = (
@@ -1266,13 +1262,13 @@ if __name__ == "__main__":
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
-            os.makedirs(os.path.join(args.output_dir, "dff-qc"), exist_ok=True)
-            qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
+            qc_dir = output_dir / "dff-qc"
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            qc_file_path = qc_dir / "no_fip_to_qc.txt"
             # Create an empty file
-            with open(qc_file_path, "w") as file:
-                file.write(
-                    "FIP data files are missing. This may be a behavior session."
-                )
+            qc_file_path.write_text(
+                "FIP data files are missing. This may be a behavior session."
+            )
             process_name = None  # update processing.json w/o appending DataProcess
 
         write_output_metadata(
@@ -1280,7 +1276,7 @@ if __name__ == "__main__":
             json_dir=args.fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=os.path.join(args.output_dir, "nwb"),
+            output_fp=destination_path,
             start_date_time=start_time,
         )
 
@@ -1290,7 +1286,7 @@ if __name__ == "__main__":
         for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
             src_file = os.path.join(src_directory, filename)
             if os.path.exists(src_file):
-                dest_file = os.path.join(args.output_dir, filename)
+                dest_file = output_dir / filename
                 # Move the file
                 shutil.copy2(src_file, dest_file)
                 logging.info(f"Moved: {src_file} to {dest_file}")
