@@ -49,6 +49,45 @@ which are then appended back to the NWB file.
 """
 
 
+def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
+    """Setup logging from subject and data_description metadata.
+
+    Parameters
+    ----------
+    fiber_path : Path
+        Path to directory containing metadata files.
+
+    Returns
+    -------
+    tuple[str, str]
+        Subject ID and asset name.
+    """
+    # Load subject data
+    subject_json_path = fiber_path / "subject.json"
+    with open(subject_json_path, "r") as f:
+        subject_data = json.load(f)
+
+    subject_id = subject_data.get("subject_id", None)
+    if subject_id is None:
+        logging.error("No subject_id in subject file")
+        raise ValueError("subject_id is missing from the subject_data.")
+
+    # Load data description
+    data_description_path = fiber_path / "data_description.json"
+    with open(data_description_path, "r") as f:
+        data_description = json.load(f)
+
+    asset_name = data_description.get("name", None)
+
+    log.setup_logging(
+        "aind-fip-dff",
+        subject_id=subject_id,
+        asset_name=asset_name,
+    )
+
+    return subject_id, asset_name
+
+
 def write_output_metadata(
     metadata: dict,
     json_dir: str,
@@ -1176,31 +1215,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
 
-    # Load subject data
-    subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, "r") as f:
-        subject_data = json.load(f)
-
-    # Grab the subject_id and times for logging
-    subject_id = subject_data.get("subject_id", None)
-
-    # Raise an error if subject_id is None
-    if subject_id is None:
-        logging.error("No subject_id in subject file")
-        raise ValueError("subject_id is missing from the subject_data.")
-
-    # Load data description
-    data_description_path = fiber_path / "data_description.json"
-    with open(data_description_path, "r") as f:
-        data_description = json.load(f)
-
-    asset_name = data_description.get("name", None)
-
-    log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
-    )
+    # Setup logging
+    setup_logging_from_metadata(fiber_path)
 
     # Create the destination directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)

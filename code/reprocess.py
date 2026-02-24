@@ -13,18 +13,21 @@ from pathlib import Path
 import zarr
 from aind_data_schema.core.processing import ProcessName
 from aind_data_schema.core.quality_control import QualityControl
-from aind_log_utils import log
 from hdmf_zarr import NWBZarrIO
 
-import utils.nwb_dict_utils as nwb_utils
-from run_capsule import generate_qc_plots, process_nwb_file, write_output_metadata
+from run_capsule import (
+    generate_qc_plots,
+    process_nwb_file,
+    write_output_metadata,
+    setup_logging_from_metadata,
+)
 
 """
 This script reprocesses fiber photometry data from multiple datasets in parallel.
 The subfolder for each dataset includes the NWB file as well as metadata JSONs.
-For each dataset, the script processes each channel (typically 4) 
-of each ROI (typically 4) by generating baseline-corrected (ΔF/F) and motion-corrected 
-traces, which are then overwritten in the NWB file. It also updates the processing.json 
+For each dataset, the script processes each channel (typically 4) of each ROI
+(typically 4) by generating baseline-corrected (ΔF/F) and motion-corrected traces,
+which are then overwritten in the NWB file. It also updates the processing.json
 and quality_control.json files for each dataset.
 """
 
@@ -43,31 +46,8 @@ def process1dataset(source_path, args, start_time):
     """
     fiber_path = Path(source_path).parent.parent
 
-    # Load subject data
-    subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, "r") as f:
-        subject_data = json.load(f)
-
-    # Grab the subject_id for logging
-    subject_id = subject_data.get("subject_id", None)
-
-    # Raise an error if subject_id is None
-    if subject_id is None:
-        logging.error("No subject_id in subject file")
-        raise ValueError("subject_id is missing from the subject_data.")
-
-    # Load data description
-    data_description_path = fiber_path / "data_description.json"
-    with open(data_description_path, "r") as f:
-        data_description = json.load(f)
-
-    asset_name = data_description.get("name", None)
-
-    log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
-    )
+    # Setup logging
+    setup_logging_from_metadata(fiber_path)
 
     # Copy files to the destination directory
     destination_path = Path(args.output_dir) / fiber_path.name
