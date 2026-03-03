@@ -63,7 +63,11 @@ def process1dataset(source_path, args, start_time):
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
         nwb_file = io.read()
-        has_fiber = nwb_file.acquisition.get("G_0") is not None
+        fiber_prefixes = ("G_", "R_", "Iso_", "Signal_")
+        has_fiber = any(
+            isinstance(name, str) and any(name.startswith(p) for p in fiber_prefixes)
+            for name in nwb_file.acquisition.keys()
+        )
 
     if has_fiber:
         # 1) Remove from NWB object
