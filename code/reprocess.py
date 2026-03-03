@@ -73,10 +73,15 @@ def process1dataset(source_path, args, start_time):
                 del nwb_file.processing["fiber_photometry"]
                 io.write(nwb_file)
 
-        # 2) Physically delete leftover group
+        # 2) Physically delete leftover fiber_photometry group
         store = zarr.open(nwb_file_path, mode="r+")
         if "processing" in store:
-            del store["processing"]
+            processing_group = store["processing"]
+            if "fiber_photometry" in processing_group:
+                del processing_group["fiber_photometry"]
+                # Optionally remove the processing group if it is now empty
+                if len(processing_group.keys()) == 0:
+                    del store["processing"]
 
         # Use the shared processing function
         df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
