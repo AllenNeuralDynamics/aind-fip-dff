@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 from datetime import datetime as dt
+from multiprocessing import cpu_count
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Union
@@ -815,6 +816,40 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
     return df_fip_iter, df_pp_params_ses
 
 
+# Module-level worker state populated by Pool initializer
+_worker_state: dict = {}
+
+
+def _init_worker(df_fip, channels, pp_name, cutoff_freq_motion, cutoff_freq_noise, serial):
+    """Pool initializer that stores shared data in each worker's global state.
+
+    Using an initializer avoids repeatedly pickling and sending the full
+    ``df_fip`` DataFrame with every task when using multiprocessing.
+    """
+    global _worker_state
+    _worker_state = {
+        "df_fip": df_fip,
+        "channels": channels,
+        "pp_name": pp_name,
+        "cutoff_freq_motion": cutoff_freq_motion,
+        "cutoff_freq_noise": cutoff_freq_noise,
+        "serial": serial,
+    }
+
+
+def _process1fiber_worker(fiber_number):
+    """Thin wrapper used by Pool.map that reads shared state from worker globals."""
+    return _process1fiber(
+        fiber_number,
+        _worker_state["df_fip"],
+        _worker_state["channels"],
+        _worker_state["pp_name"],
+        _worker_state["cutoff_freq_motion"],
+        _worker_state["cutoff_freq_noise"],
+        _worker_state["serial"],
+    )
+
+
 def _process1fiber(
     fiber_number,
     df_fip,
@@ -948,25 +983,33 @@ def process_nwb_file(
         if pp_name not in ["poly", "exp", "tri-exp", "bright"]:
             continue
 
-        # Prepare arguments for each fiber
-        fiber_args = [
-            (
-                fib,
-                df_fip,
-                channels,
-                pp_name,
-                args.cutoff_freq_motion,
-                args.cutoff_freq_noise,
-                args.serial,
-            )
-            for fib in fiber_numbers
-        ]
-
         if args.serial:
-            res = [_process1fiber(*args_tuple) for args_tuple in fiber_args]
+            res = [
+                _process1fiber(
+                    fib,
+                    df_fip,
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                )
+                for fib in fiber_numbers
+            ]
         else:
-            with Pool(len(fiber_numbers)) as pool:
-                res = pool.starmap(_process1fiber, fiber_args)
+            with Pool(
+                min(len(fiber_numbers), cpu_count()),
+                initializer=_init_worker,
+                initargs=(
+                    df_fip,
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                ),
+            ) as pool:
+                res = pool.map(_process1fiber_worker, fiber_numbers)
 
         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
