@@ -1104,12 +1104,15 @@ def generate_qc_plots(
     channels = df_fip_pp["channel"].unique()
     fibers = df_fip_pp["fiber_number"].unique()
 
-    # Prepare arguments for parallel plotting
+    # Prepare arguments for parallel plotting, pre-filtering df_fip_pp per
+    # task to avoid repeatedly pickling the full DataFrame to every worker.
     plot_args = [
         (
             fiber,
             method,
-            df_fip_pp,
+            df_fip_pp[
+                (df_fip_pp.fiber_number == fiber) & (df_fip_pp.preprocess == method)
+            ],
             channels,
             output_dir,
             coeffs,
