@@ -1273,10 +1273,10 @@ if __name__ == "__main__":
 
         write_output_metadata(
             metadata=vars(args),
-            json_dir=args.fiber_path,
+            json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=destination_path,
+            output_fp=output_dir / "nwb",
             start_date_time=start_time,
         )
 
