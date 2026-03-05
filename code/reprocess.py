@@ -6,14 +6,13 @@ import os
 import shutil
 import sys
 from datetime import datetime as dt
-from multiprocessing import cpu_count
-from multiprocessing.pool import Pool
 from pathlib import Path
 
 import zarr
 from aind_data_schema.core.processing import ProcessName
 from aind_data_schema.core.quality_control import QualityControl
 from hdmf_zarr import NWBZarrIO
+from joblib import Parallel, delayed
 
 from run_capsule import (
     generate_qc_plots,
@@ -206,11 +205,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(source_paths) > 1:
-        with Pool(
-            min(len(source_paths), int(os.getenv("CO_CPUS", cpu_count())))
-        ) as pool:
-            pool.starmap(
-                process1dataset, [(path, args, start_time) for path in source_paths]
-            )
+        n_jobs = min(len(source_paths), int(os.getenv("CO_CPUS", -1)))
+        Parallel(n_jobs=n_jobs)(
+            delayed(process1dataset)(path, args, start_time) for path in source_paths
+        )
     else:
         process1dataset(source_paths[0], args, start_time)

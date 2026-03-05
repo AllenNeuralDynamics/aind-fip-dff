@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 from datetime import datetime as dt
-from multiprocessing.pool import Pool, ThreadPool
+from joblib import Parallel, delayed
 from pathlib import Path
 from typing import Union
 
@@ -858,14 +858,14 @@ def _process1fiber(
         - weight : dict
             Dictionary mapping channels to IRLS weights for motion correction.
     """
-    # dF/F - prepare arguments for each channel
-    channel_args = [(ch, df_fip, fiber_number, pp_name) for ch in channels]
-
+    # dF/F - process each channel
     if serial:
-        res = [_process1channel(*args_tuple) for args_tuple in channel_args]
+        res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
     else:
-        with ThreadPool(len(channels)) as tp:
-            res = tp.starmap(_process1channel, channel_args)
+        res = Parallel(n_jobs=len(channels), backend="threading")(
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name)
+            for ch in channels
+        )
 
     df_1fiber = pd.concat([r[0] for r in res], ignore_index=True)
     df_pp_params = pd.concat([r[1] for r in res])
@@ -948,25 +948,32 @@ def process_nwb_file(
         if pp_name not in ["poly", "exp", "tri-exp", "bright"]:
             continue
 
-        # Prepare arguments for each fiber
-        fiber_args = [
-            (
-                fib,
-                df_fip,
-                channels,
-                pp_name,
-                args.cutoff_freq_motion,
-                args.cutoff_freq_noise,
-                args.serial,
-            )
-            for fib in fiber_numbers
-        ]
-
         if args.serial:
-            res = [_process1fiber(*args_tuple) for args_tuple in fiber_args]
+            res = [
+                _process1fiber(
+                    fib,
+                    df_fip,
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                )
+                for fib in fiber_numbers
+            ]
         else:
-            with Pool(len(fiber_numbers)) as pool:
-                res = pool.starmap(_process1fiber, fiber_args)
+            res = Parallel(n_jobs=-1)(
+                delayed(_process1fiber)(
+                    fib,
+                    df_fip[df_fip.fiber_number == str(fib)],
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                )
+                for fib in fiber_numbers
+            )
 
         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
@@ -1109,7 +1116,9 @@ def generate_qc_plots(
         (
             fiber,
             method,
-            df_fip_pp,
+            df_fip_pp[
+                (df_fip_pp.fiber_number == fiber) & (df_fip_pp.preprocess == method)
+            ],
             channels,
             output_dir,
             coeffs,
@@ -1125,8 +1134,9 @@ def generate_qc_plots(
         for args_tuple in plot_args:
             _plot_both(*args_tuple)
     else:
-        with Pool(len(fibers)) as pool:
-            pool.starmap(_plot_both, plot_args)
+        Parallel(n_jobs=-1)(
+            delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
+        )
 
     evaluations = []
     for method in methods:
