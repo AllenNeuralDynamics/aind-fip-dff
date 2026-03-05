@@ -862,8 +862,9 @@ def _process1fiber(
     if serial:
         res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
     else:
-        res = Parallel(n_jobs=len(channels), prefer="threads")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name) for ch in channels
+        res = Parallel(n_jobs=len(channels), backend="threading")(
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name)
+            for ch in channels
         )
 
     df_1fiber = pd.concat([r[0] for r in res], ignore_index=True)
@@ -964,7 +965,7 @@ def process_nwb_file(
             res = Parallel(n_jobs=-1)(
                 delayed(_process1fiber)(
                     fib,
-                    df_fip,
+                    df_fip[df_fip.fiber_number == str(fib)],
                     channels,
                     pp_name,
                     args.cutoff_freq_motion,
@@ -1115,7 +1116,9 @@ def generate_qc_plots(
         (
             fiber,
             method,
-            df_fip_pp,
+            df_fip_pp[
+                (df_fip_pp.fiber_number == fiber) & (df_fip_pp.preprocess == method)
+            ],
             channels,
             output_dir,
             coeffs,
@@ -1131,7 +1134,9 @@ def generate_qc_plots(
         for args_tuple in plot_args:
             _plot_both(*args_tuple)
     else:
-        Parallel(n_jobs=-1)(delayed(_plot_both)(*args_tuple) for args_tuple in plot_args)
+        Parallel(n_jobs=-1)(
+            delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
+        )
 
     evaluations = []
     for method in methods:
