@@ -6,8 +6,7 @@ import logging
 import os
 import shutil
 from datetime import datetime as dt
-from multiprocessing import cpu_count
-from multiprocessing.pool import Pool, ThreadPool
+from joblib import Parallel, delayed
 from pathlib import Path
 from typing import Union
 
@@ -816,40 +815,6 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
     return df_fip_iter, df_pp_params_ses
 
 
-# Module-level worker state populated by Pool initializer
-_worker_state: dict = {}
-
-
-def _init_worker(df_fip, channels, pp_name, cutoff_freq_motion, cutoff_freq_noise, serial):
-    """Pool initializer that stores shared data in each worker's global state.
-
-    Using an initializer avoids repeatedly pickling and sending the full
-    ``df_fip`` DataFrame with every task when using multiprocessing.
-    """
-    global _worker_state
-    _worker_state = {
-        "df_fip": df_fip,
-        "channels": channels,
-        "pp_name": pp_name,
-        "cutoff_freq_motion": cutoff_freq_motion,
-        "cutoff_freq_noise": cutoff_freq_noise,
-        "serial": serial,
-    }
-
-
-def _process1fiber_worker(fiber_number):
-    """Thin wrapper used by Pool.map that reads shared state from worker globals."""
-    return _process1fiber(
-        fiber_number,
-        _worker_state["df_fip"],
-        _worker_state["channels"],
-        _worker_state["pp_name"],
-        _worker_state["cutoff_freq_motion"],
-        _worker_state["cutoff_freq_noise"],
-        _worker_state["serial"],
-    )
-
-
 def _process1fiber(
     fiber_number,
     df_fip,
@@ -893,14 +858,13 @@ def _process1fiber(
         - weight : dict
             Dictionary mapping channels to IRLS weights for motion correction.
     """
-    # dF/F - prepare arguments for each channel
-    channel_args = [(ch, df_fip, fiber_number, pp_name) for ch in channels]
-
+    # dF/F - process each channel
     if serial:
-        res = [_process1channel(*args_tuple) for args_tuple in channel_args]
+        res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
     else:
-        with ThreadPool(len(channels)) as tp:
-            res = tp.starmap(_process1channel, channel_args)
+        res = Parallel(n_jobs=len(channels), prefer="threads")(
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name) for ch in channels
+        )
 
     df_1fiber = pd.concat([r[0] for r in res], ignore_index=True)
     df_pp_params = pd.concat([r[1] for r in res])
@@ -997,19 +961,18 @@ def process_nwb_file(
                 for fib in fiber_numbers
             ]
         else:
-            with Pool(
-                min(len(fiber_numbers), cpu_count()),
-                initializer=_init_worker,
-                initargs=(
+            res = Parallel(n_jobs=-1)(
+                delayed(_process1fiber)(
+                    fib,
                     df_fip,
                     channels,
                     pp_name,
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
-                ),
-            ) as pool:
-                res = pool.map(_process1fiber_worker, fiber_numbers)
+                )
+                for fib in fiber_numbers
+            )
 
         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
@@ -1168,8 +1131,7 @@ def generate_qc_plots(
         for args_tuple in plot_args:
             _plot_both(*args_tuple)
     else:
-        with Pool(len(fibers)) as pool:
-            pool.starmap(_plot_both, plot_args)
+        Parallel(n_jobs=-1)(delayed(_plot_both)(*args_tuple) for args_tuple in plot_args)
 
     evaluations = []
     for method in methods:
