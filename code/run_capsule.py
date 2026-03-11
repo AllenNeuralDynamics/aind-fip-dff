@@ -836,7 +836,8 @@ if __name__ == "__main__":
         destination_path = os.path.join(
             args.output_dir, "fib.nwb.zarr"
         )
-        shutil.copytree(source_path, destination_path)
+        if not os.path.isdir(destination_path):
+            shutil.copytree(source_path, destination_path)
         # Update path to the NWB file within the copied directory
         nwb_file_path = destination_path
         if os.path.isdir(os.path.join(args.fiber_path, "FIP")) or os.path.isdir(
@@ -851,14 +852,8 @@ if __name__ == "__main__":
                 df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
                 # add the session column
                 filename = os.path.basename(nwb_file_path)
-                if "behavior" in filename:
-                    session_name = filename.split(".")[0]
-                    session_name = session_name.split("behavior_")[1]
-                else:
-                    session_name = filename.split(".")[0]
-                    session_name = session_name.split("FIP_")[1]
 
-                df_fip.insert(0, "session", session_name)
+                df_fip.insert(0, "session", asset_name)
 
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
