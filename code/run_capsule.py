@@ -837,7 +837,7 @@ if __name__ == "__main__":
     # Copy each matching file to the destination directory
     for source_path in source_paths:
         destination_path = os.path.join(
-            args.output_dir, "nwb", os.path.basename(source_path)
+            args.output_dir, "fib.nwb.zarr"
         )
         shutil.copytree(source_path, destination_path)
         # Update path to the NWB file within the copied directory
@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
             json_dir=args.fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=os.path.join(args.output_dir, "nwb"),
+            output_fp=os.path.join(args.output_dir, "fib.nwb.zarr"),
             start_date_time=start_time,
         )
 
