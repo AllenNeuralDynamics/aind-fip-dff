@@ -30,7 +30,6 @@ from aind_data_schema.core.quality_control import (
     Status,
 )
 from aind_data_schema_models.modalities import Modality
-from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
@@ -825,12 +824,6 @@ if __name__ == "__main__":
         data_description = json.load(f)
 
     asset_name = data_description.get("name", None)
-
-    log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
-    )
 
     # Create the destination directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
