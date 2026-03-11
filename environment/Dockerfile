@@ -1,4 +1,4 @@
-# hash:sha256:1059524086d5e3b2d9e2216e266ae536ec885dc14bcb4a468eae3437ce8aba40
+# hash:sha256:64121efcb1314b2e1fbe46bc449976abe9944a93a113d131ada9e06ea6bffd73
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -18,3 +18,16 @@ RUN pip3 install -U --no-cache-dir \
     pynwb==3.1.2 \
     scikit-learn==1.7.2 \
     statsmodels==0.14.5
+
+ADD "https://github.com/coder/code-server/releases/download/v4.100.3/code-server-4.100.3-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
+
+RUN cd /.code-server \
+    && tar -xvf code-server.tar.gz \
+    && rm code-server.tar.gz \
+    && ln -s /.code-server/code-server-4.100.3-linux-amd64/bin/code-server /usr/bin/code-server \
+    && mkdir -p /.vscode/extensions
+
+RUN code-server --extensions-dir="/.vscode/extensions" --install-extension ms-python.python@2025.14.0 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-toolsai.jupyter@2025.4.1 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension reditorsupport.r@2.8.6 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension saoudrizwan.claude-dev@3.35.1
