@@ -30,7 +30,6 @@ from aind_data_schema.core.quality_control import (
     Status,
 )
 from aind_data_schema_models.modalities import Modality
-from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
@@ -119,6 +118,10 @@ def write_output_metadata(
     if os.path.exists(dd_file):
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
+        dd_data["modality"] = [
+            m for m in dd_data.get("modality", [])
+            if isinstance(m, dict) and m.get("abbreviation") == "fib"
+        ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
         new_dd = dd_upgrader.upgrade()
         derived_dd = DerivedDataDescription.from_data_description(
@@ -822,12 +825,6 @@ if __name__ == "__main__":
 
     asset_name = data_description.get("name", None)
 
-    log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
-    )
-
     # Create the destination directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -837,9 +834,10 @@ if __name__ == "__main__":
     # Copy each matching file to the destination directory
     for source_path in source_paths:
         destination_path = os.path.join(
-            args.output_dir, "nwb", os.path.basename(source_path)
+            args.output_dir, "fib.nwb.zarr"
         )
-        shutil.copytree(source_path, destination_path)
+        if not os.path.isdir(destination_path):
+            shutil.copytree(source_path, destination_path)
         # Update path to the NWB file within the copied directory
         nwb_file_path = destination_path
         if os.path.isdir(os.path.join(args.fiber_path, "FIP")) or os.path.isdir(
@@ -854,14 +852,8 @@ if __name__ == "__main__":
                 df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
                 # add the session column
                 filename = os.path.basename(nwb_file_path)
-                if "behavior" in filename:
-                    session_name = filename.split(".")[0]
-                    session_name = session_name.split("behavior_")[1]
-                else:
-                    session_name = filename.split(".")[0]
-                    session_name = session_name.split("FIP_")[1]
 
-                df_fip.insert(0, "session", session_name)
+                df_fip.insert(0, "session", asset_name)
 
                 # now pass the dataframe through the preprocessing functions
                 df_fip_pp = pd.DataFrame()
@@ -1125,7 +1117,7 @@ if __name__ == "__main__":
             json_dir=args.fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=os.path.join(args.output_dir, "nwb"),
+            output_fp=os.path.join(args.output_dir, "fib.nwb.zarr"),
             start_date_time=start_time,
         )
 
