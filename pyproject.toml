@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "aind-data-schema==1.4.0",
-    "aind-log-utils==0.2.4", 
+    "aind-log-utils==0.2.4",
     "aind-metadata-upgrader==0.0.26",
     "aind-qcportal-schema==0.4.0",
     "hdmf-zarr==0.11.3",
