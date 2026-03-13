@@ -83,6 +83,7 @@ def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
     #     subject_id=subject_id,
     #     asset_name=asset_name,
     # )
+    logging.basicConfig(level=logging.INFO)
 
     return subject_id, asset_name
 
