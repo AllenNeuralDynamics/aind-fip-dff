@@ -150,4 +150,4 @@ dmypy.json
 .vscode
 
 # CodeOcean
-.codeocean/*
+.codeocean/
