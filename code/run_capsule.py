@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 from datetime import datetime as dt
-from multiprocessing.pool import Pool, ThreadPool
+from joblib import Parallel, delayed
 from pathlib import Path
 from typing import Union
 
@@ -48,9 +48,49 @@ which are then appended back to the NWB file.
 """
 
 
+def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
+    """Setup logging from subject and data_description metadata.
+
+    Parameters
+    ----------
+    fiber_path : Path
+        Path to directory containing metadata files.
+
+    Returns
+    -------
+    tuple[str, str]
+        Subject ID and asset name.
+    """
+    # Load subject data
+    subject_json_path = fiber_path / "subject.json"
+    with open(subject_json_path, "r") as f:
+        subject_data = json.load(f)
+
+    subject_id = subject_data.get("subject_id", None)
+    if subject_id is None:
+        logging.error("No subject_id in subject file")
+        raise ValueError("subject_id is missing from the subject_data.")
+
+    # Load data description
+    data_description_path = fiber_path / "data_description.json"
+    with open(data_description_path, "r") as f:
+        data_description = json.load(f)
+
+    asset_name = data_description.get("name", None)
+
+    # log.setup_logging(
+    #     "aind-fip-dff",
+    #     subject_id=subject_id,
+    #     asset_name=asset_name,
+    # )
+    logging.basicConfig(level=logging.INFO)
+
+    return subject_id, asset_name
+
+
 def write_output_metadata(
     metadata: dict,
-    json_dir: str,
+    json_dir: Union[str, Path],
     process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -62,7 +102,7 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    json_dir : str
+    json_dir : Union[str, Path]
         Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
@@ -92,7 +132,7 @@ def write_output_metadata(
         else []
     )
 
-    if os.path.exists(proc_path):
+    if proc_path.exists():
         with open(proc_path, "r") as f:
             proc_data = json.load(f)
 
@@ -115,7 +155,7 @@ def write_output_metadata(
     processing.write_standard_file(output_directory=Path(output_fp).parent)
 
     dd_file = Path(json_dir) / "data_description.json"
-    if os.path.exists(dd_file):
+    if dd_file.exists():
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
         dd_data["modality"] = [
@@ -137,7 +177,7 @@ def plot_raw_dff_mc(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str = "/results/dff-qc/",
+    fig_path: Path = Path("/results/dff-qc/"),
 ):
     """Plot raw, dF/F, and preprocessed (dF/F with motion correction) photometry traces
     for multiple channels from an NWB file.
@@ -153,7 +193,7 @@ def plot_raw_dff_mc(
         A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
-    fig_path : str, optional
+    fig_path : Path, optional
         The path where the generated plot will be saved. Defaults to "/results/dff-qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
@@ -193,8 +233,8 @@ def plot_raw_dff_mc(
     plt.suptitle(f"Method: {method},  ROI: {fiber}", y=1)
     plt.xlabel("Time [" + trace.unit + "]")
     plt.tight_layout(pad=0.2)
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_{method}.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_{method}.png"
     plt.savefig(fig_file, dpi=200)
     plt.close()
     return fig_file
@@ -205,7 +245,7 @@ def plot_dff(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str,
+    fig_path: Path,
     n_frame_to_cut: int = 100,
     zoom_duration: float | None = 60.0,
 ) -> None:
@@ -235,7 +275,7 @@ def plot_dff(
     method : str
         Preprocessing method name (should match 'preprocess' in dataframe).
         Used for filtering data and in plot title.
-    fig_path : str
+    fig_path : Path
         Directory path where the generated plot will be saved.
         Directory will be created if it doesn't exist.
     n_frame_to_cut : int, optional
@@ -451,8 +491,8 @@ def plot_dff(
         )
         plt.tight_layout(pad=0.2, h_pad=0)
 
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_dff-{method}.png"
     plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
 
@@ -462,7 +502,7 @@ def plot_motion_correction(
     fiber: str,
     channels: list[str],
     method: str,
-    fig_path: str,
+    fig_path: Path,
     coeffs: list[dict],
     intercepts: list[dict],
     weights: list[dict],
@@ -482,7 +522,7 @@ def plot_motion_correction(
         A list of channel names to be plotted (e.g., ['G', 'R', 'Iso']).
     method : str
         The name of the preprocessing method used ("poly", "exp", or "bright").
-    fig_path : str
+    fig_path : Path
         The path where the generated plot will be saved.
     coeffs : dict of list of dict
         The regression coefficients for each method/fiber/channel combination.
@@ -660,8 +700,8 @@ def plot_motion_correction(
         pos = ax.get_position()
         ax.set_position([pos.x0 - 0.02, pos.y0, pos.width + 0.015, pos.height])
 
-    os.makedirs(fig_path, exist_ok=True)
-    fig_file = os.path.join(fig_path, f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png")
+    fig_path.mkdir(parents=True, exist_ok=True)
+    fig_file = fig_path / f"ROI{fiber}_dff-{method}_mc-iso-IRLS.png"
     plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
     plt.close()
 
@@ -746,6 +786,382 @@ def create_evaluation(method, metrics):
     )
 
 
+def _process1channel(channel, df_fip, fiber_number, pp_name):
+    """Helper function to process a single channel (must be at module level for pickling)."""
+    df_fip_iter = df_fip[
+        (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
+    ].copy()
+
+    NM_values = df_fip_iter["signal"].values
+    timestamps = df_fip_iter["time_fip"].values
+    NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
+        NM_values,
+        timestamps - timestamps[0],
+        method=pp_name,
+    )
+    params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
+    logging.info(
+        f"Fitted parameters for {channel:>3}{fiber_number} "
+        f"using method '{pp_name}':  {params_str}"
+    )
+    df_fip_iter.loc[:, "dFF"] = NM_preprocessed
+    df_fip_iter.loc[:, "preprocess"] = pp_name
+    df_fip_iter.loc[:, "F0"] = NM_fit
+
+    NM_fitting_params.update(
+        {
+            "preprocess": pp_name,
+            "channel": channel,
+            "fiber_number": fiber_number,
+        }
+    )
+    df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
+    return df_fip_iter, df_pp_params_ses
+
+
+def _process1fiber(
+    fiber_number,
+    df_fip,
+    channels,
+    pp_name,
+    cutoff_freq_motion,
+    cutoff_freq_noise,
+    serial,
+):
+    """Helper function to process a single fiber (must be at module level for pickling).
+
+    Parameters
+    ----------
+    fiber_number : str
+        Fiber/ROI number.
+    df_fip : pd.DataFrame
+        Raw fiber photometry dataframe.
+    channels : np.ndarray
+        Array of channel names.
+    pp_name : str
+        Preprocessing method name.
+    cutoff_freq_motion : float
+        Cutoff frequency for motion filtering.
+    cutoff_freq_noise : float
+        Cutoff frequency for noise filtering.
+    serial : bool
+        Whether to process channels serially.
+
+    Returns
+    -------
+    tuple
+        Contains five elements:
+        - df_1fiber : pd.DataFrame
+            Dataframe with preprocessed fiber photometry signals.
+        - df_pp_params : pd.DataFrame
+            Dataframe with the parameters of the preprocessing.
+        - coeff : dict
+            Dictionary mapping channels to regression coefficients for motion correction.
+        - intercept : dict
+            Dictionary mapping channels to regression intercepts for motion correction.
+        - weight : dict
+            Dictionary mapping channels to IRLS weights for motion correction.
+    """
+    # dF/F - process each channel
+    if serial:
+        res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
+    else:
+        res = Parallel(n_jobs=len(channels), backend="threading")(
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name)
+            for ch in channels
+        )
+
+    df_1fiber = pd.concat([r[0] for r in res], ignore_index=True)
+    df_pp_params = pd.concat([r[1] for r in res])
+
+    # Motion correction
+    df_dff_iter = pd.DataFrame(  # convert to #frames x #channels
+        np.column_stack(
+            [df_1fiber[df_1fiber["channel"] == c]["dFF"].values for c in channels]
+        ),
+        columns=channels,
+    )
+    # Run motion correction
+    df_mc_iter, df_filt_iter, coeff, intercept, weight = motion_correct(
+        df_dff_iter,
+        cutoff_freq_motion=cutoff_freq_motion,
+        cutoff_freq_noise=cutoff_freq_noise,
+    )
+    # Convert back to a table with columns channel and signal
+    df_1fiber["motion_corrected"] = df_mc_iter.melt(
+        var_name="channel", value_name="motion_corrected"
+    ).motion_corrected
+    df_1fiber["filtered"] = df_filt_iter.melt(
+        var_name="channel", value_name="filtered"
+    ).filtered
+    return df_1fiber, df_pp_params, coeff, intercept, weight
+
+
+def process_nwb_file(
+    nwb_file_path: Path,
+    args,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict, list]:
+    """Process a single NWB file: compute dF/F and motion correction.
+
+    Parameters
+    ----------
+    nwb_file_path : Path
+        Path to the NWB file to process (will be written to).
+    args : argparse.Namespace
+        Command-line arguments containing processing parameters.
+
+    Returns
+    -------
+    tuple
+        Contains:
+        - df_fip_pp : pd.DataFrame
+            Preprocessed dataframe with dF/F and motion-corrected traces.
+        - df_pp_params : pd.DataFrame
+            Fitting parameters for each fiber/channel/method.
+        - coeffs : dict
+            Regression coefficients by method.
+        - intercepts : dict
+            Regression intercepts by method.
+        - weights : dict
+            IRLS weights by method.
+        - methods : list
+            List of preprocessing methods used.
+    """
+    # Open NWB file and convert to dataframe
+    with NWBZarrIO(path=str(nwb_file_path), mode="r") as io:
+        nwb_file = io.read()
+        df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
+
+    df_fip_pp = pd.DataFrame()
+    df_pp_params = pd.DataFrame()
+    coeffs, intercepts, weights = {}, {}, {}
+    fiber_numbers = df_fip["fiber_number"].unique()
+    channels = df_fip["channel"].unique()
+    channels = channels[~pd.isna(channels)]
+
+    for pp_name in args.dff_methods:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright"]:
+            continue
+
+        if args.serial:
+            res = [
+                _process1fiber(
+                    fib,
+                    df_fip,
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                )
+                for fib in fiber_numbers
+            ]
+        else:
+            res = Parallel(n_jobs=-1)(
+                delayed(_process1fiber)(
+                    fib,
+                    df_fip[df_fip.fiber_number == str(fib)],
+                    channels,
+                    pp_name,
+                    args.cutoff_freq_motion,
+                    args.cutoff_freq_noise,
+                    args.serial,
+                )
+                for fib in fiber_numbers
+            )
+
+        df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
+        df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
+        coeffs[pp_name] = [r[2] for r in res]
+        intercepts[pp_name] = [r[3] for r in res]
+        weights[pp_name] = [r[4] for r in res]
+
+    methods = list(df_fip_pp.preprocess.unique())
+
+    # Write back to NWB
+    with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
+        nwb_file = io.read()
+
+        for method in methods:
+            for signal, suffix in (
+                ("dFF", f"_dff-{method}"),
+                ("motion_corrected", f"_dff-{method}_mc-iso-IRLS"),
+            ):
+                # format the processed traces as dict for conversion to nwb
+                dict_from_df = nwb_utils.split_fip_traces(
+                    df_fip_pp[df_fip_pp.preprocess == method], signal=signal
+                )
+                # and add them to the original nwb
+                nwb_file = nwb_utils.attach_dict_fip(nwb_file, dict_from_df, suffix)
+
+        io.write(nwb_file)
+        logging.info(
+            "Successfully updated the nwb with preprocessed data"
+            f" using methods {methods}"
+        )
+
+    return df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods
+
+
+def _plot_both(
+    fiber,
+    method,
+    df_fip_pp,
+    channels,
+    output_dir,
+    coeffs,
+    intercepts,
+    weights,
+    cutoff_freq_motion,
+    cutoff_freq_noise,
+):
+    """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
+    output_dir = Path(output_dir)
+    plot_dff(
+        df_fip_pp,
+        fiber,
+        channels,
+        method,
+        output_dir / "dff-qc",
+    )
+    plot_motion_correction(
+        df_fip_pp,
+        fiber,
+        channels,
+        method,
+        output_dir / "dff-qc",
+        coeffs,
+        intercepts,
+        weights,
+        cutoff_freq_motion,
+        cutoff_freq_noise,
+    )
+
+
+def _params_as_dict(fiber, method, df_pp_params):
+    """Helper function to convert parameters to dict (must be at module level for pickling)."""
+    df = df_pp_params[
+        (df_pp_params["fiber_number"] == str(fiber))
+        & (df_pp_params["preprocess"] == method)
+    ][
+        ["channel"]
+        + list(range({"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]))
+    ]
+    param_names = {
+        "poly": [*"abcde"],
+        "exp": [*"abcd"],
+        "tri-exp": [*"abcdefg"],
+        "bright": [
+            "b_inf",
+            "b_slow",
+            "b_fast",
+            "b_rapid",
+            "b_bright",
+            "t_slow",
+            "t_fast",
+            "t_rapid",
+            "t_bright",
+        ],
+    }
+    df.columns = ["channel"] + param_names[method]
+    return df.to_dict("list")
+
+
+def generate_qc_plots(
+    df_fip_pp: pd.DataFrame,
+    df_pp_params: pd.DataFrame,
+    coeffs: dict,
+    intercepts: dict,
+    weights: dict,
+    methods: list,
+    args,
+    output_dir: Path,
+) -> QualityControl:
+    """Generate QC plots and return QualityControl object.
+
+    Parameters
+    ----------
+    df_fip_pp : pd.DataFrame
+        Preprocessed fiber photometry dataframe.
+    df_pp_params : pd.DataFrame
+        Dataframe with fitting parameters.
+    coeffs : dict
+        Regression coefficients by method.
+    intercepts : dict
+        Regression intercepts by method.
+    weights : dict
+        IRLS weights by method.
+    methods : list
+        List of preprocessing methods used.
+    args : argparse.Namespace
+        Command-line arguments.
+    output_dir : Path
+        Output directory for QC plots.
+
+    Returns
+    -------
+    QualityControl
+        Quality control object with evaluations.
+    """
+    channels = df_fip_pp["channel"].unique()
+    fibers = df_fip_pp["fiber_number"].unique()
+
+    # Prepare arguments for parallel plotting
+    plot_args = [
+        (
+            fiber,
+            method,
+            df_fip_pp[
+                (df_fip_pp.fiber_number == fiber) & (df_fip_pp.preprocess == method)
+            ],
+            channels,
+            output_dir,
+            coeffs,
+            intercepts,
+            weights,
+            args.cutoff_freq_motion,
+            args.cutoff_freq_noise,
+        )
+        for fiber, method in itertools.product(fibers, methods)
+    ]
+
+    if args.serial:
+        for args_tuple in plot_args:
+            _plot_both(*args_tuple)
+    else:
+        Parallel(n_jobs=-1)(
+            delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
+        )
+
+    evaluations = []
+    for method in methods:
+        metrics = []
+        for fiber in fibers:
+            metrics.append(
+                create_metric(
+                    fiber,
+                    method,
+                    f"dff-qc/ROI{fiber}_dff-{method}.png",
+                    _params_as_dict(fiber, method, df_pp_params),
+                )
+            )
+            metrics.append(
+                create_metric(
+                    fiber,
+                    method,
+                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
+                    max(v for k, v in coeffs[method][int(fiber)].items() if k != "Iso"),
+                    True,
+                )
+            )
+        evaluations.append(create_evaluation(method, metrics))
+
+    # Create QC object and save
+    qc = QualityControl(evaluations=evaluations)
+    qc.write_standard_file(output_directory=output_dir / "dff-qc")
+    return qc
+
+
 if __name__ == "__main__":
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -804,330 +1220,75 @@ if __name__ == "__main__":
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
+    output_dir = Path(args.output_dir)
 
-    # Load subject data
-    subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, "r") as f:
-        subject_data = json.load(f)
-
-    # Grab the subject_id and times for logging
-    subject_id = subject_data.get("subject_id", None)
-
-    # Raise an error if subject_id is None
-    if subject_id is None:
-        logging.info("No subject_id in subject file")
-        raise ValueError("subject_id is missing from the subject_data.")
-
-    # Load data description
-    data_description_path = fiber_path / "data_description.json"
-    with open(data_description_path, "r") as f:
-        data_description = json.load(f)
-
-    asset_name = data_description.get("name", None)
+    # Setup logging
+    setup_logging_from_metadata(fiber_path)
 
     # Create the destination directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = os.path.join(
-            args.output_dir, "fib.nwb.zarr"
-        )
-        if not os.path.isdir(destination_path):
-            shutil.copytree(source_path, destination_path)
-        # Update path to the NWB file within the copied directory
-        nwb_file_path = destination_path
-        if os.path.isdir(os.path.join(args.fiber_path, "FIP")) or os.path.isdir(
-            os.path.join(args.fiber_path, "fib")
-        ):
+        destination_path = output_dir / "fib.nwb.zarr"
+        shutil.copytree(source_path, destination_path)
+
+        # Check if fiber photometry data exists
+        has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+
+        if has_fiber:
             # Print the path to ensure correctness
-            logging.info(f"Processing NWB file: {nwb_file_path}")
+            logging.info(f"Processing NWB file: {destination_path}")
 
-            with NWBZarrIO(path=str(nwb_file_path), mode="r+") as io:
-                nwb_file = io.read()
-                # convert nwb to dataframe
-                df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
-                # add the session column
-                filename = os.path.basename(nwb_file_path)
+            # Process the NWB file
+            df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
+                process_nwb_file(destination_path, args)
+            )
 
-                df_fip.insert(0, "session", asset_name)
-
-                # now pass the dataframe through the preprocessing functions
-                df_fip_pp = pd.DataFrame()
-                df_pp_params = pd.DataFrame()
-                coeffs, intercepts, weights = {}, {}, {}
-                fiber_numbers = df_fip["fiber_number"].unique()
-                channels = df_fip["channel"].unique()
-                channels = channels[~pd.isna(channels)]
-                for pp_name in args.dff_methods:
-                    if pp_name in ["poly", "exp", "tri-exp", "bright"]:
-
-                        def process1fiber(
-                            fiber_number: str,
-                        ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
-                            """Preprocess the fiber photometry signal of one ROI (dF/F + motion correction).
-
-                            Parameters
-                            ----------
-                            fiber_number : str
-                                Fiber/ROI number.
-
-                            Returns
-                            -------
-                            tuple
-                                Contains four elements:
-                                - df_1fiber : pd.DataFrame
-                                    Dataframe with preprocessed fiber photometry signals.
-                                - df_pp_params : pd.DataFrame
-                                    Dataframe with the parameters of the preprocessing.
-                                - coeff : dict
-                                    Dictionary mapping channels to regression coefficients for motion correction.
-                                - intercept : dict
-                                    Dictionary mapping channels to regression intercepts for motion correction.
-                            """
-
-                            # dF/F
-                            def process1channel(channel):
-                                df_fip_iter = df_fip[
-                                    (df_fip["fiber_number"] == fiber_number)
-                                    & (df_fip["channel"] == channel)
-                                ].copy()
-
-                                NM_values = df_fip_iter["signal"].values
-                                timestamps = df_fip_iter["time_fip"].values
-                                NM_preprocessed, NM_fitting_params, NM_fit = (
-                                    chunk_processing(
-                                        NM_values,
-                                        timestamps - timestamps[0],
-                                        method=pp_name,
-                                    )
-                                )
-                                params_str = ", ".join(
-                                    f"{v:.5g}" for v in NM_fitting_params.values()
-                                )
-                                logging.info(
-                                    f"Fitted parameters for {channel:>3}{fiber_number} "
-                                    f"using method '{pp_name}':  {params_str}"
-                                )
-                                df_fip_iter.loc[:, "dFF"] = NM_preprocessed
-                                df_fip_iter.loc[:, "preprocess"] = pp_name
-                                df_fip_iter.loc[:, "F0"] = NM_fit
-
-                                NM_fitting_params.update(
-                                    {
-                                        "preprocess": pp_name,
-                                        "channel": channel,
-                                        "fiber_number": fiber_number,
-                                    }
-                                )
-                                df_pp_params_ses = pd.DataFrame(
-                                    NM_fitting_params, index=[0]
-                                )
-                                return df_fip_iter, df_pp_params_ses
-
-                            if args.serial:
-                                res = list(map(process1channel, channels))
-                            else:
-                                with ThreadPool(len(channels)) as tp:
-                                    res = tp.map(process1channel, channels)
-                            df_1fiber = pd.concat(
-                                [r[0] for r in res], ignore_index=True
-                            )
-                            df_pp_params = pd.concat([r[1] for r in res])
-
-                            # motion correction
-                            df_dff_iter = (
-                                pd.DataFrame(  # convert to #frames x #channels
-                                    np.column_stack(
-                                        [
-                                            df_1fiber[df_1fiber["channel"] == c][
-                                                "dFF"
-                                            ].values
-                                            for c in channels
-                                        ]
-                                    ),
-                                    columns=channels,
-                                )
-                            )
-                            # run motion correction
-                            df_mc_iter, df_filt_iter, coeff, intercept, weight = (
-                                motion_correct(
-                                    df_dff_iter,
-                                    cutoff_freq_motion=args.cutoff_freq_motion,
-                                    cutoff_freq_noise=args.cutoff_freq_noise,
-                                )
-                            )
-                            # convert back to a table with columns channel and signal
-                            df_1fiber["motion_corrected"] = df_mc_iter.melt(
-                                var_name="channel", value_name="motion_corrected"
-                            ).motion_corrected
-                            df_1fiber["filtered"] = df_filt_iter.melt(
-                                var_name="channel", value_name="filtered"
-                            ).filtered
-                            return df_1fiber, df_pp_params, coeff, intercept, weight
-
-                        if args.serial:
-                            res = list(map(process1fiber, fiber_numbers))
-                        else:
-                            with Pool(len(fiber_numbers)) as pool:
-                                res = pool.map(process1fiber, fiber_numbers)
-                        df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
-                        df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
-                        coeffs[pp_name] = [r[2] for r in res]
-                        intercepts[pp_name] = [r[3] for r in res]
-                        weights[pp_name] = [r[4] for r in res]
-
-                methods = df_fip_pp.preprocess.unique()
-                for method in methods:
-                    for signal, suffix in (
-                        ("dFF", f"_dff-{method}"),
-                        ("motion_corrected", f"_dff-{method}_mc-iso-IRLS"),
-                    ):
-                        # format the processed traces as dict for conversion to nwb
-                        dict_from_df = nwb_utils.split_fip_traces(
-                            df_fip_pp[df_fip_pp.preprocess == method], signal=signal
-                        )
-                        # and add them to the original nwb
-                        nwb_file = nwb_utils.attach_dict_fip(
-                            nwb_file, dict_from_df, suffix
-                        )
-
-                io.write(nwb_file)
-                logging.info(
-                    "Successfully updated the nwb with preprocessed data"
-                    f" using methods {methods}"
+            # Generate QC plots if requested
+            if not args.no_qc:
+                generate_qc_plots(
+                    df_fip_pp,
+                    df_pp_params,
+                    coeffs,
+                    intercepts,
+                    weights,
+                    methods,
+                    args,
+                    output_dir,
                 )
-                if not args.no_qc:
-                    channels = df_fip_pp["channel"].unique()
-                    fibers = df_fip_pp["fiber_number"].unique()
 
-                    def plot_both(fiber, method):
-                        plot_dff(
-                            df_fip_pp,
-                            fiber,
-                            channels,
-                            method,
-                            os.path.join(args.output_dir, "dff-qc"),
-                        )
-                        plot_motion_correction(
-                            df_fip_pp,
-                            fiber,
-                            channels,
-                            method,
-                            os.path.join(args.output_dir, "dff-qc"),
-                            coeffs,
-                            intercepts,
-                            weights,
-                            args.cutoff_freq_motion,
-                            args.cutoff_freq_noise,
-                        )
-
-                    def params_as_dict(fiber, method):
-                        df = df_pp_params[
-                            (df_pp_params["fiber_number"] == str(fiber))
-                            & (df_pp_params["preprocess"] == method)
-                        ][
-                            ["channel"]
-                            + list(
-                                range(
-                                    {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[
-                                        method
-                                    ]
-                                )
-                            )
-                        ]
-                        param_names = {
-                            "poly": [*"abcde"],
-                            "exp": [*"abcd"],
-                            "tri-exp": [*"abcdefg"],
-                            "bright": [
-                                "b_inf",
-                                "b_slow",
-                                "b_fast",
-                                "b_rapid",
-                                "b_bright",
-                                "t_slow",
-                                "t_fast",
-                                "t_rapid",
-                                "t_bright",
-                            ],
-                        }
-                        df.columns = ["channel"] + param_names[method]
-                        return df.to_dict("list")
-
-                    tasks = list(itertools.product(fibers, methods))
-                    if args.serial:
-                        for fiber, method in tasks:
-                            plot_both(fiber, method)
-                    else:
-                        with Pool(len(fibers)) as pool:
-                            pool.starmap(plot_both, tasks)
-
-                    evaluations = []
-                    for method in methods:
-                        metrics = []
-                        for fiber in fibers:
-                            metrics.append(
-                                create_metric(
-                                    fiber,
-                                    method,
-                                    f"dff-qc/ROI{fiber}_dff-{method}.png",
-                                    params_as_dict(fiber, method),
-                                )
-                            )
-                            metrics.append(
-                                create_metric(
-                                    fiber,
-                                    method,
-                                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                                    max(
-                                        v
-                                        for k, v in coeffs[method][int(fiber)].items()
-                                        if k != "Iso"
-                                    ),
-                                    True,
-                                )
-                            )
-                        evaluations.append(create_evaluation(method, metrics))
-                    # Create QC object and save
-                    qc = QualityControl(evaluations=evaluations)
-                    qc.write_standard_file(
-                        output_directory=os.path.join(args.output_dir, "dff-qc")
-                    )
             process_name = (
                 ProcessName.DF_F_ESTIMATION
             )  # append DataProcess to processing.json
 
         else:
             logging.info("NO Fiber but only Behavior data, preprocessing not needed")
-            os.mkdir(os.path.join(args.output_dir, "dff-qc"))
-            qc_file_path = Path(args.output_dir) / "dff-qc" / "no_fip_to_qc.txt"
+            qc_dir = output_dir / "dff-qc"
+            qc_dir.mkdir(parents=True, exist_ok=True)
+            qc_file_path = qc_dir / "no_fip_to_qc.txt"
             # Create an empty file
-            with open(qc_file_path, "w") as file:
-                file.write(
-                    "FIP data files are missing. This may be a behavior session."
-                )
+            qc_file_path.write_text(
+                "FIP data files are missing. This may be a behavior session."
+            )
             process_name = None  # update processing.json w/o appending DataProcess
 
         write_output_metadata(
             metadata=vars(args),
-            json_dir=args.fiber_path,
+            json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=os.path.join(args.output_dir, "fib.nwb.zarr"),
+            output_fp=output_dir / "fib.nwb.zarr",
             start_date_time=start_time,
         )
 
-    src_directory = args.fiber_path
     # Iterate over all .json files in the source directory
-    if os.path.exists(src_directory):
-        for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
-            src_file = os.path.join(src_directory, filename)
-            if os.path.exists(src_file):
-                dest_file = os.path.join(args.output_dir, filename)
-                # Move the file
-                shutil.copy2(src_file, dest_file)
-                logging.info(f"Moved: {src_file} to {dest_file}")
+    for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
+        src_file = fiber_path / filename
+        if src_file.exists():
+            dest_file = output_dir / filename
+            shutil.copy2(src_file, dest_file)
+            logging.info(f"Copied: {src_file} to {dest_file}")
