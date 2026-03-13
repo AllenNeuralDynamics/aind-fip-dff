@@ -30,7 +30,6 @@ from aind_data_schema.core.quality_control import (
     Status,
 )
 from aind_data_schema_models.modalities import Modality
-from aind_log_utils import log
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from hdmf_zarr import NWBZarrIO
@@ -158,6 +157,10 @@ def write_output_metadata(
     if dd_file.exists():
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
+        dd_data["modality"] = [
+            m for m in dd_data.get("modality", [])
+            if isinstance(m, dict) and m.get("abbreviation") == "fib"
+        ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
         new_dd = dd_upgrader.upgrade()
         derived_dd = DerivedDataDescription.from_data_description(

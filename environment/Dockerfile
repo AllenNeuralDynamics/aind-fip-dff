@@ -1,17 +1,16 @@
-# hash:sha256:c364b6a81399d9af2c2eb45a236a1cc3d76ededea3a3e6d411d57f320ffe64c3
+# hash:sha256:64121efcb1314b2e1fbe46bc449976abe9944a93a113d131ada9e06ea6bffd73
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
-COPY git-askpass /
+COPY git-ask-pass /
 
 ENV VERSION=14.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
     aind-data-schema==1.4.0 \
-    aind-log-utils==0.2.4 \
     aind-metadata-upgrader==0.0.26 \
     aind-qcportal-schema==0.4.0 \
     hdmf-zarr==0.11.3 \
@@ -19,3 +18,16 @@ RUN pip3 install -U --no-cache-dir \
     pynwb==3.1.2 \
     scikit-learn==1.7.2 \
     statsmodels==0.14.5
+
+ADD "https://github.com/coder/code-server/releases/download/v4.100.3/code-server-4.100.3-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
+
+RUN cd /.code-server \
+    && tar -xvf code-server.tar.gz \
+    && rm code-server.tar.gz \
+    && ln -s /.code-server/code-server-4.100.3-linux-amd64/bin/code-server /usr/bin/code-server \
+    && mkdir -p /.vscode/extensions
+
+RUN code-server --extensions-dir="/.vscode/extensions" --install-extension ms-python.python@2025.14.0 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-toolsai.jupyter@2025.4.1 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension reditorsupport.r@2.8.6 \
+    && code-server --extensions-dir="/.vscode/extensions" --install-extension saoudrizwan.claude-dev@3.35.1
