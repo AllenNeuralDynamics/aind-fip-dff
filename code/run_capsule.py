@@ -78,11 +78,11 @@ def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
 
     asset_name = data_description.get("name", None)
 
-    log.setup_logging(
-        "aind-fip-dff",
-        subject_id=subject_id,
-        asset_name=asset_name,
-    )
+    # log.setup_logging(
+    #     "aind-fip-dff",
+    #     subject_id=subject_id,
+    #     asset_name=asset_name,
+    # )
 
     return subject_id, asset_name
 
@@ -931,15 +931,6 @@ def process_nwb_file(
         nwb_file = io.read()
         df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
 
-    # Add the session column
-    filename = nwb_file_path.name
-    if "behavior" in filename:
-        session_name = filename.split(".")[0].split("behavior_")[1]
-    else:
-        session_name = filename.split(".")[0].split("FIP_")[1]
-
-    df_fip.insert(0, "session", session_name)
-
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
     coeffs, intercepts, weights = {}, {}, {}
@@ -1241,7 +1232,7 @@ if __name__ == "__main__":
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = output_dir / "nwb" / Path(source_path).name
+        destination_path = output_dir / "fib.nwb.zarr"
         shutil.copytree(source_path, destination_path)
 
         # Check if fiber photometry data exists
@@ -1289,7 +1280,7 @@ if __name__ == "__main__":
             json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=output_dir / "nwb",
+            output_fp=output_dir / "fib.nwb.zarr",
             start_date_time=start_time,
         )
 

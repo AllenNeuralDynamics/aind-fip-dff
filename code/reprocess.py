@@ -57,7 +57,10 @@ def process1dataset(source_path, args, start_time):
         ignore=shutil.ignore_patterns("output", "dff-qc", "processing.json"),
     )
     # Update path to the NWB file within the copied directory
-    nwb_file_path = destination_path / "nwb" / source_path.name
+    old_nwb_file_path = destination_path / "nwb" / source_path.name
+    nwb_file_path = destination_path / "fib.nwb.zarr"
+    if old_nwb_file_path.exists():
+        shutil.move(old_nwb_file_path, nwb_file_path)
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
