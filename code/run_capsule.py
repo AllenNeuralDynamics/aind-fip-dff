@@ -37,8 +37,8 @@ from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
 
-import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, motion_correct
+from .utils import nwb_dict_utils as nwb_utils
+from .utils.preprocess import chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aind-fip-dff"
+dynamic = ["version"]
+description = "Fiber photometry preprocessing: dF/F and motion-correction for NWB files"
+authors = [{name = "Allen Institute for Neural Dynamics"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "aind-data-schema==1.4.0",
+    "aind-log-utils==0.2.4", 
+    "aind-metadata-upgrader==0.0.26",
+    "aind-qcportal-schema==0.4.0",
+    "hdmf-zarr==0.11.3",
+    "matplotlib==3.10.6",
+    "pynwb==3.1.2",
+    "scikit-learn==1.7.2",
+    "statsmodels==0.14.5",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "aind_fip_dff.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aind_fip_dff*"]
