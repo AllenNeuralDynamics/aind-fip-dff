@@ -1,4 +1,4 @@
-# hash:sha256:64121efcb1314b2e1fbe46bc449976abe9944a93a113d131ada9e06ea6bffd73
+# hash:sha256:26397e0d53f36a71aba0ab78ebbbd8f4f783bd4ff51938af6f42bf379f8d936f
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
 COPY git-ask-pass /
 
-ENV VERSION=14.0
+ENV VERSION=16.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
