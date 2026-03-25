@@ -63,7 +63,7 @@ def setup_logging_from_metadata(fiber_path: Path):
     with open(data_description_path, "r") as f:
         data_description = json.load(f)
 
-    load_dotenv(".env")
+    load_dotenv("/code/.env")
     process_name = os.getenv("PROCESS_NAME")
     asset_name = data_description.get("name")
     setup_logging(
