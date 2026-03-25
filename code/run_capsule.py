@@ -1,5 +1,6 @@
 import argparse
 import glob
+from dotenv import load_dotenv
 import itertools
 import json
 import logging
