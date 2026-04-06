@@ -1151,7 +1151,7 @@ def main():
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/nwb/*.nwb",
+        default=r"/data/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -1275,7 +1275,7 @@ def main():
             dest_file = output_dir / filename
             shutil.copy2(src_file, dest_file)
             logging.info(f"Copied: {src_file} to {dest_file}")
-    logging.info("Pipeline stage completed", extra={"event_type": "stage_complete"})
+    logging.info("Capsule stage completed", extra={"event_type": "stage_complete"})
 
 
 if __name__ == "__main__":
