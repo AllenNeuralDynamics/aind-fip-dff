@@ -1264,7 +1264,7 @@ def main():
             json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=output_dir / "fib.nwb.zarr",
+            output_fp=output_dir / "fib.zarr.nwb",
             start_date_time=start_time,
         )
 
