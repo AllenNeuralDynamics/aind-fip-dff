@@ -800,9 +800,13 @@ def motion_correct(
         coef = np.empty((no_nans.sum(), 2))
         w = np.empty((no_nans.sum(), len(motion)))
         for i, d in enumerate(dff_filt[no_nans]):
-            model = RLM(d, add_constant(motion), M=M).fit()
-            coef[i] = model.params
-            w[i] = model.weights
+            rlm_result = RLM(d, add_constant(motion), M=M).fit()
+            coef[i] = rlm_result.params
+            w[i] = (
+                rlm_result.weights
+                if hasattr(rlm_result.model, "weights")
+                else np.ones(len(d))
+            )
         intercept = np.array(coef)[:, 0]
         coef = np.maximum(coef[:, 1:], 0)
     else:
