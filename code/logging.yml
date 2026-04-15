@@ -29,6 +29,7 @@ formatters:
       - acquisition_name
       - process_name
       - event_type
+      - pipeline_name
 
 filters:
   aind_fields:

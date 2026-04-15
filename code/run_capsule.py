@@ -67,7 +67,8 @@ def setup_logging_from_metadata(fiber_path: Path):
     setup_logging(
         process_name,
         acquisition_name=asset_name,
-        process_name=process_name
+        process_name=process_name,
+        pipeline_name=os.getenv("PIPELINE_NAME", "")
     )
 
 
