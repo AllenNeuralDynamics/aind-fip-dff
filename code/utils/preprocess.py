@@ -194,10 +194,10 @@ def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.nd
             timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
-            maxfev=10000,
+            maxfev=20000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, timestamps, tc, maxfev=10000)
+        popt, pcov = curve_fit(func, timestamps, tc, maxfev=20000)
     tc_exp = func(timestamps, *popt)
     return tc_exp, popt
 
