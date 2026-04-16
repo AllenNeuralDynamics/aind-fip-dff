@@ -32,6 +32,7 @@ from aind_data_schema.core.quality_control import (
 from aind_data_schema_models.modalities import Modality
 from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
+from aind_logging import setup_logging
 from hdmf_zarr import NWBZarrIO
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
@@ -48,44 +49,27 @@ which are then appended back to the NWB file.
 """
 
 
-def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
+def setup_logging_from_metadata(fiber_path: Path):
     """Setup logging from subject and data_description metadata.
 
     Parameters
     ----------
     fiber_path : Path
         Path to directory containing metadata files.
-
-    Returns
-    -------
-    tuple[str, str]
-        Subject ID and asset name.
     """
-    # Load subject data
-    subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, "r") as f:
-        subject_data = json.load(f)
-
-    subject_id = subject_data.get("subject_id", None)
-    if subject_id is None:
-        logging.error("No subject_id in subject file")
-        raise ValueError("subject_id is missing from the subject_data.")
-
     # Load data description
     data_description_path = fiber_path / "data_description.json"
     with open(data_description_path, "r") as f:
         data_description = json.load(f)
 
-    asset_name = data_description.get("name", None)
-
-    # log.setup_logging(
-    #     "aind-fip-dff",
-    #     subject_id=subject_id,
-    #     asset_name=asset_name,
-    # )
-    logging.basicConfig(level=logging.INFO)
-
-    return subject_id, asset_name
+    process_name = os.getenv("PROCESS_NAME")
+    asset_name = data_description.get("name")
+    setup_logging(
+        process_name,
+        acquisition_name=asset_name,
+        process_name=process_name,
+        pipeline_name=os.getenv("PIPELINE_NAME", "")
+    )
 
 
 def write_output_metadata(
@@ -1167,13 +1151,13 @@ def generate_qc_plots(
     return qc
 
 
-if __name__ == "__main__":
+def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/nwb/*.nwb",
+        default=r"/data/fib_raw_nwb/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -1226,10 +1210,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
-
+    
     # Setup logging
     setup_logging_from_metadata(fiber_path)
-
+    logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1297,3 +1281,16 @@ if __name__ == "__main__":
             dest_file = output_dir / filename
             shutil.copy2(src_file, dest_file)
             logging.info(f"Copied: {src_file} to {dest_file}")
+    logging.info("Capsule stage completed", extra={"event_type": "stage_complete"})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logging.error(
+            "Pipeline stage failed",
+            extra={"event_type": "stage_error"}
+        )
+        logging.exception(e)
+        raise
