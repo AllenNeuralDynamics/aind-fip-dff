@@ -1219,6 +1219,10 @@ def main():
 
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
+    if not source_paths:
+        logging.warning(
+            "No NWB file found! Did you specify the correct source_pattern?"
+        )
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
