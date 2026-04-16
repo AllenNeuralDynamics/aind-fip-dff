@@ -394,6 +394,7 @@ def tc_brightfit(
         bounds = np.array(
             [(0, np.inf)] * 5 + [(300, np.inf), (1, 1200), (1, 180), (60, np.inf)]
         )
+        bounds[2, 0] = -np.inf  # allow amplitude of fast component to be negative
         res = minimize(
             objective,
             np.array(x0)[optimize_param],
