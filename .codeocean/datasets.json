@@ -1,0 +1,13 @@
+{
+	"version": 1,
+	"attached_datasets": [
+		{
+			"id": "a69aea3e-0813-4113-abd5-0f5707392673",
+			"mount": "fib_raw_nwb"
+		},
+		{
+			"id": "e7f73588-fea9-43df-b0df-f5a54f361395",
+			"mount": "fiber_raw_data"
+		}
+	]
+}

@@ -1,0 +1,92 @@
+{
+	"version": 1,
+	"base_image": "codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04",
+	"options": {
+		"registry_host_arg": true,
+		"git_ask_pass": true,
+		"mount_secrets": true
+	},
+	"installers": {
+		"pip3": {
+			"packages": [
+				{
+					"name": "aind-data-schema",
+					"version": "1.4.0"
+				},
+				{
+					"name": "aind-metadata-upgrader",
+					"version": "0.0.26"
+				},
+				{
+					"name": "aind-qcportal-schema",
+					"version": "0.4.0"
+				},
+				{
+					"name": "hdmf-zarr",
+					"version": "0.11.3"
+				},
+				{
+					"name": "matplotlib",
+					"version": "3.10.6"
+				},
+				{
+					"name": "pynwb",
+					"version": "3.1.2"
+				},
+				{
+					"name": "pyyaml",
+					"version": "6.0.3"
+				},
+				{
+					"name": "scikit-learn",
+					"version": "1.7.2"
+				},
+				{
+					"name": "statsmodels",
+					"version": "0.14.5"
+				},
+				{
+					"name": "watchtower",
+					"version": "3.4.0"
+				}
+			],
+			"options": {},
+			"pre_install_options": {}
+		},
+		"vscode": {
+			"packages": [
+				{
+					"name": "ms-python.python",
+					"version": "2025.14.0"
+				},
+				{
+					"name": "ms-toolsai.jupyter",
+					"version": "2025.4.1"
+				},
+				{
+					"name": "reditorsupport.r",
+					"version": "2.8.6"
+				},
+				{
+					"name": "saoudrizwan.claude-dev",
+					"version": "3.35.1"
+				}
+			],
+			"version": "4.100.3"
+		}
+	},
+	"env_variables": [
+		{
+			"name": "VERSION",
+			"value": "16.0"
+		},
+		{
+			"name": "DFF_EXTRACTION_URL",
+			"value": "https://github.com/AllenNeuralDynamics/aind-fip-dff"
+		},
+		{
+			"name": "PROCESS_NAME",
+			"value": "aind-fip-dff"
+		}
+	]
+}

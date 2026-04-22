@@ -149,5 +149,4 @@ dmypy.json
 !.vscode/*.code-snippets
 .vscode
 
-# CodeOcean
-.codeocean/
+
