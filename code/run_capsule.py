@@ -1205,7 +1205,7 @@ def main():
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
-    data_desc_fp = fiber_path.rglob("data_description.json")
+    data_desc_fp = next(fiber_path.rglob("data_description.json"))
     with open(data_desc_fp, "r") as j:
         data_name = json.load(j).get("name")
     # Setup logging
