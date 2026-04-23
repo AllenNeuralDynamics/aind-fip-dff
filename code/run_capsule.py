@@ -143,7 +143,8 @@ def write_output_metadata(
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
         dd_data["modality"] = [
-            m for m in dd_data.get("modality", [])
+            m
+            for m in dd_data.get("modality", [])
             if isinstance(m, dict) and m.get("abbreviation") == "fib"
         ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
@@ -417,9 +418,13 @@ def plot_dff(
 
                     if len(dff_zoom) > 0:
                         y_margin = 0.1 * (dff_zoom.max() - dff_zoom.min())
-                        inset_ax.set_ylim(
-                            dff_zoom.min() - y_margin, dff_zoom.max() + y_margin
-                        )
+                        try:
+                            inset_ax.set_ylim(
+                                np.nanmin(dff_zoom) - y_margin,
+                                np.nanmax(dff_zoom) + y_margin,
+                            )
+                        except ValueError:
+                            pass
 
                     inset_ax.set_title(
                         f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
@@ -1217,6 +1222,10 @@ def main():
     nwb_path = output_dir / "nwb" / (data_name + ".nwb")
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
+    if not source_paths:
+        logging.warning(
+            "No NWB file found! Did you specify the correct source_pattern?"
+        )
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
