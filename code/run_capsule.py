@@ -1152,7 +1152,7 @@ def main():
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/fiber_raw_nwb/nwb.zarr",
+        default=r"/data/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -1213,13 +1213,14 @@ def main():
     logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-
+    (output_dir / "nwb").mkdir(parents=True, exist_ok=True)
+    nwb_path = output_dir / "nwb" / (data_name + ".nwb")
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = (output_dir / "nwb").mkdir(parents=True, exist_ok=True) / data_name + ".nwb"
+        destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
         # Check if fiber photometry data exists
