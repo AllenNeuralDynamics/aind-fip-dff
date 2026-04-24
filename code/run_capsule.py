@@ -143,7 +143,8 @@ def write_output_metadata(
         with open(dd_file, "r") as f:
             dd_data = json.load(f)
         dd_data["modality"] = [
-            m for m in dd_data.get("modality", [])
+            m
+            for m in dd_data.get("modality", [])
             if isinstance(m, dict) and m.get("abbreviation") == "fib"
         ]
         dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
@@ -417,9 +418,13 @@ def plot_dff(
 
                     if len(dff_zoom) > 0:
                         y_margin = 0.1 * (dff_zoom.max() - dff_zoom.min())
-                        inset_ax.set_ylim(
-                            dff_zoom.min() - y_margin, dff_zoom.max() + y_margin
-                        )
+                        try:
+                            inset_ax.set_ylim(
+                                np.nanmin(dff_zoom) - y_margin,
+                                np.nanmax(dff_zoom) + y_margin,
+                            )
+                        except ValueError:
+                            pass
 
                     inset_ax.set_title(
                         f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
@@ -1152,7 +1157,7 @@ def main():
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/fiber_raw_nwb/nwb.zarr",
+        default=r"/data/fib_raw_nwb/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -1205,24 +1210,26 @@ def main():
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
-    
+    data_desc_fp = next(fiber_path.rglob("data_description.json"))
+    with open(data_desc_fp, "r") as j:
+        data_name = json.load(j).get("name")
     # Setup logging
     setup_logging_from_metadata(fiber_path)
     logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    nwb_path = output_dir / "nwb"
-    nwb_path.mkdir(parents=True,exist_ok=True)
-    data_desc_fp = next(fiber_path.glob("data_description.json"))
-    with open(data_desc_fp, "r") as j:
-        dd_name = json.load(j).get("name")
-
+    (output_dir / "nwb").mkdir(parents=True, exist_ok=True)
+    nwb_path = output_dir / "nwb" / (data_name + ".nwb")
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
+    if not source_paths:
+        logging.warning(
+            "No NWB file found! Did you specify the correct source_pattern?"
+        )
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = output_dir / dd_name + ".nwb"
+        destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
         # Check if fiber photometry data exists

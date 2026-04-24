@@ -194,10 +194,10 @@ def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.nd
             timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
-            maxfev=10000,
+            maxfev=20000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, timestamps, tc, maxfev=10000)
+        popt, pcov = curve_fit(func, timestamps, tc, maxfev=20000)
     tc_exp = func(timestamps, *popt)
     return tc_exp, popt
 
@@ -394,6 +394,7 @@ def tc_brightfit(
         bounds = np.array(
             [(0, np.inf)] * 5 + [(300, np.inf), (1, 1200), (1, 180), (60, np.inf)]
         )
+        bounds[2, 0] = -np.inf  # allow amplitude of fast component to be negative
         res = minimize(
             objective,
             np.array(x0)[optimize_param],
@@ -800,9 +801,13 @@ def motion_correct(
         coef = np.empty((no_nans.sum(), 2))
         w = np.empty((no_nans.sum(), len(motion)))
         for i, d in enumerate(dff_filt[no_nans]):
-            model = RLM(d, add_constant(motion), M=M).fit()
-            coef[i] = model.params
-            w[i] = model.weights
+            rlm_result = RLM(d, add_constant(motion), M=M).fit()
+            coef[i] = rlm_result.params
+            w[i] = (
+                rlm_result.weights
+                if hasattr(rlm_result.model, "weights")
+                else np.ones(len(d))
+            )
         intercept = np.array(coef)[:, 0]
         coef = np.maximum(coef[:, 1:], 0)
     else:
