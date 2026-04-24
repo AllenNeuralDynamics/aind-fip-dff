@@ -1210,13 +1210,16 @@ def main():
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
-    
+    data_desc_fp = next(fiber_path.rglob("data_description.json"))
+    with open(data_desc_fp, "r") as j:
+        data_name = json.load(j).get("name")
     # Setup logging
     setup_logging_from_metadata(fiber_path)
     logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-
+    (output_dir / "nwb").mkdir(parents=True, exist_ok=True)
+    nwb_path = output_dir / "nwb" / (data_name + ".nwb")
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
     if not source_paths:
@@ -1226,7 +1229,7 @@ def main():
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = output_dir / "fib.nwb.zarr"
+        destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
         # Check if fiber photometry data exists
@@ -1274,7 +1277,7 @@ def main():
             json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=output_dir / "fib.nwb.zarr",
+            output_fp=nwb_path,
             start_date_time=start_time,
         )
 
