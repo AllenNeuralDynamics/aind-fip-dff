@@ -136,7 +136,7 @@ def write_output_metadata(
         p.pipeline_url = u
     if v := os.getenv("PIPELINE_VERSION", ""):
         p.pipeline_version = v
-    processing.write_standard_file(output_directory=Path(output_fp).parent)
+    processing.write_standard_file(output_directory=Path(output_fp))
 
     dd_file = Path(json_dir) / "data_description.json"
     if dd_file.exists():
