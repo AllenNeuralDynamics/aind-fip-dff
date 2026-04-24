@@ -152,7 +152,7 @@ def write_output_metadata(
         derived_dd = DerivedDataDescription.from_data_description(
             data_description=new_dd, process_name="processed"
         )
-        derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
+        derived_dd.write_standard_file(output_directory=Path(output_fp))
     else:
         logging.error("no input data description")
 
