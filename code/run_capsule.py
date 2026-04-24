@@ -1157,7 +1157,7 @@ def main():
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/nwb.zarr",
+        default=r"/data/fib_raw_nwb/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
