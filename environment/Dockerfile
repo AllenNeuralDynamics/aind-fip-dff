@@ -4,7 +4,7 @@ FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
-COPY git-askpass /
+COPY git-ask-pass /
 
 ENV VERSION=14.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
