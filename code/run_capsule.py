@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
             json_dir=args.fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=os.path.join(args.output_dir, "nwb"),
+            output_fp=args.output_dir,
             start_date_time=start_time,
         )
 
