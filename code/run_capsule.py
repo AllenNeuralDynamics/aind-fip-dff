@@ -34,6 +34,7 @@ from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgra
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_logging import setup_logging
 from hdmf_zarr import NWBZarrIO
+from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
@@ -648,14 +649,17 @@ def plot_motion_correction(
         ax = fig.add_subplot(
             gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        sc = ax.scatter(
-            df_iso["filtered"] * 100,
-            df["filtered"] * 100,
-            s=0.02 + 0.08 * weight,
-            c=weight,
-            label="low-passed",
-            alpha=0.5,
-        )
+        if np.isfinite(np.mean(weight)):
+            sc = ax.scatter(
+                df_iso["filtered"] * 100,
+                df["filtered"] * 100,
+                s=0.02 + 0.08 * weight,
+                c=weight,
+                label="low-passed",
+                alpha=0.5,
+            )
+        else:
+            sc = plt.scatter([], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1))
         plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
         ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
@@ -787,6 +791,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
         NM_values,
         timestamps - timestamps[0],
         method=pp_name,
+        trace_id=f"{channel}_{fiber_number}",
     )
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
     logging.info(
