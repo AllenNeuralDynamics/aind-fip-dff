@@ -1231,7 +1231,7 @@ def main():
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
     if not source_paths:
-        logging.warning(
+        logging.error(
             "No NWB file found! Did you specify the correct source_pattern?"
         )
 
@@ -1245,10 +1245,10 @@ def main():
         if has_fiber and "acquisition/G_0" not in zarr.open(
             str(destination_path), mode="r"
         ):
-            logging.error(
+            logging.warning(
                 "Raw fiber directory is present but no fiber data "
                 f"was written to NWB file: {destination_path}. "
-                "This is likely due to an error during NWB packaging, e.g. "
+                "This is likely due to an issue during NWB packaging, e.g. "
                 "'FIP data is present, but HARP timestamps are missing'"
             )
             has_fiber = False
