@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
+import zarr
 from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
@@ -34,6 +35,7 @@ from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgra
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_logging import setup_logging
 from hdmf_zarr import NWBZarrIO
+from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
@@ -68,7 +70,7 @@ def setup_logging_from_metadata(fiber_path: Path):
         process_name,
         acquisition_name=asset_name,
         process_name=process_name,
-        pipeline_name=os.getenv("PIPELINE_NAME", "")
+        pipeline_name=os.getenv("PIPELINE_NAME", ""),
     )
 
 
@@ -648,14 +650,19 @@ def plot_motion_correction(
         ax = fig.add_subplot(
             gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        sc = ax.scatter(
-            df_iso["filtered"] * 100,
-            df["filtered"] * 100,
-            s=0.02 + 0.08 * weight,
-            c=weight,
-            label="low-passed",
-            alpha=0.5,
-        )
+        if np.isfinite(np.mean(weight)):
+            sc = ax.scatter(
+                df_iso["filtered"] * 100,
+                df["filtered"] * 100,
+                s=0.02 + 0.08 * weight,
+                c=weight,
+                label="low-passed",
+                alpha=0.5,
+            )
+        else:
+            sc = ax.scatter(
+                [], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1)
+            )
         plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
         ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
@@ -787,6 +794,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
         NM_values,
         timestamps - timestamps[0],
         method=pp_name,
+        trace_id=f"{channel}_{fiber_number}",
     )
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
     logging.info(
@@ -1223,8 +1231,11 @@ def main():
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
     if not source_paths:
-        logging.warning(
+        logging.error(
             "No NWB file found! Did you specify the correct source_pattern?"
+        )
+        raise FileNotFoundError(
+            f"No files matched source_pattern: {args.source_pattern}"
         )
 
     # Copy each matching file to the destination directory
@@ -1234,6 +1245,24 @@ def main():
 
         # Check if fiber photometry data exists
         has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        if has_fiber:
+            zarr_root = zarr.open(str(destination_path), mode="r")
+            acquisition_group = zarr_root.get("acquisition")
+            fiber_prefixes = ("G_", "R_", "Iso_", "Signal_")
+            acquisition_entries = (
+                acquisition_group.keys() if acquisition_group is not None else []
+            )
+            has_fiber_channels = any(
+                entry.startswith(fiber_prefixes) for entry in acquisition_entries
+            )
+            if not has_fiber_channels:
+                logging.warning(
+                    "Raw fiber directory is present but no fiber data "
+                    f"was written to NWB file: {destination_path}. "
+                    "This is likely due to an issue during NWB packaging, e.g. "
+                    "'FIP data is present, but HARP timestamps are missing'"
+                )
+                has_fiber = False
 
         if has_fiber:
             # Print the path to ensure correctness
@@ -1295,9 +1324,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.error(
-            "Pipeline stage failed",
-            extra={"event_type": "stage_error"}
-        )
+        logging.error("Pipeline stage failed", extra={"event_type": "stage_error"})
         logging.exception(e)
         raise
