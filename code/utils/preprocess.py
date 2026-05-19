@@ -530,7 +530,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
-    trace_id: str = '',
+    trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
 

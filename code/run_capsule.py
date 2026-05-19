@@ -660,7 +660,7 @@ def plot_motion_correction(
                 alpha=0.5,
             )
         else:
-            sc = plt.scatter(
+            sc = ax.scatter(
                 [], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1)
             )
         plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
