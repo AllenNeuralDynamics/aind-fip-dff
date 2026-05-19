@@ -1248,7 +1248,8 @@ def main():
             logging.error(
                 "Raw fiber directory is present but no fiber data "
                 f"was written to NWB file: {destination_path}. "
-                "This is likely due to an error during NWB packaging."
+                "This is likely due to an error during NWB packaging, e.g. "
+                "'FIP data is present, but HARP timestamps are missing'"
             )
             has_fiber = False
 
