@@ -1234,6 +1234,9 @@ def main():
         logging.error(
             "No NWB file found! Did you specify the correct source_pattern?"
         )
+        raise FileNotFoundError(
+            f"No files matched source_pattern: {args.source_pattern}"
+        )
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
