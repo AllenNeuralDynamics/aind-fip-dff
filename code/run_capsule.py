@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
+import zarr
 from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
@@ -69,7 +70,7 @@ def setup_logging_from_metadata(fiber_path: Path):
         process_name,
         acquisition_name=asset_name,
         process_name=process_name,
-        pipeline_name=os.getenv("PIPELINE_NAME", "")
+        pipeline_name=os.getenv("PIPELINE_NAME", ""),
     )
 
 
@@ -659,7 +660,9 @@ def plot_motion_correction(
                 alpha=0.5,
             )
         else:
-            sc = plt.scatter([], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1))
+            sc = plt.scatter(
+                [], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1)
+            )
         plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
         ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
@@ -1239,6 +1242,15 @@ def main():
 
         # Check if fiber photometry data exists
         has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        if has_fiber and "acquisition/G_0" not in zarr.open(
+            str(destination_path), mode="r"
+        ):
+            logging.error(
+                "Raw fiber directory is present but no fiber data "
+                f"was written to NWB file: {destination_path}. "
+                "This is likely due to an error during NWB packaging."
+            )
+            has_fiber = False
 
         if has_fiber:
             # Print the path to ensure correctness
@@ -1300,9 +1312,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.error(
-            "Pipeline stage failed",
-            extra={"event_type": "stage_error"}
-        )
+        logging.error("Pipeline stage failed", extra={"event_type": "stage_error"})
         logging.exception(e)
         raise
