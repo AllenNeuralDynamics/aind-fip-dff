@@ -194,10 +194,10 @@ def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.nd
             timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
-            maxfev=10000,
+            maxfev=20000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, timestamps, tc, maxfev=10000)
+        popt, pcov = curve_fit(func, timestamps, tc, maxfev=20000)
     tc_exp = func(timestamps, *popt)
     return tc_exp, popt
 
@@ -394,6 +394,8 @@ def tc_brightfit(
         bounds = np.array(
             [(0, np.inf)] * 5 + [(300, np.inf), (1, 1200), (1, 180), (60, np.inf)]
         )
+        bounds[2, 0] = -np.inf  # allow amplitude of fast component to be negative
+        bounds[0, 0] = trace[-1000:].mean() / 10
         res = minimize(
             objective,
             np.array(x0)[optimize_param],
@@ -528,6 +530,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
+    trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
 
@@ -554,6 +557,8 @@ def chunk_processing(
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only 'bright' method).
         Default is True.
+    trace_id : str, optional
+        Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
     Returns
     -------
@@ -593,7 +598,7 @@ def chunk_processing(
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
     except Exception as e:
         logging.warning(
-            f"Processing with method {method} failed with Error {e}. Setting dF/F to nans."
+            f"Processing {trace_id} with method {method} failed with Error {e}. Setting dF/F to nans."
         )
         tc_dFoF = np.full(tc.shape, np.nan)
         tc_fit = np.full(tc_filtered.shape, np.nan)
@@ -603,8 +608,6 @@ def chunk_processing(
                 {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]
             )
         }
-    # tc_qualitymetrics = {"QC_metric": np.nan}
-    # tc_params.update(tc_qualitymetrics)
 
     return tc_dFoF, tc_params, tc_filling(tc_fit, n_frame_to_cut)
 
@@ -787,7 +790,7 @@ def motion_correct(
         - weights : dict
             The final regression weights.
     """
-    if np.isnan(dff["Iso"]).any():
+    if np.isnan(dff["Iso"]).any() or np.isinf(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
         return np.nan * dff, np.nan * dff, c, c, c
     sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
@@ -800,9 +803,13 @@ def motion_correct(
         coef = np.empty((no_nans.sum(), 2))
         w = np.empty((no_nans.sum(), len(motion)))
         for i, d in enumerate(dff_filt[no_nans]):
-            model = RLM(d, add_constant(motion), M=M).fit()
-            coef[i] = model.params
-            w[i] = model.weights
+            rlm_result = RLM(d, add_constant(motion), M=M).fit()
+            coef[i] = rlm_result.params
+            w[i] = (
+                rlm_result.weights
+                if hasattr(rlm_result.model, "weights")
+                else np.ones(len(d))
+            )
         intercept = np.array(coef)[:, 0]
         coef = np.maximum(coef[:, 1:], 0)
     else:
