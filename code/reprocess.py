@@ -90,9 +90,17 @@ def process1dataset(source_path, args, start_time):
                     del store["processing"]
 
         # Use the shared processing function
-        df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods, events, event_label = (
-            process_nwb_file(nwb_file_path, args)
-        )
+        (
+            df_fip_pp,
+            df_pp_params,
+            coeffs,
+            intercepts,
+            weights,
+            methods,
+            pregocue_starts,
+            pregocue_ends,
+            event_label,
+        ) = process_nwb_file(nwb_file_path, args)
 
         # Generate QC plots if requested
         if not args.no_qc:
@@ -105,7 +113,8 @@ def process1dataset(source_path, args, start_time):
                 methods,
                 args,
                 destination_path,
-                events,
+                pregocue_starts,
+                pregocue_ends,
                 event_label,
             )
 

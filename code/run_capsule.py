@@ -779,11 +779,23 @@ def _calibration_ratio(
     return ratios, sigma
 
 
-def _get_pregocue_events(nwb_file) -> tuple[Union[np.ndarray, None], Union[str, None]]:
-    """Per-trial event times to align the pre-event dF/F regression to.
+#: Fallback window (seconds relative to reward time) for sessions with no
+#: GoCue-based Delay period to use instead (see `_get_pregocue_windows`).
+PREGOCUE_FALLBACK_INTERVAL = (-1, 0)
 
-    Prefers GoCue onset; falls back to reward time for sessions without a
-    GoCue-based task.
+
+def _get_pregocue_windows(
+    nwb_file,
+) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None], Union[str, None]]:
+    """Per-trial windows to align the pre-event dF/F regression to.
+
+    Prefers each trial's own Delay period, [delay_start_time,
+    goCue_start_time): task design guarantees this window can never overlap
+    the previous trial's ITI or reward-consumption period, unlike a fixed
+    duration before GoCue, which is longer than the Delay period itself at
+    some training stages and would reach back into the previous trial.
+    Falls back to a fixed window before reward time for sessions without a
+    GoCue-based Delay period.
 
     Parameters
     ----------
@@ -792,30 +804,39 @@ def _get_pregocue_events(nwb_file) -> tuple[Union[np.ndarray, None], Union[str, 
 
     Returns
     -------
-    events : np.ndarray or None
-        Finite event times, or None if the session's trials table has
-        neither a GoCue nor a reward column.
+    starts, ends : np.ndarray or None
+        Per-trial window start/end times (same clock as `time_fip`), for
+        trials with a finite, positive-duration window. None if the
+        session's trials table has neither a GoCue-based Delay period nor a
+        reward column.
     label : str or None
-        "GoCue" or "reward", matching `events`; None if `events` is None.
+        "GoCue" or "reward", matching `starts`/`ends`; None if they are None.
     """
     trials = getattr(nwb_file, "trials", None)
     if trials is None:
-        return None, None
-    for key, label in (
-        ("goCue_start_time", "GoCue"),
-        ("reward_start_time", "reward"),
-        ("reward_time", "reward"),
-    ):
-        if key in getattr(trials, "colnames", ()):
-            events = np.asarray(trials[key][:], dtype=float)
+        return None, None, None
+    colnames = getattr(trials, "colnames", ())
+    if "delay_start_time" in colnames and "goCue_start_time" in colnames:
+        starts = np.asarray(pd.to_numeric(trials["delay_start_time"][:], errors="coerce"))
+        ends = np.asarray(pd.to_numeric(trials["goCue_start_time"][:], errors="coerce"))
+        valid = np.isfinite(starts) & np.isfinite(ends) & (ends > starts)
+        if valid.sum() > 0:
+            return starts[valid], ends[valid], "GoCue"
+    for key, label in (("reward_start_time", "reward"), ("reward_time", "reward")):
+        if key in colnames:
+            events = np.asarray(pd.to_numeric(trials[key][:], errors="coerce"))
             events = events[np.isfinite(events)]
             if len(events) > 0:
-                return events, label
-    return None, None
+                return (
+                    events + PREGOCUE_FALLBACK_INTERVAL[0],
+                    events + PREGOCUE_FALLBACK_INTERVAL[1],
+                    label,
+                )
+    return None, None, None
 
 
 def _pregocue_drift_stats(
-    dff: np.ndarray, t: np.ndarray, events: np.ndarray, interval: tuple[float, float]
+    dff: np.ndarray, t: np.ndarray, starts: np.ndarray, ends: np.ndarray
 ) -> dict:
     """Per-trial pre-event mean dF/F, plus an OLS trend across trials.
 
@@ -824,12 +845,10 @@ def _pregocue_drift_stats(
     dff : np.ndarray
         dF/F trace.
     t : np.ndarray
-        Timestamps for `dff`, in seconds (same clock as `events`).
-    events : np.ndarray
-        Event times (e.g. GoCue or reward onset) to align to.
-    interval : tuple of float
-        Window [start, end] in seconds relative to each event, e.g.
-        (-3, 0) for the 3 seconds before the event.
+        Timestamps for `dff`, in seconds (same clock as `starts`/`ends`).
+    starts, ends : np.ndarray
+        Per-trial window start/end times, e.g. each trial's own
+        [delay_start_time, goCue_start_time) -- see `_get_pregocue_windows`.
 
     Returns
     -------
@@ -839,13 +858,13 @@ def _pregocue_drift_stats(
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
-        per_trial_mean : np.ndarray, one pre-event mean per event in
-            `events` (including NaNs), for plotting.
+        per_trial_mean : np.ndarray, one pre-event mean per trial in
+            `starts`/`ends` (including NaNs), for plotting.
     """
     y = np.array(
         [
-            np.nanmean(dff[(ev + interval[0] < t) & (t < ev + interval[1])])
-            for ev in events
+            np.nanmean(dff[(s < t) & (t < e)])
+            for s, e in zip(starts, ends)
         ]
     )
     valid = np.isfinite(y)
@@ -879,9 +898,9 @@ def plot_pregocue_regression(
     channels: list[str],
     method: str,
     fig_path: Path,
-    events: np.ndarray,
+    starts: np.ndarray,
+    ends: np.ndarray,
     event_label: str,
-    interval: tuple[float, float] = (-3, 0),
 ) -> dict:
     """Plot per-trial pre-event dF/F against trial index, with an OLS trend
     line, for each channel -- a QC check for within-session baseline drift
@@ -899,13 +918,11 @@ def plot_pregocue_regression(
         Preprocessing method name.
     fig_path : Path
         Directory to save the plot to.
-    events : np.ndarray
-        Event times (seconds, same clock as `time_fip`) to align to.
+    starts, ends : np.ndarray
+        Per-trial window start/end times (seconds, same clock as
+        `time_fip`) -- see `_get_pregocue_windows`.
     event_label : str
         "GoCue" or "reward" -- used in the plot title/axis label.
-    interval : tuple of float, optional
-        Window [start, end] in seconds relative to each event.
-        Default is (-3, 0).
 
     Returns
     -------
@@ -928,7 +945,7 @@ def plot_pregocue_regression(
             & (df_fip_pp.preprocess == method)
         ]
         color = colors.get(ch, f"C{c}")
-        s = _pregocue_drift_stats(df.dFF.values, df.time_fip.values, events, interval)
+        s = _pregocue_drift_stats(df.dFF.values, df.time_fip.values, starts, ends)
         stats[ch] = s
 
         trial = np.arange(len(s["per_trial_mean"]))
@@ -1023,11 +1040,6 @@ def create_metric(fiber, method, reference, value, motion=False):
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
     )
-
-
-#: Default window (seconds, relative to each GoCue/reward event) for the
-#: pre-event drift QC plot and metric.
-PREGOCUE_INTERVAL = (-3, 0)
 
 
 def create_calibration_metric(fiber, method, ratio_by_channel):
@@ -1252,6 +1264,7 @@ def process_nwb_file(
     dict,
     list,
     Union[np.ndarray, None],
+    Union[np.ndarray, None],
     Union[str, None],
 ]:
     """Process a single NWB file: compute dF/F and motion correction.
@@ -1279,17 +1292,18 @@ def process_nwb_file(
             IRLS weights by method.
         - methods : list
             List of preprocessing methods used.
-        - events : np.ndarray or None
-            Per-trial GoCue (or, absent that, reward) times, for the
-            pre-event drift QC plot/metric. None if neither is present.
+        - pregocue_starts, pregocue_ends : np.ndarray or None
+            Per-trial pre-event window start/end times, for the pre-event
+            drift QC plot/metric. None if neither a GoCue-based Delay
+            period nor a reward time is present.
         - event_label : str or None
-            "GoCue" or "reward", matching `events`; None if `events` is None.
+            "GoCue" or "reward", matching the windows; None if they are None.
     """
     # Open NWB file and convert to dataframe
     with NWBZarrIO(path=str(nwb_file_path), mode="r") as io:
         nwb_file = io.read()
         df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
-        events, event_label = _get_pregocue_events(nwb_file)
+        pregocue_starts, pregocue_ends, event_label = _get_pregocue_windows(nwb_file)
 
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
@@ -1363,7 +1377,17 @@ def process_nwb_file(
             f" using methods {methods}"
         )
 
-    return df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods, events, event_label
+    return (
+        df_fip_pp,
+        df_pp_params,
+        coeffs,
+        intercepts,
+        weights,
+        methods,
+        pregocue_starts,
+        pregocue_ends,
+        event_label,
+    )
 
 
 def _plot_both(
@@ -1377,7 +1401,8 @@ def _plot_both(
     weights,
     cutoff_freq_motion,
     cutoff_freq_noise,
-    events=None,
+    pregocue_starts=None,
+    pregocue_ends=None,
     event_label=None,
 ):
     """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
@@ -1401,14 +1426,15 @@ def _plot_both(
         cutoff_freq_motion,
         cutoff_freq_noise,
     )
-    if events is not None:
+    if pregocue_starts is not None:
         plot_pregocue_regression(
             df_fip_pp,
             fiber,
             channels,
             method,
             output_dir / "dff-qc",
-            events,
+            pregocue_starts,
+            pregocue_ends,
             event_label,
         )
 
@@ -1462,7 +1488,8 @@ def generate_qc_plots(
     methods: list,
     args,
     output_dir: Path,
-    events: Union[np.ndarray, None] = None,
+    pregocue_starts: Union[np.ndarray, None] = None,
+    pregocue_ends: Union[np.ndarray, None] = None,
     event_label: Union[str, None] = None,
 ) -> QualityControl:
     """Generate QC plots and return QualityControl object.
@@ -1485,11 +1512,11 @@ def generate_qc_plots(
         Command-line arguments.
     output_dir : Path
         Output directory for QC plots.
-    events : np.ndarray or None, optional
-        Per-trial GoCue (or reward) times for the pre-event drift QC plot
-        and metric; see `_get_pregocue_events`. Skipped if None.
+    pregocue_starts, pregocue_ends : np.ndarray or None, optional
+        Per-trial pre-event window start/end times for the pre-event drift
+        QC plot and metric; see `_get_pregocue_windows`. Skipped if None.
     event_label : str or None, optional
-        "GoCue" or "reward", matching `events`.
+        "GoCue" or "reward", matching the windows.
 
     Returns
     -------
@@ -1514,7 +1541,8 @@ def generate_qc_plots(
             weights,
             args.cutoff_freq_motion,
             args.cutoff_freq_noise,
-            events,
+            pregocue_starts,
+            pregocue_ends,
             event_label,
         )
         for fiber, method in itertools.product(fibers, methods)
@@ -1561,12 +1589,12 @@ def generate_qc_plots(
                     continue
                 ratios, _ = _calibration_ratio(df.signal.values, df.F0.values)
                 ratio_by_channel[ch] = ratios
-                if events is not None:
+                if pregocue_starts is not None:
                     drift_by_channel[ch] = _pregocue_drift_stats(
-                        df.dFF.values, df.time_fip.values, events, PREGOCUE_INTERVAL
+                        df.dFF.values, df.time_fip.values, pregocue_starts, pregocue_ends
                     )
             metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
-            if events is not None:
+            if pregocue_starts is not None:
                 metrics.append(
                     create_pregocue_metric(fiber, method, event_label, drift_by_channel)
                 )
@@ -1722,7 +1750,8 @@ def main():
                 intercepts,
                 weights,
                 methods,
-                events,
+                pregocue_starts,
+                pregocue_ends,
                 event_label,
             ) = process_nwb_file(destination_path, args)
 
@@ -1737,7 +1766,8 @@ def main():
                     methods,
                     args,
                     output_dir,
-                    events,
+                    pregocue_starts,
+                    pregocue_ends,
                     event_label,
                 )
 
