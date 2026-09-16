@@ -3,6 +3,12 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from aind_ophys_utils.array_utils import downsample_array
+from aind_ophys_utils.baseline_fitting import (
+    AsymmetricTukeyBiweight as NonlinearFitAsymmetricTukeyBiweight,
+)
+from aind_ophys_utils.baseline_fitting import nonlinear_fit, sum_of_exps
+from aind_ophys_utils.signal_utils import noise_std
 from scipy.optimize import curve_fit, minimize
 from scipy.signal import butter, medfilt, sosfiltfilt
 from scipy.stats import skew
@@ -519,6 +525,318 @@ def tc_brightfit(
     return baseline(timestamps, *x), x
 
 
+def _init_sum_of_exps(
+    trace: np.ndarray, n_exp: int = 2, include_brightening: bool = False
+) -> tuple[np.ndarray, tuple[tuple[float, float], ...]]:
+    """Build an initial guess and bounds for fitting `trace` with `sum_of_exps`.
+
+    b_inf is initialized from the 10th percentile of the last 1000 frames and
+    bounded below by a tenth of their mean, so the asymptote can't collapse
+    to zero. Bleach amplitudes are constrained >= 0; brightening (when
+    included) is a dedicated negative-amplitude term rather than a negative
+    bleach amplitude. tau1's and the brightening tau's upper bounds are
+    capped (not left unbounded) to avoid a b_inf/b1 identifiability
+    degeneracy as tau -> infinity; see `_snap_degenerate_slow_terms` for the
+    companion post-fit check.
+
+    Parameters
+    ----------
+    trace : np.ndarray
+        Fiber photometry signal (after cropping the initial transient).
+    n_exp : int
+        Number of bleaching exponential terms. 1, 2, or 3.
+    include_brightening : bool
+        Add a negative-amplitude exponential term for brightening.
+
+    Returns
+    -------
+    x0 : np.ndarray
+        Initial parameter vector for `sum_of_exps`.
+    bounds : tuple of (float, float)
+        Bounds for each parameter in `x0`, for `nonlinear_fit`.
+    """
+    TAU1_CAP = 30000.0
+    TAU_BRIGHT_CAP = 20000.0
+    AMP_CAP_FACTOR = 10.0
+
+    b_inf = float(np.percentile(trace[-1000:], 10))
+    b_inf_lo = float(trace[-1000:].mean() / 10)
+    amp = float(trace[:500].mean() - b_inf)
+    amp_cap = AMP_CAP_FACTOR * max(abs(amp), 1.0)
+
+    amp_fracs = {1: [1.0], 2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
+    tau_inits = {1: [600.0], 2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
+    tau_bounds = {
+        1: [(60, TAU1_CAP)],
+        2: [(300, TAU1_CAP), (1, 5000)],
+        3: [(300, TAU1_CAP), (1, 5000), (1, 180)],
+    }[n_exp]
+
+    x0 = [b_inf]
+    bounds = [(b_inf_lo, np.inf)]
+    for frac, tau, (tlo, thi) in zip(amp_fracs, tau_inits, tau_bounds):
+        x0 += [amp * frac, tau]
+        bounds += [(0, amp_cap), (tlo, thi)]
+
+    if include_brightening:
+        x0 += [-0.05 * b_inf, 2000.0]
+        bounds += [(-amp_cap, 0), (60, TAU_BRIGHT_CAP)]
+
+    return np.array(x0), tuple(bounds)
+
+
+def _sort_bleach_params(
+    params: np.ndarray, n_exp: int, include_bright: bool = False
+) -> np.ndarray:
+    """Sort a `sum_of_exps` parameter vector's bleach (amplitude, tau) pairs
+    by tau descending, leaving b_inf and the brightening pair (if any)
+    untouched."""
+    p = params.copy()
+    taus = np.array([params[2 + 2 * i] for i in range(n_exp)])
+    for new_i, old_i in enumerate(np.argsort(taus)[::-1]):
+        p[1 + 2 * new_i] = params[1 + 2 * old_i]
+        p[2 + 2 * new_i] = params[2 + 2 * old_i]
+    return p
+
+
+def _snap_degenerate_slow_terms(
+    params: np.ndarray,
+    n_exp: int,
+    include_bright: bool,
+    tc: np.ndarray,
+    ts: np.ndarray,
+    near_bound_frac: float = 0.95,
+) -> tuple[np.ndarray, int, bool, list[str]]:
+    """Drop the slowest bleach term and/or the brightening term if either
+    landed at (or near) its tau upper bound, and refit without it.
+
+    A term whose tau sits at its cap is not a real slow process -- it is
+    `_init_sum_of_exps`'s b_inf/tau1 (or b_inf/tau_bright) degeneracy, where
+    an arbitrary amount of b_inf gets misattributed to a physically
+    meaningless "slow exponential" instead of the bound preventing it
+    outright. Only the slowest bleach term is checked, since the other
+    bleach terms' tighter bounds reflect genuine fast timescales rather than
+    this degeneracy.
+
+    Returns
+    -------
+    params, n_exp, include_bright : the resulting (possibly reduced) model,
+        refit if anything was dropped; unchanged otherwise.
+    snapped : list of str
+        Which terms were dropped ("tau1", "bright"); empty if none.
+    """
+    TAU1_CAP, TAU_BRIGHT_CAP = 30000.0, 20000.0  # must match _init_sum_of_exps
+    snapped = []
+    if params[2] >= near_bound_frac * TAU1_CAP:
+        snapped.append("tau1")
+    if include_bright and params[-1] >= near_bound_frac * TAU_BRIGHT_CAP:
+        snapped.append("bright")
+    if not snapped:
+        return params, n_exp, include_bright, snapped
+
+    new_n_exp = n_exp - (1 if "tau1" in snapped else 0)
+    new_bright = include_bright and "bright" not in snapped
+    if new_n_exp < 1:
+        return np.array([float(np.mean(tc))]), 0, False, snapped
+
+    x0, bnd = _init_sum_of_exps(tc, n_exp=new_n_exp, include_brightening=new_bright)
+    _, res = nonlinear_fit(tc, ts, model=sum_of_exps, x0=x0, bounds=bnd, M=None)
+    return (
+        _sort_bleach_params(res.x, new_n_exp, new_bright),
+        new_n_exp,
+        new_bright,
+        snapped,
+    )
+
+
+def _pad_sum_of_exps_params(
+    params: np.ndarray, n_exp: int, include_bright: bool
+) -> np.ndarray:
+    """Pad a variable-length `sum_of_exps` parameter vector to the fixed
+    9-slot layout [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright],
+    filling unused bleach/brightening terms with (amplitude=0, tau=inf) so
+    every trace's fitted-parameter table has the same shape regardless of
+    which model was selected for that trace.
+    """
+    out = np.array([0.0, 0.0, np.inf, 0.0, np.inf, 0.0, np.inf, 0.0, np.inf])
+    out[0] = params[0]
+    out[1 : 1 + 2 * n_exp] = params[1 : 1 + 2 * n_exp]
+    if include_bright:
+        out[7:9] = params[-2:]
+    return out
+
+
+#: Default M-estimator for `tc_brightfit_v2`'s dF/F fit. Kept as a distinct
+#: name (not just "M") from `motion_correct`'s M_MOTION_CORRECTION default,
+#: since the two tune unrelated fits and are easy to conflate.
+M_DFF = NonlinearFitAsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)
+
+
+def tc_brightfit_v2(
+    trace: np.ndarray,
+    timestamps: np.ndarray,
+    M: RobustNorm | None = M_DFF,
+    rss_thresh: tuple[float, float] = (0.98, 0.97),
+    maxiter: int = 5,
+    ds: int = 10,
+    fixed_sigma: float | str | None = "auto",
+    sigma_anneal_steps: int = 4,
+    t_eval_exp3: float = 120.0,
+    median_correct: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
+    with a negative-amplitude brightening term) via `aind_ophys_utils`'s
+    `nonlinear_fit`.
+
+    Model selection cold-starts at 2 bleach exponentials on a `ds`-times
+    decimated trace, then tries adding a brightening term and a 3rd bleach
+    exponential (each kept only if it improves the RSS by `rss_thresh`), and
+    finally refits the winning model on the full-resolution trace with
+    robust IRLS (M-estimator `M`), warm-started from the decimated winner.
+    See `_snap_degenerate_slow_terms` for a post-fit check that drops any
+    term whose time constant landed at its upper bound.
+
+    Parameters
+    ----------
+    trace : np.ndarray
+        Fiber photometry signal.
+    timestamps : np.ndarray
+        Fiber photometry timestamps.
+    M : statsmodels.robust.norms.RobustNorm or None, optional
+        The robust criterion function for the final IRLS fit. Default is
+        `M_DFF` (AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0) from
+        `aind_ophys_utils.baseline_fitting`).
+    rss_thresh : tuple of float, optional
+        RSS-ratio thresholds (brightening, 3rd exponential) for accepting
+        each more complex candidate model. Default is (0.98, 0.97).
+    maxiter : int, optional
+        Maximum number of IRLS iterations for the final fit. Default is 5.
+    ds : int, optional
+        Decimation factor used for model-selection candidates; the final
+        fit always runs on the full-resolution trace. Default is 10.
+    fixed_sigma : float or "auto" or None, optional
+        IRLS noise scale for the final fit. "auto" estimates it via
+        `noise_std(trace, method="welch")` -- the PSD-based estimate is
+        symmetric and unbiased since it's computed from a high-frequency
+        band with no calcium-transient energy, unlike `method="mad"`, which
+        strips positive residuals first and so underestimates sigma from
+        the negative/central tail alone. A float uses `fixed_sigma`
+        directly; None falls back to `nonlinear_fit`'s own adaptive-scale
+        IRLS. Default is "auto".
+    sigma_anneal_steps : int, optional
+        Geometric IRLS-sigma annealing steps passed to `nonlinear_fit`.
+        Default is 4.
+    t_eval_exp3 : float, optional
+        Length (seconds) of the early window used to compare the 3rd
+        exponential candidate against the current winner; brightening is
+        compared on the full trace. Default is 120.0.
+    median_correct : bool, optional
+        If True, shift the fitted baseline by the median of the residuals
+        (`trace - baseline`), an optional per-trace centering correction.
+        Default is False.
+
+    Returns
+    -------
+    tuple
+        - baseline : np.ndarray
+            The fitted baseline.
+        - params : np.ndarray
+            Fitted parameters, padded to
+            [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
+            (unused terms set to amplitude=0, tau=inf).
+    """
+    if fixed_sigma == "auto":
+        fixed_sigma = float(noise_std(trace, method="welch"))
+
+    tc_ds = downsample_array(trace, factors=ds, strategy="first")
+    ts_ds = downsample_array(timestamps, factors=ds, strategy="first")
+
+    dt_ds = float(ts_ds[1] - ts_ds[0]) if len(ts_ds) > 1 else float(ds)
+    n_eval_ds = min(len(tc_ds), round(t_eval_exp3 / dt_ds))
+
+    kw_ds = dict(model=sum_of_exps, M=None)
+    kw_full = dict(
+        model=sum_of_exps, M=M, maxiter=maxiter, sigma_anneal_steps=sigma_anneal_steps
+    )
+    if fixed_sigma is not None:
+        kw_full["fixed_sigma"] = fixed_sigma
+
+    def _rss_ds_full(f0):
+        return float(np.sum((tc_ds - f0) ** 2))
+
+    def _rss_ds_early(f0):
+        return float(np.sum((tc_ds[:n_eval_ds] - f0[:n_eval_ds]) ** 2))
+
+    # Step 1: 2-exp OLS cold start on the decimated trace.
+    x0, bnd = _init_sum_of_exps(tc_ds, n_exp=2, include_brightening=False)
+    f0_ds, res_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0, bounds=bnd, **kw_ds)
+    rss_ds = _rss_ds_full(f0_ds)
+    f0_ds_best = f0_ds
+    params_ds = _sort_bleach_params(res_ds.x, 2)
+    n_exp_won = 2
+    include_bright = False
+
+    # Step 2: try adding brightening (full decimated-trace RSS).
+    x0_b = np.concatenate([params_ds, [-0.05 * params_ds[0], 2000.0]])
+    _, bnd_b = _init_sum_of_exps(tc_ds, n_exp=n_exp_won, include_brightening=True)
+    f0_b_ds, res_b_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_b, bounds=bnd_b, **kw_ds)
+    rss_b_ds = _rss_ds_full(f0_b_ds)
+    if rss_b_ds < rss_thresh[0] * rss_ds:
+        rss_ds, f0_ds_best, params_ds, include_bright = (
+            rss_b_ds,
+            f0_b_ds,
+            _sort_bleach_params(res_b_ds.x, n_exp_won, True),
+            True,
+        )
+
+    # Step 3: try adding a 3rd bleach exponential (early-window RSS).
+    n_exp_next = n_exp_won + 1
+    new_exp = np.array([0.05 * params_ds[0], 50.0])
+    x0_3 = (
+        np.concatenate([params_ds[:-2], new_exp, params_ds[-2:]])
+        if include_bright
+        else np.concatenate([params_ds, new_exp])
+    )
+    _, bnd_3 = _init_sum_of_exps(
+        tc_ds, n_exp=n_exp_next, include_brightening=include_bright
+    )
+    f0_3_ds, res_3_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_3, bounds=bnd_3, **kw_ds)
+    p3_sorted = _sort_bleach_params(res_3_ds.x, n_exp_next, include_bright)
+    tau_new = p3_sorted[2 + 2 * n_exp_won]
+    if (
+        _rss_ds_early(f0_3_ds) < rss_thresh[1] * _rss_ds_early(f0_ds_best)
+        and tau_new < 180.0
+    ):
+        params_ds = p3_sorted
+        n_exp_won = n_exp_next
+    model_str = f"{n_exp_won}-exp{'+bright' if include_bright else ''}"
+
+    # Drop any term whose time constant landed at its upper bound and refit.
+    params_ds, n_exp_won, include_bright, snapped = _snap_degenerate_slow_terms(
+        params_ds, n_exp_won, include_bright, tc_ds, ts_ds
+    )
+    if snapped:
+        model_str += f" [snapped: {','.join(snapped)}]"
+
+    # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
+    if n_exp_won == 0:
+        f0 = np.full_like(trace, params_ds[0])
+    else:
+        _, bnd_full = _init_sum_of_exps(
+            trace, n_exp=n_exp_won, include_brightening=include_bright
+        )
+        f0, _ = nonlinear_fit(
+            trace, timestamps, x0=params_ds, bounds=bnd_full, **kw_full
+        )
+
+    if median_correct:
+        f0 = f0 + np.median(trace - f0)
+
+    logging.info(f"Fit of original trace with model selection: {model_str}")
+
+    return f0, _pad_sum_of_exps_params(params_ds, n_exp_won, include_bright)
+
+
 # dF/F total function
 def chunk_processing(
     tc: np.ndarray,
@@ -530,6 +848,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
+    median_correct: bool = False,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
@@ -541,8 +860,8 @@ def chunk_processing(
     timestamps : np.ndarray
         Fiber photometry timestamps.
     method : str, optional
-        Method to preprocess the data. Options: poly, exp, bright.
-        Default is "poly".
+        Method to preprocess the data. Options: poly, exp, tri-exp, bright,
+        bright_legacy. Default is "poly".
     n_frame_to_cut : int, optional
         Number of frames to crop from the beginning of the signal.
         Default is 100.
@@ -555,8 +874,11 @@ def chunk_processing(
     b_percentile : float, optional
         Percentile to calculate the baseline. Default is 0.7.
     robust : bool, optional
-        Whether to fit baseline using IRLS (robust regression, only 'bright' method).
-        Default is True.
+        Whether to fit baseline using IRLS (robust regression, only
+        'bright_legacy' method). Default is True.
+    median_correct : bool, optional
+        Whether to shift the fitted baseline by the median residual (only
+        'bright' method, see `tc_brightfit_v2`). Default is False.
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
@@ -587,8 +909,14 @@ def chunk_processing(
                 tc_fit, tc_coefs = tc_triexpfit(
                     tc_filtered, ts, sampling_rate, xtol=1e-4
                 )
-        if method == "bright":
+        elif method == "bright_legacy":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
+        elif method == "bright":
+            tc_fit, tc_coefs = tc_brightfit_v2(
+                tc_filtered, ts, median_correct=median_correct
+            )
+
+        if method in ("bright", "bright_legacy"):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -605,7 +933,13 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]
+                {
+                    "poly": 5,
+                    "exp": 4,
+                    "tri-exp": 7,
+                    "bright": 9,
+                    "bright_legacy": 9,
+                }[method]
             )
         }
 
@@ -749,12 +1083,19 @@ class OneSidedTukeyBiweight(AsymmetricTukeyBiweight):
         super().__init__(c_pos=c, c_neg=np.inf)
 
 
+#: Default M-estimator for `motion_correct`'s regression. Kept as a distinct
+#: name (not just "M") from `tc_brightfit_v2`'s M_DFF default, since the two
+#: tune unrelated fits and are easy to conflate.
+M_MOTION_CORRECTION = AsymmetricTukeyBiweight(c_pos=3, c_neg=4.0)
+
+
 def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
-    M: RobustNorm = AsymmetricTukeyBiweight(2),
+    M: RobustNorm = M_MOTION_CORRECTION,
+    mode: str = "demean",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
 
@@ -774,7 +1115,16 @@ def motion_correct(
         Default is 3.
     M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
-        Default is AsymmetricTukeyBiweight(2).
+        Default is M_MOTION_CORRECTION (AsymmetricTukeyBiweight(c_pos=3, c_neg=4.0)).
+    mode : str, optional
+        How the fitted regression is applied to each channel:
+        "demean" subtracts `coef * raw_Iso`, re-centered to zero mean, and
+        discards the fitted intercept -- a channel's own F0-fitting bias
+        passes straight through unchanged. "intercept" additionally
+        subtracts the fitted intercept, which also removes each channel's
+        own constant F0-fitting bias but relies on that channel having no
+        genuine tonic (constant, non-transient) signal of interest,
+        since regression cannot distinguish the two. Default is "demean".
 
     Returns
     -------
@@ -790,6 +1140,8 @@ def motion_correct(
         - weights : dict
             The final regression weights.
     """
+    if mode not in ("demean", "intercept"):
+        raise ValueError(f"Unknown mode {mode!r}; expected 'demean' or 'intercept'.")
     if np.isnan(dff["Iso"]).any() or np.isinf(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
         return np.nan * dff, np.nan * dff, c, c, c
@@ -825,7 +1177,10 @@ def motion_correct(
     weights = {ch: w for ch, w in zip(dff.columns, weights)}
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
-    motions -= motions.mean(axis=1, keepdims=True)
+    if mode == "demean":
+        motions -= motions.mean(axis=1, keepdims=True)
+    else:  # mode == "intercept"
+        motions[no_nans] += intercept[:, None]
     dff_mc = dff - motions.T
     dff_mc["Iso"] = 0
     dff_filt = pd.DataFrame(dff_filt.T)

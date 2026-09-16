@@ -90,7 +90,7 @@ def process1dataset(source_path, args, start_time):
                     del store["processing"]
 
         # Use the shared processing function
-        df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
+        df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods, events, event_label = (
             process_nwb_file(nwb_file_path, args)
         )
 
@@ -105,6 +105,8 @@ def process1dataset(source_path, args, start_time):
                 methods,
                 args,
                 destination_path,
+                events,
+                event_label,
             )
 
             # Update quality_control.json
@@ -165,9 +167,36 @@ if __name__ == "__main__":
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
             "  'tri-exp': Fit with triphasic exponential using OLS\n"
-            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
-            "[Increasing saturating exponential (brightening)] using iteratively "
-            "reweighted least squares (IRLS)"
+            "  'bright': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "optionally with a brightening term) selected and fit via "
+            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2)\n"
+            "  'bright_legacy': The previous 'bright' implementation -- robust fit "
+            "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
+            "saturating exponential (brightening)] using iteratively reweighted "
+            "least squares (IRLS)"
+        ),
+    )
+    parser.add_argument(
+        "--median_correct",
+        action="store_true",
+        help=(
+            "Shift the 'bright' method's fitted baseline by the median residual "
+            "(trace - baseline), an optional per-trace centering correction. "
+            "Has no effect on other methods. Default is off."
+        ),
+    )
+    parser.add_argument(
+        "--motion_correction_mode",
+        choices=["demean", "intercept"],
+        default="demean",
+        help=(
+            "How motion_correct applies the fitted Iso regression: 'demean' "
+            "discards the fitted intercept (safe default -- a channel's own "
+            "F0-fitting bias passes through unchanged); 'intercept' also "
+            "subtracts the fitted intercept, which additionally removes each "
+            "channel's own constant F0-fitting bias but assumes that channel "
+            "has no genuine tonic (constant, non-transient) signal of interest. "
+            "Default is 'demean'."
         ),
     )
     parser.add_argument(
