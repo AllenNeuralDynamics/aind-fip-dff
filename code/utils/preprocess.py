@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -486,8 +487,6 @@ def tc_brightfit(
         while not converged:
             iteration += 1
             if scl == 0.0:
-                import warnings
-
                 warnings.warn(
                     "Estimated scale is 0.0 indicating that the most"
                     " last iteration produced a perfect fit of the "
@@ -696,6 +695,12 @@ def tc_brightfit_v2(
     See `_snap_degenerate_slow_terms` for a post-fit check that drops any
     term whose time constant landed at its upper bound.
 
+    Any sample where `trace` or `timestamps` is non-finite is dropped (not
+    interpolated) before fitting -- a single corrupted sample can otherwise
+    poison the IRLS loss to NaN everywhere. The returned baseline is NaN at
+    those positions and finite elsewhere; a `UserWarning` reports how many
+    samples were dropped, and a `ValueError` is raised if none are usable.
+
     Parameters
     ----------
     trace : np.ndarray
@@ -745,11 +750,35 @@ def tc_brightfit_v2(
             [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
             (unused terms set to amplitude=0, tau=inf).
     """
-    if fixed_sigma == "auto":
-        fixed_sigma = float(noise_std(trace, method="welch"))
+    # Guard against non-finite samples: drop (not interpolate) any frame
+    # where the trace or its timestamp is non-finite, before anything else
+    # touches them. A single corrupted sample can otherwise poison the
+    # IRLS loss to NaN everywhere, collapsing the fit to its parameter
+    # bounds with no usable gradient.
+    valid = np.isfinite(trace) & np.isfinite(timestamps)
+    n_dropped = int((~valid).sum())
+    if n_dropped:
+        if not valid.any():
+            raise ValueError(
+                "tc_brightfit_v2: every sample is non-finite (trace or "
+                "timestamps) -- nothing to fit."
+            )
+        warnings.warn(
+            f"tc_brightfit_v2: dropping {n_dropped} non-finite sample(s) "
+            "(trace or timestamps) before fitting.",
+            stacklevel=2,
+        )
+        trace_valid = trace[valid]
+        ts_valid = timestamps[valid]
+    else:
+        trace_valid = trace
+        ts_valid = timestamps
 
-    tc_ds = downsample_array(trace, factors=ds, strategy="first")
-    ts_ds = downsample_array(timestamps, factors=ds, strategy="first")
+    if fixed_sigma == "auto":
+        fixed_sigma = float(noise_std(trace_valid, method="welch"))
+
+    tc_ds = downsample_array(trace_valid, factors=ds, strategy="first")
+    ts_ds = downsample_array(ts_valid, factors=ds, strategy="first")
 
     dt_ds = float(ts_ds[1] - ts_ds[0]) if len(ts_ds) > 1 else float(ds)
     n_eval_ds = min(len(tc_ds), round(t_eval_exp3 / dt_ds))
@@ -820,19 +849,24 @@ def tc_brightfit_v2(
 
     # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
     if n_exp_won == 0:
-        f0 = np.full_like(trace, params_ds[0])
+        f0 = np.full_like(trace_valid, params_ds[0])
     else:
         _, bnd_full = _init_sum_of_exps(
-            trace, n_exp=n_exp_won, include_brightening=include_bright
+            trace_valid, n_exp=n_exp_won, include_brightening=include_bright
         )
         f0, _ = nonlinear_fit(
-            trace, timestamps, x0=params_ds, bounds=bnd_full, **kw_full
+            trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
         )
 
     if median_correct:
-        f0 = f0 + np.median(trace - f0)
+        f0 = f0 + np.median(trace_valid - f0)
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
+
+    if n_dropped:
+        f0_full = np.full(len(trace), np.nan)
+        f0_full[valid] = f0
+        f0 = f0_full
 
     return f0, _pad_sum_of_exps_params(params_ds, n_exp_won, include_bright)
 
