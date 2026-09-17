@@ -186,12 +186,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--median_correct",
-        action="store_true",
+        "--correction",
+        choices=["median", "pct70"],
+        default=None,
         help=(
-            "Shift the 'bright' method's fitted baseline by the median residual "
-            "(trace - baseline), an optional per-trace centering correction. "
-            "Has no effect on other methods. Default is off."
+            "Optional per-trace, post-hoc centering correction applied to the "
+            "'bright' method's fitted baseline (see tc_brightfit_v2). "
+            "'median': shift by the plain median of the residuals. "
+            "'pct70': shift by the median of the lowest 70%% of residuals -- "
+            "the same recipe 'poly'/'exp'/'tri-exp' already use in production "
+            "(tc_dFF's b_percentile), applied to this method's residual "
+            "instead of tc_dFF's ratio. Has no effect on other methods. "
+            "Default is no correction."
         ),
     )
     parser.add_argument(

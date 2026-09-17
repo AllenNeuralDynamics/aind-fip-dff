@@ -1155,7 +1155,7 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name, median_correct=False):
+def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -1167,7 +1167,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, median_correct=Fals
         NM_values,
         timestamps - timestamps[0],
         method=pp_name,
-        median_correct=median_correct,
+        correction=correction,
         trace_id=f"{channel}_{fiber_number}",
     )
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1198,7 +1198,7 @@ def _process1fiber(
     cutoff_freq_motion,
     cutoff_freq_noise,
     serial,
-    median_correct=False,
+    correction=None,
     motion_correction_mode="demean",
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
@@ -1219,9 +1219,9 @@ def _process1fiber(
         Cutoff frequency for noise filtering.
     serial : bool
         Whether to process channels serially.
-    median_correct : bool, optional
-        Whether to apply the per-trace median-residual correction (only
-        'bright' method, see `tc_brightfit_v2`). Default is False.
+    correction : {"median", "pct70"} or None, optional
+        Optional per-trace centering correction (only 'bright' method, see
+        `tc_brightfit_v2`). Default is None (no correction).
     motion_correction_mode : str, optional
         "demean" or "intercept", see `motion_correct`. Default is "demean".
 
@@ -1243,12 +1243,12 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, median_correct)
+            _process1channel(ch, df_fip, fiber_number, pp_name, correction)
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, median_correct)
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, correction)
             for ch in channels
         )
 
@@ -1352,7 +1352,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
-                    args.median_correct,
+                    args.correction,
                     args.motion_correction_mode,
                 )
                 for fib in fiber_numbers
@@ -1367,7 +1367,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
-                    args.median_correct,
+                    args.correction,
                     args.motion_correction_mode,
                 )
                 for fib in fiber_numbers
@@ -1682,12 +1682,18 @@ def main():
         ),
     )
     parser.add_argument(
-        "--median_correct",
-        action="store_true",
+        "--correction",
+        choices=["median", "pct70"],
+        default=None,
         help=(
-            "Shift the 'bright' method's fitted baseline by the median residual "
-            "(trace - baseline), an optional per-trace centering correction. "
-            "Has no effect on other methods. Default is off."
+            "Optional per-trace, post-hoc centering correction applied to the "
+            "'bright' method's fitted baseline (see tc_brightfit_v2). "
+            "'median': shift by the plain median of the residuals. "
+            "'pct70': shift by the median of the lowest 70%% of residuals -- "
+            "the same recipe 'poly'/'exp'/'tri-exp' already use in production "
+            "(tc_dFF's b_percentile), applied to this method's residual "
+            "instead of tc_dFF's ratio. Has no effect on other methods. "
+            "Default is no correction."
         ),
     )
     parser.add_argument(

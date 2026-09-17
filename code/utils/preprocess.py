@@ -681,7 +681,7 @@ def tc_brightfit_v2(
     fixed_sigma: float | str | None = "auto",
     sigma_anneal_steps: int = 4,
     t_eval_exp3: float = 120.0,
-    median_correct: bool = False,
+    correction: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -735,10 +735,24 @@ def tc_brightfit_v2(
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
         compared on the full trace. Default is 120.0.
-    median_correct : bool, optional
-        If True, shift the fitted baseline by the median of the residuals
-        (`trace - baseline`), an optional per-trace centering correction.
-        Default is False.
+    correction : {"median", "pct70"} or None, optional
+        Optional per-trace, post-hoc centering correction applied to the
+        fitted baseline (`trace - baseline` is the residual in both cases):
+          - None (default): no correction.
+          - "median": shift the baseline by the plain median of the
+            residuals. Exactly zero-centered on clean data, robust up to
+            50% one-sided contamination (calcium activity only ever pushes
+            residuals positive) by construction.
+          - "pct70": shift the baseline by the median of the lowest 70% of
+            residuals -- the same recipe `poly`/`exp`/`tri-exp` already use
+            in production (`tc_dFF`, via `b_percentile`), applied here to
+            this method's residual instead of `tc_dFF`'s ratio. Robust up
+            to 30% contamination by construction (guaranteed, since that
+            fraction is dropped before taking the median), at the cost of a
+            small deliberate offset even on clean data (the 35th percentile
+            of a symmetric residual isn't its center) -- a different
+            tradeoff from "median", not a strictly better or worse one.
+        Any other value raises `ValueError`.
 
     Returns
     -------
@@ -858,8 +872,16 @@ def tc_brightfit_v2(
             trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
         )
 
-    if median_correct:
+    if correction == "median":
         f0 = f0 + np.median(trace_valid - f0)
+    elif correction == "pct70":
+        r_sorted = np.sort(trace_valid - f0)
+        f0 = f0 + np.median(r_sorted[: round(len(r_sorted) * 0.7)])
+    elif correction is not None:
+        raise ValueError(
+            f"tc_brightfit_v2: unknown correction {correction!r}; "
+            'expected None, "median", or "pct70".'
+        )
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
@@ -882,7 +904,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
-    median_correct: bool = False,
+    correction: str | None = None,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
@@ -910,9 +932,9 @@ def chunk_processing(
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only
         'bright_legacy' method). Default is True.
-    median_correct : bool, optional
-        Whether to shift the fitted baseline by the median residual (only
-        'bright' method, see `tc_brightfit_v2`). Default is False.
+    correction : {"median", "pct70"} or None, optional
+        Optional per-trace centering correction (only 'bright' method, see
+        `tc_brightfit_v2`). Default is None (no correction).
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
@@ -947,7 +969,7 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
         elif method == "bright":
             tc_fit, tc_coefs = tc_brightfit_v2(
-                tc_filtered, ts, median_correct=median_correct
+                tc_filtered, ts, correction=correction
             )
 
         if method in ("bright", "bright_legacy"):
