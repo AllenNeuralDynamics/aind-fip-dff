@@ -564,7 +564,10 @@ def plot_motion_correction(
         matplotlib.axes.Axes
             The axis with the PSD plot.
         """
-        psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
+        # np.asarray guards against pandas Series input: scipy>=1.15's welch
+        # slices internally with an Ellipsis+tuple index that Series.__getitem__
+        # doesn't support (raises KeyError), whereas ndarray input works fine.
+        psd = np.array(welch(np.asarray(data) * 100, nperseg=1024))[:, 1:-1]
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
