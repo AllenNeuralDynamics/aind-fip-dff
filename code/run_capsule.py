@@ -726,11 +726,16 @@ def _neg_tail_const(k: float) -> float:
 def _calibration_ratio(
     signal: np.ndarray, f0: np.ndarray, depths=CALIBRATION_RATIO_DEPTHS
 ) -> tuple[dict, float]:
-    """Negative-residual calibration ratio for a baseline fit, at one or
-    more depths below F0.
+    """Negative-residual calibration ratio for a fitted baseline, at one or
+    more depths below it.
+
+    `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
+    check the baseline fit itself, or pass an already-centered trace
+    (dF/F, motion-corrected dF/F) with `f0=0` to check that trace's own
+    residual-to-noise consistency directly.
 
     At depth k=0, this is the classical MAD-consistency ratio: the median
-    absolute negative residual (signal - F0), compared to what pure
+    absolute negative residual (signal - f0), compared to what pure
     Gaussian noise at the trace's own estimated std would produce
     (0.6745 * sigma) -- the same diagnostic
     `aind_ophys_dff_library.triexp_dff` uses during its own model
@@ -739,9 +744,9 @@ def _calibration_ratio(
     of exactly 1 is not itself the unbiased target on real (non-Gaussian,
     transient-containing) data.
 
-    At depth k>0, only residuals more than k*sigma below F0 are used, and
+    At depth k>0, only residuals more than k*sigma below f0 are used, and
     compared to `_neg_tail_const(k) * sigma`. Calcium transients decay
-    one-sided, so a residual just below F0 can still be a lingering,
+    one-sided, so a residual just below f0 can still be a lingering,
     not-yet-decayed transient rather than pure noise; requiring a deeper
     cutoff makes that exponentially less likely (Mills-ratio argument)
     while genuine noise only thins at the ordinary Gaussian tail rate. A
@@ -751,9 +756,10 @@ def _calibration_ratio(
     Parameters
     ----------
     signal : np.ndarray
-        Raw fluorescence signal.
-    f0 : np.ndarray
-        Fitted baseline for `signal`.
+        Trace to check (raw fluorescence, dF/F, or motion-corrected dF/F).
+    f0 : np.ndarray or float
+        Baseline to compare `signal` against -- the fitted F0 for raw
+        fluorescence, or 0 for an already-centered dF/F-like trace.
     depths : sequence of float, optional
         Depths (sigma below F0) at which to evaluate the ratio.
         Default is `CALIBRATION_RATIO_DEPTHS` (0 and 1).
@@ -1045,8 +1051,9 @@ def create_metric(fiber, method, reference, value, motion=False):
 def create_calibration_metric(fiber, method, ratio_by_channel):
     """Create a QC metric for the per-channel negative-residual calibration ratio.
 
-    `ratio_by_channel` is `{channel: {"k0": ratio, "k1": ratio, ...}}` -- see
-    `_calibration_ratio` for the definition at each depth.
+    `ratio_by_channel` is `{channel: {stage: {"k0": ratio, "k1": ratio, ...}}}`,
+    where `stage` is "dff" (before motion correction) or "motion_corrected"
+    (after) -- see `_calibration_ratio` for the definition at each depth.
     """
     return QCMetric(
         name=f"Calibration ratio of ROI {fiber} using method '{method}'",
@@ -1059,16 +1066,18 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
         value=ratio_by_channel,
         description=(
             "Per-channel median-negative-residual calibration ratio, at one "
-            "or more depths (sigma below F0). 'k0' is the classical "
-            "median|negative residual| / (0.6745 * noise std) -- the same "
-            "diagnostic used during model selection in "
-            "aind_ophys_dff_library.triexp_dff. 'k1' and deeper depths use "
-            "only residuals that far below F0, exponentially less exposed "
-            "to lingering, not-yet-decayed transients near baseline. "
-            "Expected to be close to 1, but not exactly -- treat outlier "
-            "values and a large k0-vs-k1 divergence (which specifically "
-            "suggests near-baseline transient contamination) as the "
-            "actionable signals, not small deviations from 1."
+            "or more depths (sigma below baseline), computed on dF/F ('dff') "
+            "and again on the motion-corrected dF/F ('motion_corrected'). "
+            "'k0' is the classical median|negative residual| / "
+            "(0.6745 * noise std) -- the same diagnostic used during model "
+            "selection in aind_ophys_dff_library.triexp_dff. 'k1' and "
+            "deeper depths use only residuals that far below baseline, "
+            "exponentially less exposed to lingering, not-yet-decayed "
+            "transients near it. Expected to be close to 1, but not "
+            "exactly -- treat outlier values and a large k0-vs-k1 "
+            "divergence (which specifically suggests near-baseline "
+            "transient contamination) as the actionable signals, not small "
+            "deviations from 1."
         ),
     )
 
@@ -1076,12 +1085,17 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
 def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
     """Create a QC metric for pre-event dF/F drift across trials.
 
-    See `_pregocue_drift_stats` for the definition; relates to
-    aind-fip-dff#75 (baseline drift within a session).
+    `stats_by_channel` is `{channel: {stage: stats}}`, where `stage` is
+    "dff" (before motion correction) or "motion_corrected" (after) -- see
+    `_pregocue_drift_stats` for the definition; relates to aind-fip-dff#75
+    (baseline drift within a session).
     """
     value = {
-        ch: {k: v for k, v in s.items() if k != "per_trial_mean"}
-        for ch, s in stats_by_channel.items()
+        ch: {
+            stage: {k: v for k, v in s.items() if k != "per_trial_mean"}
+            for stage, s in stages.items()
+        }
+        for ch, stages in stats_by_channel.items()
     }
     return QCMetric(
         name=f"Pre-{event_label} dF/F drift of ROI {fiber} using method '{method}'",
@@ -1093,9 +1107,11 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
         ],
         value=value,
         description=(
-            f"Per-channel mean and OLS trend of pre-{event_label} dF/F across "
-            "trials -- a within-session baseline-drift diagnostic "
-            "(see aind-fip-dff#75)."
+            f"Per-channel mean and OLS trend of pre-{event_label} dF/F "
+            "across trials, computed on dF/F ('dff', before motion "
+            "correction) and again on the motion-corrected dF/F "
+            "('motion_corrected', after) -- a within-session baseline-drift "
+            "diagnostic (see aind-fip-dff#75)."
         ),
     )
 
@@ -1587,12 +1603,25 @@ def generate_qc_plots(
                 ]
                 if df.empty:
                     continue
-                ratios, _ = _calibration_ratio(df.signal.values, df.F0.values)
-                ratio_by_channel[ch] = ratios
+                # Both metrics are computed at two stages: "dff" (isolates
+                # the baseline-fit method, unaffected by
+                # motion_correction_mode) and "motion_corrected" (the actual
+                # production output, where demean vs. intercept differ).
+                ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
+                ratio_mc, _ = _calibration_ratio(df.motion_corrected.values, 0)
+                ratio_by_channel[ch] = {"dff": ratio_dff, "motion_corrected": ratio_mc}
                 if pregocue_starts is not None:
-                    drift_by_channel[ch] = _pregocue_drift_stats(
-                        df.dFF.values, df.time_fip.values, pregocue_starts, pregocue_ends
-                    )
+                    drift_by_channel[ch] = {
+                        "dff": _pregocue_drift_stats(
+                            df.dFF.values, df.time_fip.values, pregocue_starts, pregocue_ends
+                        ),
+                        "motion_corrected": _pregocue_drift_stats(
+                            df.motion_corrected.values,
+                            df.time_fip.values,
+                            pregocue_starts,
+                            pregocue_ends,
+                        ),
+                    }
             metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
             if pregocue_starts is not None:
                 metrics.append(
