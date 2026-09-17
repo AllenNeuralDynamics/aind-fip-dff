@@ -910,7 +910,9 @@ def plot_pregocue_regression(
 ) -> dict:
     """Plot per-trial pre-event dF/F against trial index, with an OLS trend
     line, for each channel -- a QC check for within-session baseline drift
-    (see aind-fip-dff#75).
+    (see aind-fip-dff#75). Two rows: dF/F before motion correction ("dff",
+    isolates the baseline-fit method) and after ("motion_corrected", the
+    actual production output, where demean vs. intercept differ).
 
     Parameters
     ----------
@@ -933,55 +935,60 @@ def plot_pregocue_regression(
     Returns
     -------
     dict
-        Per-channel drift stats (see `_pregocue_drift_stats`), keyed by
-        channel -- reused by `generate_qc_plots` for the QCMetric.
+        `{channel: {"dff": stats, "motion_corrected": stats}}` (see
+        `_pregocue_drift_stats` for the per-stage stats).
     """
     colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}
     channels = sorted(channels)
+    stage_cols = (("dff", "dFF"), ("motion_corrected", "motion_corrected"))
     fig, axes = plt.subplots(
-        1, len(channels), figsize=(4.5 * len(channels), 3.5), squeeze=False
+        len(stage_cols), len(channels), figsize=(4.5 * len(channels), 7), squeeze=False
     )
 
-    stats = {}
-    for c, ch in enumerate(channels):
-        ax = axes[0, c]
-        df = df_fip_pp[
-            (df_fip_pp.channel == ch)
-            & (df_fip_pp.fiber_number == fiber)
-            & (df_fip_pp.preprocess == method)
-        ]
-        color = colors.get(ch, f"C{c}")
-        s = _pregocue_drift_stats(df.dFF.values, df.time_fip.values, starts, ends)
-        stats[ch] = s
+    stats = {ch: {} for ch in channels}
+    for r, (stage, col) in enumerate(stage_cols):
+        for c, ch in enumerate(channels):
+            ax = axes[r, c]
+            df = df_fip_pp[
+                (df_fip_pp.channel == ch)
+                & (df_fip_pp.fiber_number == fiber)
+                & (df_fip_pp.preprocess == method)
+            ]
+            color = colors.get(ch, f"C{c}")
+            s = _pregocue_drift_stats(df[col].values, df.time_fip.values, starts, ends)
+            stats[ch][stage] = s
 
-        trial = np.arange(len(s["per_trial_mean"]))
-        valid = np.isfinite(s["per_trial_mean"])
-        ax.scatter(trial[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color)
-        if np.isfinite(s["slope"]):
-            ax.plot(
-                trial[valid],
-                (s["intercept"] + s["slope"] * trial[valid]) * 100,
-                c="k",
-                lw=1.5,
+            trial = np.arange(len(s["per_trial_mean"]))
+            valid = np.isfinite(s["per_trial_mean"])
+            ax.scatter(
+                trial[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color
             )
-        ax.axhline(0, c="k", ls="--", lw=0.8)
-        ax.set_title(ch, color=color)
-        ax.set_xlabel("Trial #")
-        if c == 0:
-            ax.set_ylabel(rf"pre-{event_label} $\Delta$F/F [%]")
-        ax.annotate(
-            f"mean={s['mean_dff']*100:.3f}% (p={s['mean_p']:.2g})\n"
-            f"slope={s['slope']*100:.2e}%/trial (p={s['slope_p']:.2g})\n"
-            f"n={s['n_trials']}",
-            xy=(0.03, 0.97),
-            xycoords="axes fraction",
-            va="top",
-            fontsize=8,
-        )
+            if np.isfinite(s["slope"]):
+                ax.plot(
+                    trial[valid],
+                    (s["intercept"] + s["slope"] * trial[valid]) * 100,
+                    c="k",
+                    lw=1.5,
+                )
+            ax.axhline(0, c="k", ls="--", lw=0.8)
+            ax.set_title(f"{ch} ({stage})", color=color, fontsize=9)
+            if r == len(stage_cols) - 1:
+                ax.set_xlabel("Trial #")
+            if c == 0:
+                ax.set_ylabel(rf"pre-{event_label} $\Delta$F/F [%]")
+            ax.annotate(
+                f"mean={s['mean_dff']*100:.3f}% (p={s['mean_p']:.2g})\n"
+                f"slope={s['slope']*100:.2e}%/trial (p={s['slope_p']:.2g})\n"
+                f"n={s['n_trials']}",
+                xy=(0.03, 0.97),
+                xycoords="axes fraction",
+                va="top",
+                fontsize=8,
+            )
 
     plt.suptitle(
         f"Pre-{event_label} $\\Delta F/F_0$ regression   Method: {method},  ROI: {fiber}",
-        y=1.02,
+        y=1.01,
     )
     plt.tight_layout()
 
