@@ -38,6 +38,7 @@ from hdmf_zarr import NWBZarrIO
 from aind_ophys_utils.signal_utils import noise_std
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import LogFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.stats import linregress, norm, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
@@ -571,6 +572,16 @@ def plot_motion_correction(
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
+        # Force plain-text log tick labels instead of the default
+        # LogFormatterSciNotation, whose "$\mathdefault{10^{1}}$"-style
+        # labels go through matplotlib's mathtext (pyparsing-based) parser.
+        # That parser can fail on some matplotlib/pyparsing combinations
+        # (ValueError/ParseException on exactly this string) when this
+        # figure's tight_layout()/savefig(bbox_inches="tight") call computes
+        # tick label bounding boxes -- avoiding mathtext here sidesteps it
+        # regardless of which pyparsing version is installed.
+        ax.xaxis.set_major_formatter(LogFormatter(labelOnlyBase=False))
+        ax.yaxis.set_major_formatter(LogFormatter(labelOnlyBase=False))
         return ax
 
     left_axes = []
