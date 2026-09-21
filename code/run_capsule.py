@@ -10,6 +10,7 @@ from joblib import Parallel, delayed
 from pathlib import Path
 from typing import Union
 
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -45,6 +46,18 @@ from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
+
+# This module's QC plots use $...$ mathtext throughout (baseline-formula
+# annotations, axis labels, titles -- see generate_qc_plots/plot_*). On some
+# matplotlib/pyparsing version combinations (observed with a freshly-built,
+# unpinned-pyparsing image), matplotlib's mathtext parser fails outright --
+# even on a minimal string like r"$\Delta$F/F [%]" -- raising ValueError from
+# deep inside tight_layout()/savefig(bbox_inches="tight"), which aborts the
+# whole per-asset QC-plot generation. Disabling math parsing makes every such
+# string render literally (e.g. "$\Delta$F/F [%]" instead of a Delta glyph)
+# rather than crash -- a cosmetic downgrade, not a data-correctness one, and
+# safe regardless of which pyparsing version this image happens to have.
+matplotlib.rcParams["text.parse_math"] = False
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
