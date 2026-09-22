@@ -252,6 +252,24 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(source_paths) > 1:
+        # Force matplotlib to finish building its font cache exactly once,
+        # here in the single-threaded parent process, before any worker is
+        # forked below. On a freshly-built Docker image (no pre-existing
+        # ~/.cache/matplotlib font cache), N outer worker processes each
+        # hitting matplotlib for the first time *simultaneously* race to
+        # build/write that cache -- observed both as pyparsing mathtext
+        # ParseExceptions on otherwise-valid strings, and (this run) as
+        # RendererAgg.__init__ receiving a corrupted garbage height
+        # (~4.7e14). Rendering one throwaway figure here completes the
+        # font-cache build before Parallel(...) starts, so workers see an
+        # already-finished cache instead of racing to build it themselves.
+        import matplotlib.pyplot as _plt
+
+        _fig = _plt.figure()
+        _fig.text(0.5, 0.5, "warm font cache")
+        _fig.canvas.draw()
+        _plt.close(_fig)
+
         n_jobs = min(len(source_paths), int(os.getenv("CO_CPUS", -1)))
         Parallel(n_jobs=n_jobs)(
             delayed(process1dataset)(path, args, start_time) for path in source_paths
