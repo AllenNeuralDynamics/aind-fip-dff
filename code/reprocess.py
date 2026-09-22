@@ -151,6 +151,19 @@ def process1dataset(source_path, args, start_time):
     )
 
 
+def _process1dataset_safe(source_path, args, start_time):
+    """Wrap process1dataset so one dataset's unhandled exception (e.g. the
+    matplotlib/Agg RendererAgg crash seen on rare degenerate-data QC plots)
+    logs and gets skipped instead of aborting the whole outer Parallel job --
+    joblib's default fail-fast behavior means a single bad dataset otherwise
+    sacrifices every other still-queued dataset's output too, which is far
+    worse than losing QC output for just the one dataset that triggered it."""
+    try:
+        process1dataset(source_path, args, start_time)
+    except Exception:
+        logging.exception(f"Skipping {source_path}: unhandled exception")
+
+
 if __name__ == "__main__":
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -272,7 +285,7 @@ if __name__ == "__main__":
 
         n_jobs = min(len(source_paths), int(os.getenv("CO_CPUS", -1)))
         Parallel(n_jobs=n_jobs)(
-            delayed(process1dataset)(path, args, start_time) for path in source_paths
+            delayed(_process1dataset_safe)(path, args, start_time) for path in source_paths
         )
     else:
         process1dataset(source_paths[0], args, start_time)
