@@ -1179,7 +1179,9 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None, M=None):
+def _process1channel(
+    channel, df_fip, fiber_number, pp_name, correction=None, M=None, b_percentile=0.7
+):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -1193,6 +1195,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None, M=
         method=pp_name,
         correction=correction,
         M=M,
+        b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
     )
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1226,6 +1229,7 @@ def _process1fiber(
     correction=None,
     motion_correction_mode="demean",
     M=None,
+    b_percentile=0.7,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1254,6 +1258,13 @@ def _process1fiber(
         Optional M-estimator override for the 'bright' method's IRLS fit
         (only 'bright' method; no effect on any other method). Default is
         None, which leaves `tc_brightfit_v2` on its own default (`M_DFF`).
+    b_percentile : float, optional
+        Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
+        'tri-exp' only, no effect on 'bright'/'bright_legacy'. 1.0 gives the
+        plain median of the whole residual distribution (no truncation),
+        the same recipe as 'bright'/`--correction median`, just applied to
+        these methods' own ratio-based residual. Default is 0.7 (median of
+        the lowest 70%), matching `chunk_processing`'s own default.
 
     Returns
     -------
@@ -1273,12 +1284,14 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, correction, M)
+            _process1channel(ch, df_fip, fiber_number, pp_name, correction, M, b_percentile)
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, correction, M)
+            delayed(_process1channel)(
+                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile
+            )
             for ch in channels
         )
 
@@ -1395,6 +1408,7 @@ def process_nwb_file(
                     args.correction,
                     args.motion_correction_mode,
                     M_dff_override,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             ]
@@ -1411,6 +1425,7 @@ def process_nwb_file(
                     args.correction,
                     args.motion_correction_mode,
                     M_dff_override,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             )
@@ -1736,6 +1751,20 @@ def main():
             "(tc_dFF's b_percentile), applied to this method's residual "
             "instead of tc_dFF's ratio. Has no effect on other methods. "
             "Default is no correction."
+        ),
+    )
+    parser.add_argument(
+        "--b_percentile",
+        type=float,
+        default=0.7,
+        help=(
+            "Percentile for baseline calculation in tc_dFF -- 'poly'/'exp'/"
+            "'tri-exp' only, no effect on 'bright'/'bright_legacy' (which use "
+            "--correction instead). 1.0 gives the plain median of the whole "
+            "residual distribution (no truncation) -- the same recipe as "
+            "--correction median, just applied to these methods' own "
+            "ratio-based residual instead of bright's additive one. Default "
+            "is 0.7 (median of the lowest 70%%), matching production."
         ),
     )
     parser.add_argument(

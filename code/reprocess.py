@@ -214,6 +214,20 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--b_percentile",
+        type=float,
+        default=0.7,
+        help=(
+            "Percentile for baseline calculation in tc_dFF -- 'poly'/'exp'/"
+            "'tri-exp' only, no effect on 'bright'/'bright_legacy' (which use "
+            "--correction instead). 1.0 gives the plain median of the whole "
+            "residual distribution (no truncation) -- the same recipe as "
+            "--correction median, just applied to these methods' own "
+            "ratio-based residual instead of bright's additive one. Default "
+            "is 0.7 (median of the lowest 70%%), matching production."
+        ),
+    )
+    parser.add_argument(
         "--c_pos",
         type=float,
         default=None,
