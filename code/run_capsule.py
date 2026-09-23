@@ -45,7 +45,7 @@ from scipy.stats import linregress, norm, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, motion_correct
+from utils.preprocess import AsymmetricTukeyBiweight, chunk_processing, motion_correct
 
 # This module's QC plots use $...$ mathtext throughout (baseline-formula
 # annotations, axis labels, titles -- see generate_qc_plots/plot_*). On some
@@ -1179,7 +1179,7 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None):
+def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None, M=None):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -1192,6 +1192,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, correction=None):
         timestamps - timestamps[0],
         method=pp_name,
         correction=correction,
+        M=M,
         trace_id=f"{channel}_{fiber_number}",
     )
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1224,6 +1225,7 @@ def _process1fiber(
     serial,
     correction=None,
     motion_correction_mode="demean",
+    M=None,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1248,6 +1250,10 @@ def _process1fiber(
         `tc_brightfit_v2`). Default is None (no correction).
     motion_correction_mode : str, optional
         "demean" or "intercept", see `motion_correct`. Default is "demean".
+    M : RobustNorm or None, optional
+        Optional M-estimator override for the 'bright' method's IRLS fit
+        (only 'bright' method; no effect on any other method). Default is
+        None, which leaves `tc_brightfit_v2` on its own default (`M_DFF`).
 
     Returns
     -------
@@ -1267,12 +1273,12 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, correction)
+            _process1channel(ch, df_fip, fiber_number, pp_name, correction, M)
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, correction)
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, correction, M)
             for ch in channels
         )
 
@@ -1362,6 +1368,16 @@ def process_nwb_file(
     channels = df_fip["channel"].unique()
     channels = channels[~pd.isna(channels)]
 
+    # Optional M-estimator override for the 'bright' method's dF/F IRLS fit
+    # (--c_pos/--c_neg), distinct from motion_correct's own M-estimator.
+    # None (the default when neither flag is given) leaves tc_brightfit_v2 on
+    # its own default (M_DFF, AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)).
+    M_dff_override = (
+        AsymmetricTukeyBiweight(c_pos=args.c_pos, c_neg=args.c_neg)
+        if args.c_pos is not None
+        else None
+    )
+
     for pp_name in args.dff_methods:
         if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy"]:
             continue
@@ -1378,6 +1394,7 @@ def process_nwb_file(
                     args.serial,
                     args.correction,
                     args.motion_correction_mode,
+                    M_dff_override,
                 )
                 for fib in fiber_numbers
             ]
@@ -1393,6 +1410,7 @@ def process_nwb_file(
                     args.serial,
                     args.correction,
                     args.motion_correction_mode,
+                    M_dff_override,
                 )
                 for fib in fiber_numbers
             )
@@ -1721,6 +1739,28 @@ def main():
         ),
     )
     parser.add_argument(
+        "--c_pos",
+        type=float,
+        default=None,
+        help=(
+            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
+            "positive-residual threshold (AsymmetricTukeyBiweight(c_pos, c_neg), "
+            "see tc_brightfit_v2's M_DFF). Has no effect on other methods. Must "
+            "be given together with --c_neg. Default is None, which leaves "
+            "tc_brightfit_v2 on its own default (c_pos=3.5, c_neg=4.0)."
+        ),
+    )
+    parser.add_argument(
+        "--c_neg",
+        type=float,
+        default=None,
+        help=(
+            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
+            "negative-residual threshold -- see --c_pos. Must be given together "
+            "with --c_pos."
+        ),
+    )
+    parser.add_argument(
         "--motion_correction_mode",
         choices=["demean", "intercept"],
         default="demean",
@@ -1759,6 +1799,8 @@ def main():
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
+    if (args.c_pos is None) != (args.c_neg is None):
+        parser.error("--c_pos and --c_neg must be given together.")
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
     data_desc_fp = next(fiber_path.rglob("data_description.json"))

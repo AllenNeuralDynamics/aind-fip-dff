@@ -214,6 +214,28 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--c_pos",
+        type=float,
+        default=None,
+        help=(
+            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
+            "positive-residual threshold (AsymmetricTukeyBiweight(c_pos, c_neg), "
+            "see tc_brightfit_v2's M_DFF). Has no effect on other methods. Must "
+            "be given together with --c_neg. Default is None, which leaves "
+            "tc_brightfit_v2 on its own default (c_pos=3.5, c_neg=4.0)."
+        ),
+    )
+    parser.add_argument(
+        "--c_neg",
+        type=float,
+        default=None,
+        help=(
+            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
+            "negative-residual threshold -- see --c_pos. Must be given together "
+            "with --c_pos."
+        ),
+    )
+    parser.add_argument(
         "--motion_correction_mode",
         choices=["demean", "intercept"],
         default="demean",
@@ -253,6 +275,9 @@ if __name__ == "__main__":
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
     args.serial = not args.parallel
+
+    if (args.c_pos is None) != (args.c_neg is None):
+        parser.error("--c_pos and --c_neg must be given together.")
 
     # Create the destination directory if it doesn't exist
     args.output_dir.mkdir(parents=True, exist_ok=True)

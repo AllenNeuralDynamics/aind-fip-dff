@@ -905,6 +905,7 @@ def chunk_processing(
     b_percentile: float = 0.7,
     robust: bool = True,
     correction: str | None = None,
+    M: RobustNorm | None = None,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
@@ -935,6 +936,12 @@ def chunk_processing(
     correction : {"median", "pct70"} or None, optional
         Optional per-trace centering correction (only 'bright' method, see
         `tc_brightfit_v2`). Default is None (no correction).
+    M : RobustNorm or None, optional
+        Optional M-estimator override for the 'bright' method's IRLS fit,
+        passed straight through to `tc_brightfit_v2` (only 'bright' method;
+        no effect on any other method). Default is None, which leaves
+        `tc_brightfit_v2` on its own default (`M_DFF`,
+        `AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)`).
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
@@ -968,8 +975,16 @@ def chunk_processing(
         elif method == "bright_legacy":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
         elif method == "bright":
+            # Only pass M through when explicitly overridden -- omitting the
+            # kwarg (rather than passing M=None) lets tc_brightfit_v2's own
+            # default (M_DFF) apply exactly as before when no override is
+            # given, avoiding any ambiguity about what an explicit M=None
+            # means at that level.
+            brightfit_kwargs = {"correction": correction}
+            if M is not None:
+                brightfit_kwargs["M"] = M
             tc_fit, tc_coefs = tc_brightfit_v2(
-                tc_filtered, ts, correction=correction
+                tc_filtered, ts, **brightfit_kwargs
             )
 
         if method in ("bright", "bright_legacy"):
