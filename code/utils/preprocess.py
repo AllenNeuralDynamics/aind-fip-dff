@@ -480,7 +480,7 @@ def tc_brightfit(
     if maxiter > 0 and M is not None and cost > 0:
         f0 = baseline(timestamps, *x)
         resid = trace - f0
-        scl = scale.mad(resid[None if skewness_factor == 0 else resid < 0], center=0)
+        scl = scale.mad(resid if skewness_factor == 0 else resid[resid < 0], center=0)
         deviance = M(resid / scl).sum()
         iteration = 0
         converged = False
@@ -505,7 +505,7 @@ def tc_brightfit(
             resid = trace - f0
             if update_scale is True:
                 scl = scale.mad(
-                    resid[None if skewness_factor == 0 else resid < 0], center=0
+                    resid if skewness_factor == 0 else resid[resid < 0], center=0
                 )
             dev_pre = deviance
             deviance = M(resid / scl).sum()
