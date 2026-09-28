@@ -1752,6 +1752,26 @@ def _correction_type(s: str) -> float | str:
     return val
 
 
+def _b_percentile_type(s: str) -> float | str:
+    """argparse type for --b_percentile: a fraction in (0, 1], or "mode".
+    Note this is a DIFFERENT scale from --correction's [0, 100] percentile
+    -- tc_dFF's own long-standing (0, 1] fraction convention, not
+    interchangeable."""
+    if s.lower() == "mode":
+        return "mode"
+    try:
+        val = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f'--b_percentile must be a fraction in (0, 1] or "mode", got {s!r}'
+        )
+    if not (0 < val <= 1):
+        raise argparse.ArgumentTypeError(
+            f"--b_percentile must be in (0, 1], got {val}"
+        )
+    return val
+
+
 def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -1814,8 +1834,8 @@ def main():
             "with scripts written before this flag took a percentile). Has "
             "no effect on methods other than 'bright' -- see --b_percentile "
             "for the analogous (but mechanistically different: mandatory, "
-            "0.0-1.0 scale, no 'mode' option) knob for 'poly'/'exp'/"
-            "'tri-exp'. Default is no correction."
+            "0.0-1.0 scale) knob for 'poly'/'exp'/'tri-exp', which also "
+            "accepts 'mode'. Default is no correction."
         ),
     )
     parser.add_argument(
@@ -1840,26 +1860,29 @@ def main():
     )
     parser.add_argument(
         "--b_percentile",
-        type=float,
+        type=_b_percentile_type,
         default=0.7,
         help=(
-            "Percentile for baseline calculation in tc_dFF -- 'poly'/'exp'/"
-            "'tri-exp' only, no effect on 'bright'/'bright_legacy' (which use "
-            "--correction instead). Looks similar to --correction (both pick "
-            "a percentile) but is mechanistically different, not just a "
-            "differently-scoped copy of it: this is a MANDATORY, built-in "
-            "part of tc_dFF's own ratio-based dF/F formula (there is no "
-            "'off' state -- every poly/exp/tri-exp trace uses some "
-            "percentile), whereas --correction is an OPTIONAL additive shift "
-            "bolted on after bright's fit is already complete (default is no "
-            "shift at all). Also note the different scale: a 0.0-1.0 "
-            "fraction here, vs. --correction's 0-100 percentile -- not "
+            "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy' "
+            "(which use --correction instead). Looks similar to --correction "
+            "(both pick a percentile) but is mechanistically different, not "
+            "just a differently-scoped copy of it: this is a MANDATORY, "
+            "built-in part of tc_dFF's own ratio-based dF/F formula (there "
+            "is no 'off' state -- every poly/exp/tri-exp trace uses some "
+            "percentile/mode), whereas --correction is an OPTIONAL additive "
+            "shift bolted on after bright's fit is already complete "
+            "(default is no shift at all). Also note the different scale "
+            "for the numeric case: a 0.0-1.0 fraction here (of the lowest "
+            "values), vs. --correction's direct 0-100 percentile -- not "
             "interchangeable. 1.0 gives the plain median of the whole "
-            "residual distribution (no truncation) -- the same idea as "
+            "ratio distribution (no truncation) -- the same idea as "
             "--correction 50, just applied to these methods' own ratio-based "
-            "residual instead of bright's additive one; there is no 'mode' "
-            "equivalent here (tc_dFF only ever takes a percentile). Default "
-            "is 0.7 (median of the lowest 70%%), matching production."
+            "residual instead of bright's additive one. 'mode': the "
+            "half-sample mode of the whole ratio distribution instead -- "
+            "mirrors --correction's own percentile-vs-mode option, added "
+            "for a direct real-data comparison. Default is 0.7 (median of "
+            "the lowest 70%%), matching production."
         ),
     )
     parser.add_argument(

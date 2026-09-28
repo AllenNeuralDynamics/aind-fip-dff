@@ -30,8 +30,8 @@ def tc_slidingbase(tc: np.ndarray, sampling_rate: float) -> np.ndarray:
     return sosfiltfilt(sos, tc)
 
 
-def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float) -> np.ndarray:
-    """Obtain dF/F using median of values within sliding baseline.
+def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float | str) -> np.ndarray:
+    """Obtain dF/F using median (or mode) of values within sliding baseline.
 
     Parameters
     ----------
@@ -39,8 +39,19 @@ def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float) -> np.ndarr
         Time course signal.
     tc_base : np.ndarray
         Baseline signal.
-    b_percentile : float
-        Percentile for baseline calculation.
+    b_percentile : float or "mode"
+        A fraction in (0, 1] -- the plain median of the lowest `b_percentile`
+        fraction of the whole ratio (tc / tc_base) distribution is
+        subtracted (e.g. 0.7 == median of the lowest 70%, 1.0 == plain
+        median of everything). NOTE this is this function's own
+        long-standing (0, 1] fraction convention, NOT the same scale as
+        `tc_brightfit_v2`'s `correction` (a direct 0-100 percentile) --
+        not interchangeable. Alternatively, "mode" subtracts the
+        half-sample mode (`_half_sample_mode`) of the whole ratio
+        distribution instead -- added for a direct real-data comparison
+        against percentile-based correction, mirroring `tc_brightfit_v2`'s
+        own percentile-vs-mode option for 'bright'. Any other value raises
+        `ValueError`.
 
     Returns
     -------
@@ -48,9 +59,21 @@ def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float) -> np.ndarr
         dF/F signal.
     """
     tc_dFoF = tc / tc_base
-    sorted_dFoF = np.sort(tc_dFoF)
-    b_median = np.median(sorted_dFoF[: round(len(sorted_dFoF) * b_percentile)])
-    return tc_dFoF - b_median
+    if isinstance(b_percentile, str):
+        if b_percentile.lower() != "mode":
+            raise ValueError(
+                f"tc_dFF: unknown b_percentile {b_percentile!r}; expected a "
+                'float fraction in (0, 1], or "mode".'
+            )
+        b_ref = _half_sample_mode(tc_dFoF)
+    else:
+        if not (0 < b_percentile <= 1):
+            raise ValueError(
+                f"tc_dFF: b_percentile must be in (0, 1], got {b_percentile!r}."
+            )
+        sorted_dFoF = np.sort(tc_dFoF)
+        b_ref = np.median(sorted_dFoF[: round(len(sorted_dFoF) * b_percentile)])
+    return tc_dFoF - b_ref
 
 
 def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
@@ -952,7 +975,7 @@ def chunk_processing(
     kernel_size: int = 1,
     sampling_rate: float = 20,
     degree: int = 4,
-    b_percentile: float = 0.7,
+    b_percentile: float | str = 0.7,
     robust: bool = True,
     correction: float | str | None = None,
     correction_space: str = "raw",
@@ -979,8 +1002,10 @@ def chunk_processing(
         Sampling rate of the signal in Hz. Default is 20.
     degree : int, optional
         Degree of the polynomial to fit. Default is 4.
-    b_percentile : float, optional
-        Percentile to calculate the baseline. Default is 0.7.
+    b_percentile : float or "mode", optional
+        Percentile (fraction in (0, 1]) or "mode" to calculate the
+        baseline -- 'poly'/'exp'/'tri-exp' only, see `tc_dFF` for the full
+        semantics. Default is 0.7.
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only
         'bright_legacy' method). Default is True.
