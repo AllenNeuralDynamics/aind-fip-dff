@@ -1086,9 +1086,17 @@ def create_metric(fiber, method, reference, value, motion=False):
 def create_calibration_metric(fiber, method, ratio_by_channel):
     """Create a QC metric for the per-channel negative-residual calibration ratio.
 
-    `ratio_by_channel` is `{channel: {stage: {"k0": ratio, "k1": ratio, ...}}}`,
-    where `stage` is "dff" (before motion correction) or "motion_corrected"
-    (after) -- see `_calibration_ratio` for the definition at each depth.
+    `ratio_by_channel` is `{channel: {"dff": {"k0": ratio, "k1": ratio, ...}}}`
+    -- "dff" stage only (before motion correction); see `_calibration_ratio`
+    for the definition at each depth. Deliberately NOT also computed on the
+    motion-corrected trace: `_calibration_ratio`'s sigma comes from a
+    high-frequency-band noise estimate (`noise_std`, Welch's method), an
+    assumption `motion_correct`'s own final noise filter breaks -- it
+    suppresses exactly the band that estimate relies on, while genuine
+    slow residual structure survives largely unattenuated, inflating the
+    ratio by roughly the filter's own attenuation factor (order 10-40x
+    observed) rather than reflecting fit quality. See the drift-stats
+    metric instead for a motion-corrected-stage QC signal.
     """
     return QCMetric(
         name=f"Calibration ratio of ROI {fiber} using method '{method}'",
@@ -1101,8 +1109,10 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
         value=ratio_by_channel,
         description=(
             "Per-channel median-negative-residual calibration ratio, at one "
-            "or more depths (sigma below baseline), computed on dF/F ('dff') "
-            "and again on the motion-corrected dF/F ('motion_corrected'). "
+            "or more depths (sigma below baseline), computed on dF/F "
+            "('dff' stage, before motion correction) only -- see "
+            "create_calibration_metric's own docstring for why this isn't "
+            "also computed on the motion-corrected trace. "
             "'k0' is the classical median|negative residual| / "
             "(0.6745 * noise std) -- the same diagnostic used during model "
             "selection in aind_ophys_dff_library.triexp_dff. 'k1' and "
@@ -1694,13 +1704,22 @@ def generate_qc_plots(
                 ]
                 if df.empty:
                     continue
-                # Both metrics are computed at two stages: "dff" (isolates
-                # the baseline-fit method, unaffected by
-                # motion_correction_mode) and "motion_corrected" (the actual
-                # production output, where demean vs. intercept differ).
+                # Calibration ratio is "dff"-stage only: it assumes the
+                # residual is approximately i.i.d. noise (its sigma comes
+                # from noise_std's own high-frequency-band Welch estimate),
+                # an assumption motion_correct's own final noise filter
+                # (cutoff_freq_noise) breaks -- filtering suppresses exactly
+                # the high-frequency band Welch relies on, while genuine
+                # slow residual structure survives largely unattenuated, so
+                # a "motion_corrected"-stage ratio would be inflated by
+                # roughly the filter's own noise-attenuation factor (order
+                # 10-40x observed) rather than reflecting fit quality.
+                # Drift stats (below) don't share this problem -- they don't
+                # involve an internal noise-scale estimate -- so those are
+                # still computed at both stages, where "motion_corrected" is
+                # the actual production output that matters.
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
-                ratio_mc, _ = _calibration_ratio(df.motion_corrected.values, 0)
-                ratio_by_channel[ch] = {"dff": ratio_dff, "motion_corrected": ratio_mc}
+                ratio_by_channel[ch] = {"dff": ratio_dff}
                 if pregocue_starts is not None:
                     drift_by_channel[ch] = {
                         "dff": _pregocue_drift_stats(
