@@ -738,8 +738,13 @@ def plot_motion_correction(
 #: aind_ophys_dff_library.triexp_dff's own diagnostic); deeper depths trade
 #: sample size for exponentially less exposure to lingering, not-yet-decayed
 #: transients near baseline (a real one-sided contaminant that k=0 cannot
-#: distinguish from noise) -- see `_calibration_ratio`.
-CALIBRATION_RATIO_DEPTHS = (0, 1)
+#: distinguish from noise) -- see `_calibration_ratio`. k=2 added alongside
+#: the existing k=0/k=1 specifically to check the *trend* across depths: if
+#: near-baseline transient contamination is really what's pulling k=0 away
+#: from 1, the ratio should move monotonically closer to 1 as k increases
+#: (less exposure at each step); if it doesn't, that undercuts the
+#: contamination explanation rather than supporting it.
+CALIBRATION_RATIO_DEPTHS = (0, 1, 2)
 
 
 def _neg_tail_const(k: float) -> float:
@@ -790,7 +795,7 @@ def _calibration_ratio(
         fluorescence, or 0 for an already-centered dF/F-like trace.
     depths : sequence of float, optional
         Depths (sigma below F0) at which to evaluate the ratio.
-        Default is `CALIBRATION_RATIO_DEPTHS` (0 and 1).
+        Default is `CALIBRATION_RATIO_DEPTHS` (0, 1, and 2).
 
     Returns
     -------
@@ -1115,14 +1120,16 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
             "also computed on the motion-corrected trace. "
             "'k0' is the classical median|negative residual| / "
             "(0.6745 * noise std) -- the same diagnostic used during model "
-            "selection in aind_ophys_dff_library.triexp_dff. 'k1' and "
-            "deeper depths use only residuals that far below baseline, "
-            "exponentially less exposed to lingering, not-yet-decayed "
-            "transients near it. Expected to be close to 1, but not "
-            "exactly -- treat outlier values and a large k0-vs-k1 "
-            "divergence (which specifically suggests near-baseline "
-            "transient contamination) as the actionable signals, not small "
-            "deviations from 1."
+            "selection in aind_ophys_dff_library.triexp_dff. 'k1'/'k2' use "
+            "only residuals that far below baseline, exponentially less "
+            "exposed to lingering, not-yet-decayed transients near it. "
+            "Expected to be close to 1, but not exactly -- treat outlier "
+            "values and a large divergence across depths (which "
+            "specifically suggests near-baseline transient contamination --"
+            " if that's the real explanation, the ratio should move "
+            "monotonically closer to 1 from k0 to k1 to k2, not diverge "
+            "further or move inconsistently) as the actionable signals, "
+            "not small deviations from 1."
         ),
     )
 
