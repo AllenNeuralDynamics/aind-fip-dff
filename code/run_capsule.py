@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime as dt
 from joblib import Parallel, delayed
 from pathlib import Path
@@ -1189,6 +1190,7 @@ def _process1channel(
 
     NM_values = df_fip_iter["signal"].values
     timestamps = df_fip_iter["time_fip"].values
+    _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
         timestamps - timestamps[0],
@@ -1198,10 +1200,11 @@ def _process1channel(
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
     )
+    fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
     logging.info(
         f"Fitted parameters for {channel:>3}{fiber_number} "
-        f"using method '{pp_name}':  {params_str}"
+        f"using method '{pp_name}' ({fit_time_s:.3f}s):  {params_str}"
     )
     df_fip_iter.loc[:, "dFF"] = NM_preprocessed
     df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -1212,6 +1215,7 @@ def _process1channel(
             "preprocess": pp_name,
             "channel": channel,
             "fiber_number": fiber_number,
+            "fit_time_s": fit_time_s,
         }
     )
     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
@@ -1249,9 +1253,12 @@ def _process1fiber(
         Cutoff frequency for noise filtering.
     serial : bool
         Whether to process channels serially.
-    correction : {"median", "pct70"} or None, optional
+    correction : float, "mode", or None, optional
         Optional per-trace centering correction (only 'bright' method, see
-        `tc_brightfit_v2`). Default is None (no correction).
+        `tc_brightfit_v2` for the full semantics: a float is a residual
+        percentile in [0, 100] -- 50 is the plain median, 35 approximates
+        the old "pct70" convention; "mode" uses the half-sample mode).
+        Default is None (no correction).
     motion_correction_mode : str, optional
         "demean" or "intercept", see `motion_correct`. Default is "demean".
     M : RobustNorm or None, optional
@@ -1702,6 +1709,23 @@ def generate_qc_plots(
     return qc
 
 
+def _correction_type(s: str) -> float | str:
+    """argparse type for --correction: a percentile in [0, 100], or "mode"."""
+    if s.lower() == "mode":
+        return "mode"
+    try:
+        val = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--correction must be a percentile in [0, 100] or \"mode\", got {s!r}"
+        )
+    if not (0 <= val <= 100):
+        raise argparse.ArgumentTypeError(
+            f"--correction percentile must be in [0, 100], got {val}"
+        )
+    return val
+
+
 def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -1740,17 +1764,26 @@ def main():
     )
     parser.add_argument(
         "--correction",
-        choices=["median", "pct70"],
+        type=_correction_type,
         default=None,
         help=(
             "Optional per-trace, post-hoc centering correction applied to the "
-            "'bright' method's fitted baseline (see tc_brightfit_v2). "
-            "'median': shift by the plain median of the residuals. "
-            "'pct70': shift by the median of the lowest 70%% of residuals -- "
-            "the same recipe 'poly'/'exp'/'tri-exp' already use in production "
-            "(tc_dFF's b_percentile), applied to this method's residual "
-            "instead of tc_dFF's ratio. Has no effect on other methods. "
-            "Default is no correction."
+            "'bright' method's fitted baseline (see tc_brightfit_v2). Either "
+            "a percentile in [0, 100] or the literal string 'mode'. "
+            "50 (median): shift by the plain median of the residuals -- "
+            "exactly zero-centered on clean data, 50%% breakdown point. "
+            "35: approximates the old 'pct70' recipe (median of the lowest "
+            "70%% of residuals, the same convention 'poly'/'exp'/'tri-exp' "
+            "use in production via tc_dFF's b_percentile) -- not "
+            "bit-identical (uses np.percentile's interpolation instead), "
+            "but the same idea: a small guaranteed offset on clean data "
+            "for robustness up to 30%% one-sided contamination. Any other "
+            "percentile can be swept directly. 'mode': shift by the "
+            "residuals' half-sample mode instead -- theoretically less "
+            "biased by transient-driven skew, though real-data testing so "
+            "far shows median still wins in practice (its own estimator "
+            "has lower variance at typical per-trace sample sizes). Has no "
+            "effect on methods other than 'bright'. Default is no correction."
         ),
     )
     parser.add_argument(

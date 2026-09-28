@@ -19,6 +19,7 @@ from run_capsule import (
     process_nwb_file,
     write_output_metadata,
     setup_logging_from_metadata,
+    _correction_type,
 )
 
 """
@@ -101,6 +102,18 @@ def process1dataset(source_path, args, start_time):
             pregocue_ends,
             event_label,
         ) = process_nwb_file(nwb_file_path, args)
+
+        # Per-(method, fiber, channel) fit timing -- NOT just cumulative
+        # processing time. `fit_time_s` is wall-clock time inside
+        # `_process1channel`'s `chunk_processing` call; when channels run
+        # concurrently (`--parallel`, threading backend), that wall-clock
+        # time can include contention with sibling threads rather than
+        # pure per-trace fit cost -- still useful for relative comparisons
+        # across methods, but not a substitute for a serial (`--serial`,
+        # the default) run if precise absolute timings are needed.
+        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+            destination_path / "dff_timing.csv", index=False
+        )
 
         # Generate QC plots if requested
         if not args.no_qc:
@@ -200,17 +213,26 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--correction",
-        choices=["median", "pct70"],
+        type=_correction_type,
         default=None,
         help=(
             "Optional per-trace, post-hoc centering correction applied to the "
-            "'bright' method's fitted baseline (see tc_brightfit_v2). "
-            "'median': shift by the plain median of the residuals. "
-            "'pct70': shift by the median of the lowest 70%% of residuals -- "
-            "the same recipe 'poly'/'exp'/'tri-exp' already use in production "
-            "(tc_dFF's b_percentile), applied to this method's residual "
-            "instead of tc_dFF's ratio. Has no effect on other methods. "
-            "Default is no correction."
+            "'bright' method's fitted baseline (see tc_brightfit_v2). Either "
+            "a percentile in [0, 100] or the literal string 'mode'. "
+            "50 (median): shift by the plain median of the residuals -- "
+            "exactly zero-centered on clean data, 50%% breakdown point. "
+            "35: approximates the old 'pct70' recipe (median of the lowest "
+            "70%% of residuals, the same convention 'poly'/'exp'/'tri-exp' "
+            "use in production via tc_dFF's b_percentile) -- not "
+            "bit-identical (uses np.percentile's interpolation instead), "
+            "but the same idea: a small guaranteed offset on clean data "
+            "for robustness up to 30%% one-sided contamination. Any other "
+            "percentile can be swept directly. 'mode': shift by the "
+            "residuals' half-sample mode instead -- theoretically less "
+            "biased by transient-driven skew, though real-data testing so "
+            "far shows median still wins in practice (its own estimator "
+            "has lower variance at typical per-trace sample sizes). Has no "
+            "effect on methods other than 'bright'. Default is no correction."
         ),
     )
     parser.add_argument(

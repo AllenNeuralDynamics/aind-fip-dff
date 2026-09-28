@@ -671,6 +671,26 @@ def _pad_sum_of_exps_params(
 M_DFF = NonlinearFitAsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)
 
 
+def _half_sample_mode(r: np.ndarray) -> float:
+    """Half-sample mode (Bickel & Fruhwirth 2006): recursively keep the
+    densest contiguous half of the sorted sample until a handful of points
+    remain. No bandwidth to tune (unlike a KDE-argmax estimate), and its
+    breakdown point is 50% contamination -- the same occupancy<50%
+    assumption "median" correction already relies on. Ported verbatim from
+    `aind-fip-dff`'s baseline-fitting comparison notebook, where it replaced
+    an earlier Gaussian-KDE-peak implementation that turned out unreliable
+    specifically on G (the channel with the densest real transient content,
+    i.e. the messiest residual distribution).
+    """
+    x = np.sort(r[np.isfinite(r)])
+    while len(x) > 3:
+        half = (len(x) + 1) // 2
+        widths = x[half - 1:] - x[:len(x) - half + 1]
+        j = np.argmin(widths)
+        x = x[j:j + half]
+    return float(x.mean())
+
+
 def tc_brightfit_v2(
     trace: np.ndarray,
     timestamps: np.ndarray,
@@ -681,7 +701,7 @@ def tc_brightfit_v2(
     fixed_sigma: float | str | None = "auto",
     sigma_anneal_steps: int = 4,
     t_eval_exp3: float = 120.0,
-    correction: str | None = None,
+    correction: float | str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -735,23 +755,34 @@ def tc_brightfit_v2(
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
         compared on the full trace. Default is 120.0.
-    correction : {"median", "pct70"} or None, optional
+    correction : float, "mode", or None, optional
         Optional per-trace, post-hoc centering correction applied to the
-        fitted baseline (`trace - baseline` is the residual in both cases):
+        fitted baseline (`trace - baseline` is the residual in every case):
           - None (default): no correction.
-          - "median": shift the baseline by the plain median of the
-            residuals. Exactly zero-centered on clean data, robust up to
-            50% one-sided contamination (calcium activity only ever pushes
-            residuals positive) by construction.
-          - "pct70": shift the baseline by the median of the lowest 70% of
-            residuals -- the same recipe `poly`/`exp`/`tri-exp` already use
-            in production (`tc_dFF`, via `b_percentile`), applied here to
-            this method's residual instead of `tc_dFF`'s ratio. Robust up
-            to 30% contamination by construction (guaranteed, since that
-            fraction is dropped before taking the median), at the cost of a
-            small deliberate offset even on clean data (the 35th percentile
-            of a symmetric residual isn't its center) -- a different
-            tradeoff from "median", not a strictly better or worse one.
+          - a float in [0, 100]: shift the baseline by that percentile of
+            the residual distribution (`np.percentile(residual, correction)`).
+            50 is the plain median -- exactly zero-centered on clean data,
+            robust up to 50% one-sided contamination (calcium activity only
+            ever pushes residuals positive) by construction. 35
+            approximates the old "pct70" recipe (median of the lowest 70%
+            of residuals, the same convention `poly`/`exp`/`tri-exp` use in
+            production via `tc_dFF`'s `b_percentile`) -- not bit-identical
+            (this uses `np.percentile`'s interpolation rather than
+            "median of the truncated array", a deliberate cleanup), but the
+            same idea: trade a small guaranteed offset on clean data (the
+            35th percentile of a symmetric residual isn't its center) for
+            robustness up to 30% one-sided contamination. Any percentile in
+            between (or beyond 50, or below 35) can be swept directly --
+            not limited to these two historical points.
+          - "mode": shift the baseline by the residuals' half-sample mode
+            (`_half_sample_mode` -- Bickel & Fruhwirth 2006), which
+            recursively keeps the densest contiguous half of the sorted
+            sample. Theoretically the least biased by transient-driven
+            right-skew (unlike median/percentile, unaffected by skew at
+            all in the idealized model), but its own estimation variance at
+            typical per-trace sample sizes empirically outweighs that
+            advantage -- see `aind-fip-dff`'s baseline-fitting comparison
+            notebook for the real-data comparison.
         Any other value raises `ValueError`.
 
     Returns
@@ -872,16 +903,22 @@ def tc_brightfit_v2(
             trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
         )
 
-    if correction == "median":
-        f0 = f0 + np.median(trace_valid - f0)
-    elif correction == "pct70":
-        r_sorted = np.sort(trace_valid - f0)
-        f0 = f0 + np.median(r_sorted[: round(len(r_sorted) * 0.7)])
-    elif correction is not None:
-        raise ValueError(
-            f"tc_brightfit_v2: unknown correction {correction!r}; "
-            'expected None, "median", or "pct70".'
-        )
+    if correction is not None:
+        residual = trace_valid - f0
+        if isinstance(correction, str):
+            if correction.lower() != "mode":
+                raise ValueError(
+                    f"tc_brightfit_v2: unknown correction {correction!r}; "
+                    'expected a float percentile in [0, 100], "mode", or None.'
+                )
+            f0 = f0 + _half_sample_mode(residual)
+        else:
+            if not (0 <= correction <= 100):
+                raise ValueError(
+                    "tc_brightfit_v2: correction percentile must be in "
+                    f"[0, 100], got {correction!r}."
+                )
+            f0 = f0 + np.percentile(residual, correction)
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
@@ -904,7 +941,7 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float = 0.7,
     robust: bool = True,
-    correction: str | None = None,
+    correction: float | str | None = None,
     M: RobustNorm | None = None,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
@@ -933,9 +970,12 @@ def chunk_processing(
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only
         'bright_legacy' method). Default is True.
-    correction : {"median", "pct70"} or None, optional
+    correction : float, "mode", or None, optional
         Optional per-trace centering correction (only 'bright' method, see
-        `tc_brightfit_v2`). Default is None (no correction).
+        `tc_brightfit_v2` for the full semantics: a float is a residual
+        percentile in [0, 100] -- 50 is the plain median, 35 approximates
+        the old "pct70" convention; "mode" uses the half-sample mode).
+        Default is None (no correction).
     M : RobustNorm or None, optional
         Optional M-estimator override for the 'bright' method's IRLS fit,
         passed straight through to `tc_brightfit_v2` (only 'bright' method;
