@@ -1709,15 +1709,24 @@ def generate_qc_plots(
     return qc
 
 
+_CORRECTION_LEGACY_ALIASES = {"median": 50.0, "pct70": 35.0}
+
+
 def _correction_type(s: str) -> float | str:
-    """argparse type for --correction: a percentile in [0, 100], or "mode"."""
+    """argparse type for --correction: a percentile in [0, 100], or "mode".
+    Also accepts the pre-57814c6 literal strings "median"/"pct70" as
+    backward-compatible aliases for 50/35, so existing callers/scripts don't
+    break on this CLI's own upgrade."""
     if s.lower() == "mode":
         return "mode"
+    if s.lower() in _CORRECTION_LEGACY_ALIASES:
+        return _CORRECTION_LEGACY_ALIASES[s.lower()]
     try:
         val = float(s)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"--correction must be a percentile in [0, 100] or \"mode\", got {s!r}"
+            f"--correction must be a percentile in [0, 100], \"mode\", "
+            f"or a legacy alias ({', '.join(_CORRECTION_LEGACY_ALIASES)}); got {s!r}"
         )
     if not (0 <= val <= 100):
         raise argparse.ArgumentTypeError(
@@ -1782,8 +1791,12 @@ def main():
             "residuals' half-sample mode instead -- theoretically less "
             "biased by transient-driven skew, though real-data testing so "
             "far shows median still wins in practice (its own estimator "
-            "has lower variance at typical per-trace sample sizes). Has no "
-            "effect on methods other than 'bright'. Default is no correction."
+            "has lower variance at typical per-trace sample sizes). The "
+            "legacy literal strings 'median' and 'pct70' are also accepted, "
+            "as aliases for 50 and 35 respectively (backward-compatible "
+            "with scripts written before this flag took a percentile). Has "
+            "no effect on methods other than 'bright'. Default is no "
+            "correction."
         ),
     )
     parser.add_argument(

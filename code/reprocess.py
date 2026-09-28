@@ -231,8 +231,12 @@ if __name__ == "__main__":
             "residuals' half-sample mode instead -- theoretically less "
             "biased by transient-driven skew, though real-data testing so "
             "far shows median still wins in practice (its own estimator "
-            "has lower variance at typical per-trace sample sizes). Has no "
-            "effect on methods other than 'bright'. Default is no correction."
+            "has lower variance at typical per-trace sample sizes). The "
+            "legacy literal strings 'median' and 'pct70' are also accepted, "
+            "as aliases for 50 and 35 respectively (backward-compatible "
+            "with scripts written before this flag took a percentile). Has "
+            "no effect on methods other than 'bright'. Default is no "
+            "correction."
         ),
     )
     parser.add_argument(
