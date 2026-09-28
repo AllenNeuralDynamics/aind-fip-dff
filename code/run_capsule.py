@@ -1795,8 +1795,10 @@ def main():
             "legacy literal strings 'median' and 'pct70' are also accepted, "
             "as aliases for 50 and 35 respectively (backward-compatible "
             "with scripts written before this flag took a percentile). Has "
-            "no effect on methods other than 'bright'. Default is no "
-            "correction."
+            "no effect on methods other than 'bright' -- see --b_percentile "
+            "for the analogous (but mechanistically different: mandatory, "
+            "0.0-1.0 scale, no 'mode' option) knob for 'poly'/'exp'/"
+            "'tri-exp'. Default is no correction."
         ),
     )
     parser.add_argument(
@@ -1806,10 +1808,20 @@ def main():
         help=(
             "Percentile for baseline calculation in tc_dFF -- 'poly'/'exp'/"
             "'tri-exp' only, no effect on 'bright'/'bright_legacy' (which use "
-            "--correction instead). 1.0 gives the plain median of the whole "
-            "residual distribution (no truncation) -- the same recipe as "
-            "--correction median, just applied to these methods' own "
-            "ratio-based residual instead of bright's additive one. Default "
+            "--correction instead). Looks similar to --correction (both pick "
+            "a percentile) but is mechanistically different, not just a "
+            "differently-scoped copy of it: this is a MANDATORY, built-in "
+            "part of tc_dFF's own ratio-based dF/F formula (there is no "
+            "'off' state -- every poly/exp/tri-exp trace uses some "
+            "percentile), whereas --correction is an OPTIONAL additive shift "
+            "bolted on after bright's fit is already complete (default is no "
+            "shift at all). Also note the different scale: a 0.0-1.0 "
+            "fraction here, vs. --correction's 0-100 percentile -- not "
+            "interchangeable. 1.0 gives the plain median of the whole "
+            "residual distribution (no truncation) -- the same idea as "
+            "--correction 50, just applied to these methods' own ratio-based "
+            "residual instead of bright's additive one; there is no 'mode' "
+            "equivalent here (tc_dFF only ever takes a percentile). Default "
             "is 0.7 (median of the lowest 70%%), matching production."
         ),
     )
