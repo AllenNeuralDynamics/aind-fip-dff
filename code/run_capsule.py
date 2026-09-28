@@ -1181,7 +1181,8 @@ def create_evaluation(method, metrics):
 
 
 def _process1channel(
-    channel, df_fip, fiber_number, pp_name, correction=None, M=None, b_percentile=0.7
+    channel, df_fip, fiber_number, pp_name, correction=None, M=None, b_percentile=0.7,
+    correction_space="raw",
 ):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
@@ -1196,6 +1197,7 @@ def _process1channel(
         timestamps - timestamps[0],
         method=pp_name,
         correction=correction,
+        correction_space=correction_space,
         M=M,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
@@ -1234,6 +1236,7 @@ def _process1fiber(
     motion_correction_mode="demean",
     M=None,
     b_percentile=0.7,
+    correction_space="raw",
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1272,6 +1275,14 @@ def _process1fiber(
         the same recipe as 'bright'/`--correction median`, just applied to
         these methods' own ratio-based residual. Default is 0.7 (median of
         the lowest 70%), matching `chunk_processing`'s own default.
+    correction_space : {"raw", "ratio"}, optional
+        Where `correction` is applied (only 'bright' method; see
+        `chunk_processing` for the full semantics). "raw" (default): shift
+        the fitted baseline before dividing, in raw-fluorescence units.
+        "ratio": divide first, then shift the dF/F trace itself -- mirrors
+        `b_percentile`'s own ratio-space correction for 'poly'/'exp'/
+        'tri-exp', but for 'bright'. Not equivalent to "raw" (division is
+        nonlinear).
 
     Returns
     -------
@@ -1291,13 +1302,17 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, correction, M, b_percentile)
+            _process1channel(
+                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile,
+                correction_space,
+            )
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
             delayed(_process1channel)(
-                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile
+                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile,
+                correction_space,
             )
             for ch in channels
         )
@@ -1416,6 +1431,7 @@ def process_nwb_file(
                     args.motion_correction_mode,
                     M_dff_override,
                     args.b_percentile,
+                    args.correction_space,
                 )
                 for fib in fiber_numbers
             ]
@@ -1433,6 +1449,7 @@ def process_nwb_file(
                     args.motion_correction_mode,
                     M_dff_override,
                     args.b_percentile,
+                    args.correction_space,
                 )
                 for fib in fiber_numbers
             )
@@ -1799,6 +1816,26 @@ def main():
             "for the analogous (but mechanistically different: mandatory, "
             "0.0-1.0 scale, no 'mode' option) knob for 'poly'/'exp'/"
             "'tri-exp'. Default is no correction."
+        ),
+    )
+    parser.add_argument(
+        "--correction_space",
+        choices=["raw", "ratio"],
+        default="raw",
+        help=(
+            "Where --correction is applied (only 'bright' method; no effect "
+            "if --correction is not given). 'raw' (default): shift the "
+            "fitted baseline additively in raw-fluorescence units, from the "
+            "pre-division residual, before computing dF/F -- the original "
+            "behavior. 'ratio': compute dF/F first, then shift the dF/F "
+            "trace itself additively (same percentile/mode statistic, "
+            "computed from dF/F's own distribution instead) -- mirrors how "
+            "--b_percentile's correction works for 'poly'/'exp'/'tri-exp', "
+            "but for 'bright'. NOT equivalent to 'raw': division is "
+            "nonlinear, so the two orderings give different results (by a "
+            "term proportional to the correction size over F0, scaled by "
+            "the instantaneous dF/F -- small in practice, but not exactly "
+            "zero). Added to test this ordering question directly."
         ),
     )
     parser.add_argument(

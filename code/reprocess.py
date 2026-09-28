@@ -242,6 +242,26 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--correction_space",
+        choices=["raw", "ratio"],
+        default="raw",
+        help=(
+            "Where --correction is applied (only 'bright' method; no effect "
+            "if --correction is not given). 'raw' (default): shift the "
+            "fitted baseline additively in raw-fluorescence units, from the "
+            "pre-division residual, before computing dF/F -- the original "
+            "behavior. 'ratio': compute dF/F first, then shift the dF/F "
+            "trace itself additively (same percentile/mode statistic, "
+            "computed from dF/F's own distribution instead) -- mirrors how "
+            "--b_percentile's correction works for 'poly'/'exp'/'tri-exp', "
+            "but for 'bright'. NOT equivalent to 'raw': division is "
+            "nonlinear, so the two orderings give different results (by a "
+            "term proportional to the correction size over F0, scaled by "
+            "the instantaneous dF/F -- small in practice, but not exactly "
+            "zero). Added to test this ordering question directly."
+        ),
+    )
+    parser.add_argument(
         "--b_percentile",
         type=float,
         default=0.7,

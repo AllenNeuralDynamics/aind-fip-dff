@@ -691,6 +691,29 @@ def _half_sample_mode(r: np.ndarray) -> float:
     return float(x.mean())
 
 
+def _percentile_or_mode_shift(values: np.ndarray, correction: float | str) -> float:
+    """Resolve `correction` (a percentile in [0, 100] or "mode") to a single
+    scalar shift value from `values`' own distribution. Shared by
+    `tc_brightfit_v2`'s raw-fluorescence-space correction and
+    `chunk_processing`'s ratio-space correction, so both use identical
+    percentile/mode semantics for the same `correction` value -- only the
+    distribution they're applied to (and the stage of the computation --
+    before vs. after dividing by the baseline) differs.
+    """
+    if isinstance(correction, str):
+        if correction.lower() != "mode":
+            raise ValueError(
+                f"unknown correction {correction!r}; expected a float "
+                'percentile in [0, 100], "mode", or None.'
+            )
+        return _half_sample_mode(values)
+    if not (0 <= correction <= 100):
+        raise ValueError(
+            f"correction percentile must be in [0, 100], got {correction!r}."
+        )
+    return float(np.percentile(values, correction))
+
+
 def tc_brightfit_v2(
     trace: np.ndarray,
     timestamps: np.ndarray,
@@ -905,20 +928,10 @@ def tc_brightfit_v2(
 
     if correction is not None:
         residual = trace_valid - f0
-        if isinstance(correction, str):
-            if correction.lower() != "mode":
-                raise ValueError(
-                    f"tc_brightfit_v2: unknown correction {correction!r}; "
-                    'expected a float percentile in [0, 100], "mode", or None.'
-                )
-            f0 = f0 + _half_sample_mode(residual)
-        else:
-            if not (0 <= correction <= 100):
-                raise ValueError(
-                    "tc_brightfit_v2: correction percentile must be in "
-                    f"[0, 100], got {correction!r}."
-                )
-            f0 = f0 + np.percentile(residual, correction)
+        try:
+            f0 = f0 + _percentile_or_mode_shift(residual, correction)
+        except ValueError as e:
+            raise ValueError(f"tc_brightfit_v2: {e}") from e
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
@@ -942,6 +955,7 @@ def chunk_processing(
     b_percentile: float = 0.7,
     robust: bool = True,
     correction: float | str | None = None,
+    correction_space: str = "raw",
     M: RobustNorm | None = None,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
@@ -976,6 +990,23 @@ def chunk_processing(
         percentile in [0, 100] -- 50 is the plain median, 35 approximates
         the old "pct70" convention; "mode" uses the half-sample mode).
         Default is None (no correction).
+    correction_space : {"raw", "ratio"}, optional
+        Where `correction` is applied (only 'bright' method; no effect if
+        `correction` is None). "raw" (default): shift the fitted baseline
+        `f0` additively in raw-fluorescence units, computed from the
+        pre-division residual `trace - f0`, *before* dividing to get dF/F --
+        the original behavior, and the more mechanistically direct fix if
+        the bias is a genuine additive error in F0 itself (see
+        `tc_brightfit_v2`). "ratio": leave `f0` as fit (uncorrected), divide
+        to get dF/F first, then shift the dF/F trace itself additively --
+        the same percentile/mode statistic, computed from dF/F's own
+        distribution instead of the raw residual, mirroring how `tc_dFF`'s
+        `b_percentile` correction works for 'poly'/'exp'/'tri-exp'. Because
+        division is nonlinear, these are NOT equivalent (differ by a term
+        proportional to `correction_shift/F0`, scaled by the instantaneous
+        dF/F itself -- small for typical correction sizes, but not exactly
+        zero); added specifically to test this ordering question directly
+        rather than only by argument. Any other value raises `ValueError`.
     M : RobustNorm or None, optional
         Optional M-estimator override for the 'bright' method's IRLS fit,
         passed straight through to `tc_brightfit_v2` (only 'bright' method;
@@ -995,6 +1026,12 @@ def chunk_processing(
         - tc_fit_filled : np.ndarray
             The fitted baseline, including the filled beginning portion.
     """
+    if correction_space not in ("raw", "ratio"):
+        raise ValueError(
+            f'chunk_processing: correction_space must be "raw" or "ratio", '
+            f"got {correction_space!r}."
+        )
+
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
@@ -1019,8 +1056,13 @@ def chunk_processing(
             # kwarg (rather than passing M=None) lets tc_brightfit_v2's own
             # default (M_DFF) apply exactly as before when no override is
             # given, avoiding any ambiguity about what an explicit M=None
-            # means at that level.
-            brightfit_kwargs = {"correction": correction}
+            # means at that level. correction is only passed through here
+            # for correction_space=="raw" -- for "ratio", tc_brightfit_v2
+            # fits uncorrected and the shift is applied to tc_dFoF below
+            # instead, after dividing.
+            brightfit_kwargs = {}
+            if correction is not None and correction_space == "raw":
+                brightfit_kwargs["correction"] = correction
             if M is not None:
                 brightfit_kwargs["M"] = M
             tc_fit, tc_coefs = tc_brightfit_v2(
@@ -1029,6 +1071,8 @@ def chunk_processing(
 
         if method in ("bright", "bright_legacy"):
             tc_dFoF = tc_filtered / tc_fit - 1
+            if method == "bright" and correction is not None and correction_space == "ratio":
+                tc_dFoF = tc_dFoF - _percentile_or_mode_shift(tc_dFoF, correction)
         else:
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
