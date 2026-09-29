@@ -877,7 +877,12 @@ def _get_pregocue_windows(
 def _pregocue_drift_stats(
     dff: np.ndarray, t: np.ndarray, starts: np.ndarray, ends: np.ndarray
 ) -> dict:
-    """Per-trial pre-event mean dF/F, plus an OLS trend across trials.
+    """Per-trial pre-event mean dF/F, plus an OLS trend across trials, plus
+    two *within-trial* ramp estimates (does dF/F itself change across a
+    single trial's pre-event window, not just drift from trial to trial?
+    -- see the brightfit-comparison.ipynb event-triggered time-course check
+    this mirrors, now computed at production scale instead of 5 hand-picked
+    sessions).
 
     Parameters
     ----------
@@ -893,19 +898,47 @@ def _pregocue_drift_stats(
     -------
     dict
         slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs.
-            trial index (drift across the session), and the slope's p-value.
+            trial index (drift ACROSS the session), and the slope's p-value.
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
+        ramp_median, ramp_n_valid : median (across trials) of each trial's
+            own late-half-minus-early-half dF/F contrast WITHIN its
+            pre-event window -- a shape-agnostic magnitude, robust to
+            whatever the true within-window dynamic looks like (smooth
+            ramp, late jump, etc.), and the number of trials with enough
+            valid samples in both halves to compute it.
+        within_trial_slope_median, within_trial_slope_n_valid : median
+            (across trials) of each trial's own OLS-fit dF/F-vs-time slope
+            WITHIN its pre-event window -- a physically interpretable rate
+            (dF/F per second), more statistically efficient than the ramp
+            above (uses every sample, not just two half-window means), but
+            assumes the within-window dynamic is close to linear. Comparing
+            this (times window duration) against ramp_median directly
+            checks that assumption -- a mismatch points at a late-
+            concentrated change rather than a steady ramp.
         per_trial_mean : np.ndarray, one pre-event mean per trial in
             `starts`/`ends` (including NaNs), for plotting.
     """
-    y = np.array(
-        [
-            np.nanmean(dff[(s < t) & (t < e)])
-            for s, e in zip(starts, ends)
-        ]
-    )
+    y, ramps, within_slopes = [], [], []
+    for s, e in zip(starts, ends):
+        window = (s < t) & (t < e)
+        v, tt = dff[window], t[window]
+        y.append(np.nanmean(v))
+
+        half_t = (s + e) / 2
+        early, late = v[tt < half_t], v[tt >= half_t]
+        if np.isfinite(early).sum() >= 3 and np.isfinite(late).sum() >= 3:
+            ramps.append(np.nanmean(late) - np.nanmean(early))
+
+        valid_v = np.isfinite(v)
+        if valid_v.sum() >= 6:  # enough points within one trial's window to trust an OLS slope
+            within_slopes.append(linregress(tt[valid_v], v[valid_v]).slope)
+
+    y = np.array(y)
+    ramps = np.array(ramps)
+    within_slopes = np.array(within_slopes)
+
     valid = np.isfinite(y)
     if valid.sum() < 5:
         return dict(
@@ -915,6 +948,10 @@ def _pregocue_drift_stats(
             mean_dff=np.nan,
             mean_p=np.nan,
             n_trials=int(valid.sum()),
+            ramp_median=float(np.median(ramps)) if len(ramps) else np.nan,
+            ramp_n_valid=int(len(ramps)),
+            within_trial_slope_median=float(np.median(within_slopes)) if len(within_slopes) else np.nan,
+            within_trial_slope_n_valid=int(len(within_slopes)),
             per_trial_mean=y,
         )
     x_v, y_v = np.arange(len(y))[valid], y[valid]
@@ -927,6 +964,10 @@ def _pregocue_drift_stats(
         mean_dff=float(y_v.mean()),
         mean_p=float(mean_p),
         n_trials=int(valid.sum()),
+        ramp_median=float(np.median(ramps)) if len(ramps) else np.nan,
+        ramp_n_valid=int(len(ramps)),
+        within_trial_slope_median=float(np.median(within_slopes)) if len(within_slopes) else np.nan,
+        within_trial_slope_n_valid=int(len(within_slopes)),
         per_trial_mean=y,
     )
 
