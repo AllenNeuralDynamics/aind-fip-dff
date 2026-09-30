@@ -884,31 +884,32 @@ def tc_brightfit_v2(
         )
         params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
 
-        # Repeat the degeneracy check after the production fit; IRLS can move
-        # a time constant back to its cap after the decimated OLS check.
-        params_full, n_exp_final, include_bright_final, snapped_final = (
-            _snap_degenerate_slow_terms(
-                params_full, n_exp_won, include_bright, trace_valid, ts_valid
+        # A reduced full-resolution refit can also move a remaining time
+        # constant to its cap, so keep reducing until the fitted model is stable.
+        while True:
+            params_full, n_exp_final, include_bright_final, snapped_final = (
+                _snap_degenerate_slow_terms(
+                    params_full, n_exp_won, include_bright, trace_valid, ts_valid
+                )
             )
-        )
-        if snapped_final:
+            if not snapped_final:
+                break
             n_exp_won, include_bright = n_exp_final, include_bright_final
+            model_str += f" [snapped: {','.join(snapped_final)}]"
             if n_exp_won == 0:
                 f0 = np.full_like(trace_valid, params_full[0])
-            else:
-                _, bnd_full = _init_sum_of_exps(
-                    trace_valid, n_exp=n_exp_won, include_brightening=include_bright
-                )
-                f0, res_full = nonlinear_fit(
-                    trace_valid,
-                    ts_valid,
-                    x0=params_full,
-                    bounds=bnd_full,
-                    **kw_full,
-                )
-                params_full = _sort_bleach_params(
-                    res_full.x, n_exp_won, include_bright
-                )
+                break
+            _, bnd_full = _init_sum_of_exps(
+                trace_valid, n_exp=n_exp_won, include_brightening=include_bright
+            )
+            f0, res_full = nonlinear_fit(
+                trace_valid,
+                ts_valid,
+                x0=params_full,
+                bounds=bnd_full,
+                **kw_full,
+            )
+            params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
         params_ds = params_full
 
     logging.info(f"Fit of original trace with model selection: {model_str}")

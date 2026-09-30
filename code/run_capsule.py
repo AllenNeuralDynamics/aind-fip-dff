@@ -813,8 +813,32 @@ def _pregocue_drift_stats(
         per_trial_mean : np.ndarray, one pre-event mean per trial in
             `starts`/`ends` (including NaNs), for plotting.
     """
-    y = [np.nanmean(dff[(s < t) & (t < e)]) for s, e in zip(starts, ends)]
-    y = np.array(y)
+    dff, t = np.asarray(dff), np.asarray(t)
+    starts, ends = np.asarray(starts), np.asarray(ends)
+    y = np.full(len(starts), np.nan)
+    valid_windows = np.isfinite(starts) & np.isfinite(ends) & (ends > starts)
+
+    if np.all(np.isfinite(t)) and np.all(t[1:] >= t[:-1]):
+        # Searchsorted and prefix sums avoid scanning the entire trace once
+        # per trial. The half-open interval includes start and excludes end.
+        left = np.searchsorted(t, starts[valid_windows], side="left")
+        right = np.searchsorted(t, ends[valid_windows], side="left")
+        finite_dff = np.isfinite(dff)
+        values = np.where(finite_dff, dff, 0.0)
+        sums = np.concatenate(([0.0], np.cumsum(values)))
+        counts = np.concatenate(([0], np.cumsum(finite_dff)))
+        window_counts = counts[right] - counts[left]
+        nonempty = window_counts > 0
+        window_means = np.full(len(left), np.nan)
+        window_means[nonempty] = (
+            sums[right[nonempty]] - sums[left[nonempty]]
+        ) / window_counts[nonempty]
+        y[valid_windows] = window_means
+    else:
+        for i in np.flatnonzero(valid_windows):
+            in_window = (t >= starts[i]) & (t < ends[i]) & np.isfinite(dff)
+            if in_window.any():
+                y[i] = np.mean(dff[in_window])
 
     valid = np.isfinite(y)
     if valid.sum() < 5:
