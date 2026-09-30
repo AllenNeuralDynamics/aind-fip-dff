@@ -66,7 +66,8 @@ def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float | str) -> np
                 f"tc_dFF: b_percentile must be in (0, 1], got {b_percentile!r}."
             )
         sorted_dFoF = np.sort(tc_dFoF)
-        b_ref = np.median(sorted_dFoF[: round(len(sorted_dFoF) * b_percentile)])
+        n_samples = max(1, round(len(sorted_dFoF) * b_percentile))
+        b_ref = np.median(sorted_dFoF[:n_samples])
     return tc_dFoF - b_ref
 
 
@@ -695,6 +696,11 @@ def _half_sample_mode(r: np.ndarray) -> float:
     point is 50% contamination.
     """
     x = np.sort(r[np.isfinite(r)])
+    if len(x) == 3:
+        widths = np.diff(x)
+        if widths[0] == widths[1]:
+            return float(x[1])
+        return float(np.mean(x[:2] if widths[0] < widths[1] else x[1:]))
     while len(x) > 3:
         half = (len(x) + 1) // 2
         widths = x[half - 1:] - x[:len(x) - half + 1]
@@ -873,9 +879,37 @@ def tc_brightfit_v2(
         _, bnd_full = _init_sum_of_exps(
             trace_valid, n_exp=n_exp_won, include_brightening=include_bright
         )
-        f0, _ = nonlinear_fit(
+        f0, res_full = nonlinear_fit(
             trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
         )
+        params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
+
+        # Repeat the degeneracy check after the production fit; IRLS can move
+        # a time constant back to its cap after the decimated OLS check.
+        params_full, n_exp_final, include_bright_final, snapped_final = (
+            _snap_degenerate_slow_terms(
+                params_full, n_exp_won, include_bright, trace_valid, ts_valid
+            )
+        )
+        if snapped_final:
+            n_exp_won, include_bright = n_exp_final, include_bright_final
+            if n_exp_won == 0:
+                f0 = np.full_like(trace_valid, params_full[0])
+            else:
+                _, bnd_full = _init_sum_of_exps(
+                    trace_valid, n_exp=n_exp_won, include_brightening=include_bright
+                )
+                f0, res_full = nonlinear_fit(
+                    trace_valid,
+                    ts_valid,
+                    x0=params_full,
+                    bounds=bnd_full,
+                    **kw_full,
+                )
+                params_full = _sort_bleach_params(
+                    res_full.x, n_exp_won, include_bright
+                )
+        params_ds = params_full
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 

@@ -165,16 +165,17 @@ def process1dataset(source_path, args, start_time):
 
 
 def _process1dataset_safe(source_path, args, start_time):
-    """Wrap process1dataset so one dataset's unhandled exception (e.g. the
-    matplotlib/Agg RendererAgg crash seen on rare degenerate-data QC plots)
-    logs and gets skipped instead of aborting the whole outer Parallel job --
-    joblib's default fail-fast behavior means a single bad dataset otherwise
-    sacrifices every other still-queued dataset's output too, which is far
-    worse than losing QC output for just the one dataset that triggered it."""
+    """Process one dataset and return any failure for reporting by the caller."""
+    destination_path = args.output_dir / Path(source_path).parent.parent.name
+    destination_existed = destination_path.exists()
     try:
         process1dataset(source_path, args, start_time)
+        return None
     except Exception:
-        logging.exception(f"Skipping {source_path}: unhandled exception")
+        logging.exception(f"Failed processing {source_path}")
+        if not destination_existed and destination_path.exists():
+            shutil.rmtree(destination_path)
+        return source_path
 
 
 if __name__ == "__main__":
@@ -278,8 +279,12 @@ if __name__ == "__main__":
         _plt.close(_fig)
 
         n_jobs = min(len(source_paths), int(os.getenv("CO_CPUS", -1)))
-        Parallel(n_jobs=n_jobs)(
+        failures = Parallel(n_jobs=n_jobs)(
             delayed(_process1dataset_safe)(path, args, start_time) for path in source_paths
         )
+        failures = [path for path in failures if path is not None]
+        if failures:
+            logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
+            sys.exit(1)
     else:
         process1dataset(source_paths[0], args, start_time)

@@ -730,6 +730,8 @@ def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float
     """
     resid = signal - f0
     valid = np.isfinite(resid)
+    if not valid.any():
+        return np.nan, np.nan
     sigma = float(noise_std(signal[valid], method="welch"))
     deep = resid[valid & (resid < 0)]
     if len(deep) <= 10 or sigma == 0:
