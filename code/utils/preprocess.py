@@ -43,15 +43,9 @@ def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float | str) -> np
         A fraction in (0, 1] -- the plain median of the lowest `b_percentile`
         fraction of the whole ratio (tc / tc_base) distribution is
         subtracted (e.g. 0.7 == median of the lowest 70%, 1.0 == plain
-        median of everything). NOTE this is this function's own
-        long-standing (0, 1] fraction convention, NOT the same scale as
-        `tc_brightfit_v2`'s `correction` (a direct 0-100 percentile) --
-        not interchangeable. Alternatively, "mode" subtracts the
+        median of everything). Alternatively, "mode" subtracts the
         half-sample mode (`_half_sample_mode`) of the whole ratio
-        distribution instead -- added for a direct real-data comparison
-        against percentile-based correction, mirroring `tc_brightfit_v2`'s
-        own percentile-vs-mode option for 'bright'. Any other value raises
-        `ValueError`.
+        distribution instead. Any other value raises `ValueError`.
 
     Returns
     -------
@@ -697,13 +691,8 @@ M_DFF = NonlinearFitAsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)
 def _half_sample_mode(r: np.ndarray) -> float:
     """Half-sample mode (Bickel & Fruhwirth 2006): recursively keep the
     densest contiguous half of the sorted sample until a handful of points
-    remain. No bandwidth to tune (unlike a KDE-argmax estimate), and its
-    breakdown point is 50% contamination -- the same occupancy<50%
-    assumption "median" correction already relies on. Ported verbatim from
-    `aind-fip-dff`'s baseline-fitting comparison notebook, where it replaced
-    an earlier Gaussian-KDE-peak implementation that turned out unreliable
-    specifically on G (the channel with the densest real transient content,
-    i.e. the messiest residual distribution).
+    remain. No bandwidth to tune (unlike a KDE-argmax estimate); breakdown
+    point is 50% contamination.
     """
     x = np.sort(r[np.isfinite(r)])
     while len(x) > 3:
@@ -712,29 +701,6 @@ def _half_sample_mode(r: np.ndarray) -> float:
         j = np.argmin(widths)
         x = x[j:j + half]
     return float(x.mean())
-
-
-def _percentile_or_mode_shift(values: np.ndarray, correction: float | str) -> float:
-    """Resolve `correction` (a percentile in [0, 100] or "mode") to a single
-    scalar shift value from `values`' own distribution. Shared by
-    `tc_brightfit_v2`'s raw-fluorescence-space correction and
-    `chunk_processing`'s ratio-space correction, so both use identical
-    percentile/mode semantics for the same `correction` value -- only the
-    distribution they're applied to (and the stage of the computation --
-    before vs. after dividing by the baseline) differs.
-    """
-    if isinstance(correction, str):
-        if correction.lower() != "mode":
-            raise ValueError(
-                f"unknown correction {correction!r}; expected a float "
-                'percentile in [0, 100], "mode", or None.'
-            )
-        return _half_sample_mode(values)
-    if not (0 <= correction <= 100):
-        raise ValueError(
-            f"correction percentile must be in [0, 100], got {correction!r}."
-        )
-    return float(np.percentile(values, correction))
 
 
 def tc_brightfit_v2(
@@ -747,7 +713,6 @@ def tc_brightfit_v2(
     fixed_sigma: float | str | None = "auto",
     sigma_anneal_steps: int = 4,
     t_eval_exp3: float = 120.0,
-    correction: float | str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -769,77 +734,40 @@ def tc_brightfit_v2(
 
     Parameters
     ----------
-    trace : np.ndarray
-        Fiber photometry signal.
-    timestamps : np.ndarray
-        Fiber photometry timestamps.
+    trace, timestamps : np.ndarray
+        Fiber photometry signal and its timestamps.
     M : statsmodels.robust.norms.RobustNorm or None, optional
-        The robust criterion function for the final IRLS fit. Default is
-        `M_DFF` (AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0) from
-        `aind_ophys_utils.baseline_fitting`).
+        Robust criterion for the final IRLS fit. Default `M_DFF`
+        (AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)).
     rss_thresh : tuple of float, optional
         RSS-ratio thresholds (brightening, 3rd exponential) for accepting
-        each more complex candidate model. Default is (0.98, 0.97).
+        each more complex candidate model. Default (0.98, 0.97).
     maxiter : int, optional
-        Maximum number of IRLS iterations for the final fit. Default is 5.
+        Maximum IRLS iterations for the final fit. Default 5.
     ds : int, optional
-        Decimation factor used for model-selection candidates; the final
-        fit always runs on the full-resolution trace. Default is 10.
+        Decimation factor for model-selection candidates; the final fit
+        always runs at full resolution. Default 10.
     fixed_sigma : float or "auto" or None, optional
-        IRLS noise scale for the final fit. "auto" estimates it via
-        `noise_std(trace, method="welch")` -- the PSD-based estimate is
-        symmetric and unbiased since it's computed from a high-frequency
-        band with no calcium-transient energy, unlike `method="mad"`, which
-        strips positive residuals first and so underestimates sigma from
-        the negative/central tail alone. A float uses `fixed_sigma`
-        directly; None falls back to `nonlinear_fit`'s own adaptive-scale
-        IRLS. Default is "auto".
+        IRLS noise scale for the final fit. "auto" (default) estimates it
+        via `noise_std(trace, method="welch")` (a high-frequency-band
+        estimate, unbiased by calcium transients unlike a MAD-based one);
+        a float uses that value directly; None uses `nonlinear_fit`'s own
+        adaptive-scale IRLS instead.
     sigma_anneal_steps : int, optional
         Geometric IRLS-sigma annealing steps passed to `nonlinear_fit`.
-        Default is 4.
+        Default 4.
     t_eval_exp3 : float, optional
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
-        compared on the full trace. Default is 120.0.
-    correction : float, "mode", or None, optional
-        Optional per-trace, post-hoc centering correction applied to the
-        fitted baseline (`trace - baseline` is the residual in every case):
-          - None (default): no correction.
-          - a float in [0, 100]: shift the baseline by that percentile of
-            the residual distribution (`np.percentile(residual, correction)`).
-            50 is the plain median -- exactly zero-centered on clean data,
-            robust up to 50% one-sided contamination (calcium activity only
-            ever pushes residuals positive) by construction. 35
-            approximates the old "pct70" recipe (median of the lowest 70%
-            of residuals, the same convention `poly`/`exp`/`tri-exp` use in
-            production via `tc_dFF`'s `b_percentile`) -- not bit-identical
-            (this uses `np.percentile`'s interpolation rather than
-            "median of the truncated array", a deliberate cleanup), but the
-            same idea: trade a small guaranteed offset on clean data (the
-            35th percentile of a symmetric residual isn't its center) for
-            robustness up to 30% one-sided contamination. Any percentile in
-            between (or beyond 50, or below 35) can be swept directly --
-            not limited to these two historical points.
-          - "mode": shift the baseline by the residuals' half-sample mode
-            (`_half_sample_mode` -- Bickel & Fruhwirth 2006), which
-            recursively keeps the densest contiguous half of the sorted
-            sample. Theoretically the least biased by transient-driven
-            right-skew (unlike median/percentile, unaffected by skew at
-            all in the idealized model), but its own estimation variance at
-            typical per-trace sample sizes empirically outweighs that
-            advantage -- see `aind-fip-dff`'s baseline-fitting comparison
-            notebook for the real-data comparison.
-        Any other value raises `ValueError`.
+        compared on the full trace. Default 120.0.
 
     Returns
     -------
-    tuple
-        - baseline : np.ndarray
-            The fitted baseline.
-        - params : np.ndarray
-            Fitted parameters, padded to
-            [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
-            (unused terms set to amplitude=0, tau=inf).
+    baseline : np.ndarray
+    params : np.ndarray
+        Fitted parameters, padded to
+        [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
+        (unused terms set to amplitude=0, tau=inf).
     """
     # Guard against non-finite samples: drop (not interpolate) any frame
     # where the trace or its timestamp is non-finite, before anything else
@@ -949,13 +877,6 @@ def tc_brightfit_v2(
             trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
         )
 
-    if correction is not None:
-        residual = trace_valid - f0
-        try:
-            f0 = f0 + _percentile_or_mode_shift(residual, correction)
-        except ValueError as e:
-            raise ValueError(f"tc_brightfit_v2: {e}") from e
-
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
     if n_dropped:
@@ -977,9 +898,6 @@ def chunk_processing(
     degree: int = 4,
     b_percentile: float | str = 0.7,
     robust: bool = True,
-    correction: float | str | None = None,
-    correction_space: str = "raw",
-    M: RobustNorm | None = None,
     trace_id: str = "",
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
@@ -1009,35 +927,6 @@ def chunk_processing(
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only
         'bright_legacy' method). Default is True.
-    correction : float, "mode", or None, optional
-        Optional per-trace centering correction (only 'bright' method, see
-        `tc_brightfit_v2` for the full semantics: a float is a residual
-        percentile in [0, 100] -- 50 is the plain median, 35 approximates
-        the old "pct70" convention; "mode" uses the half-sample mode).
-        Default is None (no correction).
-    correction_space : {"raw", "ratio"}, optional
-        Where `correction` is applied (only 'bright' method; no effect if
-        `correction` is None). "raw" (default): shift the fitted baseline
-        `f0` additively in raw-fluorescence units, computed from the
-        pre-division residual `trace - f0`, *before* dividing to get dF/F --
-        the original behavior, and the more mechanistically direct fix if
-        the bias is a genuine additive error in F0 itself (see
-        `tc_brightfit_v2`). "ratio": leave `f0` as fit (uncorrected), divide
-        to get dF/F first, then shift the dF/F trace itself additively --
-        the same percentile/mode statistic, computed from dF/F's own
-        distribution instead of the raw residual, mirroring how `tc_dFF`'s
-        `b_percentile` correction works for 'poly'/'exp'/'tri-exp'. Because
-        division is nonlinear, these are NOT equivalent (differ by a term
-        proportional to `correction_shift/F0`, scaled by the instantaneous
-        dF/F itself -- small for typical correction sizes, but not exactly
-        zero); added specifically to test this ordering question directly
-        rather than only by argument. Any other value raises `ValueError`.
-    M : RobustNorm or None, optional
-        Optional M-estimator override for the 'bright' method's IRLS fit,
-        passed straight through to `tc_brightfit_v2` (only 'bright' method;
-        no effect on any other method). Default is None, which leaves
-        `tc_brightfit_v2` on its own default (`M_DFF`,
-        `AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)`).
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
@@ -1051,12 +940,6 @@ def chunk_processing(
         - tc_fit_filled : np.ndarray
             The fitted baseline, including the filled beginning portion.
     """
-    if correction_space not in ("raw", "ratio"):
-        raise ValueError(
-            f'chunk_processing: correction_space must be "raw" or "ratio", '
-            f"got {correction_space!r}."
-        )
-
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
@@ -1077,27 +960,10 @@ def chunk_processing(
         elif method == "bright_legacy":
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
         elif method == "bright":
-            # Only pass M through when explicitly overridden -- omitting the
-            # kwarg (rather than passing M=None) lets tc_brightfit_v2's own
-            # default (M_DFF) apply exactly as before when no override is
-            # given, avoiding any ambiguity about what an explicit M=None
-            # means at that level. correction is only passed through here
-            # for correction_space=="raw" -- for "ratio", tc_brightfit_v2
-            # fits uncorrected and the shift is applied to tc_dFoF below
-            # instead, after dividing.
-            brightfit_kwargs = {}
-            if correction is not None and correction_space == "raw":
-                brightfit_kwargs["correction"] = correction
-            if M is not None:
-                brightfit_kwargs["M"] = M
-            tc_fit, tc_coefs = tc_brightfit_v2(
-                tc_filtered, ts, **brightfit_kwargs
-            )
+            tc_fit, tc_coefs = tc_brightfit_v2(tc_filtered, ts)
 
         if method in ("bright", "bright_legacy"):
             tc_dFoF = tc_filtered / tc_fit - 1
-            if method == "bright" and correction is not None and correction_space == "ratio":
-                tc_dFoF = tc_dFoF - _percentile_or_mode_shift(tc_dFoF, correction)
         else:
             tc_estim = tc_filtered - tc_fit
             tc_base = tc_slidingbase(tc_filtered, sampling_rate)
@@ -1113,13 +979,7 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {
-                    "poly": 5,
-                    "exp": 4,
-                    "tri-exp": 7,
-                    "bright": 9,
-                    "bright_legacy": 9,
-                }[method]
+                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}[method]
             )
         }
 
@@ -1275,9 +1135,14 @@ def motion_correct(
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
     M: RobustNorm = M_MOTION_CORRECTION,
-    mode: str = "demean",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
+
+    The fitted regression's intercept is reported (see Returns) but not
+    subtracted -- discarding it is the safe choice, since subtracting it
+    would also remove each channel's own constant F0-fitting bias, but
+    only if that channel has no genuine tonic signal of its own (which
+    regression can't distinguish from bias).
 
     Parameters
     ----------
@@ -1296,15 +1161,6 @@ def motion_correct(
     M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
         Default is M_MOTION_CORRECTION (AsymmetricTukeyBiweight(c_pos=3, c_neg=4.0)).
-    mode : str, optional
-        How the fitted regression is applied to each channel:
-        "demean" subtracts `coef * raw_Iso`, re-centered to zero mean, and
-        discards the fitted intercept -- a channel's own F0-fitting bias
-        passes straight through unchanged. "intercept" additionally
-        subtracts the fitted intercept, which also removes each channel's
-        own constant F0-fitting bias but relies on that channel having no
-        genuine tonic (constant, non-transient) signal of interest,
-        since regression cannot distinguish the two. Default is "demean".
 
     Returns
     -------
@@ -1316,12 +1172,10 @@ def motion_correct(
         - coeffs : dict
             The regression coefficients.
         - intercepts : dict
-            The regression intercepts.
+            The regression intercepts (reported, not subtracted -- see above).
         - weights : dict
             The final regression weights.
     """
-    if mode not in ("demean", "intercept"):
-        raise ValueError(f"Unknown mode {mode!r}; expected 'demean' or 'intercept'.")
     if np.isnan(dff["Iso"]).any() or np.isinf(dff["Iso"]).any():
         c = {ch: np.nan for ch in dff.columns}
         return np.nan * dff, np.nan * dff, c, c, c
@@ -1357,10 +1211,7 @@ def motion_correct(
     weights = {ch: w for ch, w in zip(dff.columns, weights)}
     motions = np.full_like(dff_filt, np.nan)
     motions[no_nans] = coef * dff["Iso"].values
-    if mode == "demean":
-        motions -= motions.mean(axis=1, keepdims=True)
-    else:  # mode == "intercept"
-        motions[no_nans] += intercept[:, None]
+    motions -= motions.mean(axis=1, keepdims=True)
     dff_mc = dff - motions.T
     dff_mc["Iso"] = 0
     dff_filt = pd.DataFrame(dff_filt.T)

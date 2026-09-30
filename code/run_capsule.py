@@ -11,7 +11,6 @@ from joblib import Parallel, delayed
 from pathlib import Path
 from typing import Union
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -40,25 +39,12 @@ from hdmf_zarr import NWBZarrIO
 from aind_ophys_utils.signal_utils import noise_std
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
-from matplotlib.ticker import LogFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
-from scipy.stats import linregress, norm, ttest_1samp
+from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import AsymmetricTukeyBiweight, chunk_processing, motion_correct
-
-# This module's QC plots use $...$ mathtext throughout (baseline-formula
-# annotations, axis labels, titles -- see generate_qc_plots/plot_*). On some
-# matplotlib/pyparsing version combinations (observed with a freshly-built,
-# unpinned-pyparsing image), matplotlib's mathtext parser fails outright --
-# even on a minimal string like r"$\Delta$F/F [%]" -- raising ValueError from
-# deep inside tight_layout()/savefig(bbox_inches="tight"), which aborts the
-# whole per-asset QC-plot generation. Disabling math parsing makes every such
-# string render literally (e.g. "$\Delta$F/F [%]" instead of a Delta glyph)
-# rather than crash -- a cosmetic downgrade, not a data-correctness one, and
-# safe regardless of which pyparsing version this image happens to have.
-matplotlib.rcParams["text.parse_math"] = False
+from utils.preprocess import chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -586,16 +572,6 @@ def plot_motion_correction(
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
-        # Force plain-text log tick labels instead of the default
-        # LogFormatterSciNotation, whose "$\mathdefault{10^{1}}$"-style
-        # labels go through matplotlib's mathtext (pyparsing-based) parser.
-        # That parser can fail on some matplotlib/pyparsing combinations
-        # (ValueError/ParseException on exactly this string) when this
-        # figure's tight_layout()/savefig(bbox_inches="tight") call computes
-        # tick label bounding boxes -- avoiding mathtext here sidesteps it
-        # regardless of which pyparsing version is installed.
-        ax.xaxis.set_major_formatter(LogFormatter(labelOnlyBase=False))
-        ax.yaxis.set_major_formatter(LogFormatter(labelOnlyBase=False))
         return ax
 
     left_axes = []
@@ -733,89 +709,32 @@ def plot_motion_correction(
     plt.close()
 
 
-#: Depths (in units of sigma below F0) at which to evaluate the
-#: calibration ratio. 0 is the classical MAD-consistency ratio (matching
-#: aind_ophys_dff_library.triexp_dff's own diagnostic); deeper depths trade
-#: sample size for exponentially less exposure to lingering, not-yet-decayed
-#: transients near baseline (a real one-sided contaminant that k=0 cannot
-#: distinguish from noise) -- see `_calibration_ratio`. k=2 added alongside
-#: the existing k=0/k=1 specifically to check the *trend* across depths: if
-#: near-baseline transient contamination is really what's pulling k=0 away
-#: from 1, the ratio should move monotonically closer to 1 as k increases
-#: (less exposure at each step); if it doesn't, that undercuts the
-#: contamination explanation rather than supporting it.
-CALIBRATION_RATIO_DEPTHS = (0, 1, 2)
-
-
-def _neg_tail_const(k: float) -> float:
-    """Median-of-truncated-normal constant at depth k sigma below the mean:
-    for standard normal Z, median(Z | Z<-k) = norm.ppf(norm.cdf(-k)/2), so
-    median(-k-Z | Z<-k) = -k - norm.ppf(norm.cdf(-k)/2). k=0 recovers the
-    classical MAD constant 0.6745.
-    """
-    return -k - norm.ppf(norm.cdf(-k) / 2)
-
-
-def _calibration_ratio(
-    signal: np.ndarray, f0: np.ndarray, depths=CALIBRATION_RATIO_DEPTHS
-) -> tuple[dict, float]:
-    """Negative-residual calibration ratio for a fitted baseline, at one or
-    more depths below it.
-
-    `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
-    check the baseline fit itself, or pass an already-centered trace
-    (dF/F, motion-corrected dF/F) with `f0=0` to check that trace's own
-    residual-to-noise consistency directly.
-
-    At depth k=0, this is the classical MAD-consistency ratio: the median
+def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float]:
+    """Negative-residual calibration ratio for a fitted baseline: median
     absolute negative residual (signal - f0), compared to what pure
     Gaussian noise at the trace's own estimated std would produce
-    (0.6745 * sigma) -- the same diagnostic
-    `aind_ophys_dff_library.triexp_dff` uses during its own model
-    selection. A ratio far from 1 suggests the fit is systematically
-    biased or the robust fit is over/under-aggressive; note that a ratio
-    of exactly 1 is not itself the unbiased target on real (non-Gaussian,
-    transient-containing) data.
+    (0.6745 * sigma) -- the same diagnostic `aind_ophys_dff_library.triexp_dff`
+    uses during model selection. A ratio far from 1 suggests the fit is
+    systematically biased or the robust fit is over/under-aggressive (not
+    necessarily exactly 1 on real, transient-containing data).
 
-    At depth k>0, only residuals more than k*sigma below f0 are used, and
-    compared to `_neg_tail_const(k) * sigma`. Calcium transients decay
-    one-sided, so a residual just below f0 can still be a lingering,
-    not-yet-decayed transient rather than pure noise; requiring a deeper
-    cutoff makes that exponentially less likely (Mills-ratio argument)
-    while genuine noise only thins at the ordinary Gaussian tail rate. A
-    large divergence between the k=0 and k>0 ratios is itself a sign of
-    near-baseline transient contamination.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        Trace to check (raw fluorescence, dF/F, or motion-corrected dF/F).
-    f0 : np.ndarray or float
-        Baseline to compare `signal` against -- the fitted F0 for raw
-        fluorescence, or 0 for an already-centered dF/F-like trace.
-    depths : sequence of float, optional
-        Depths (sigma below F0) at which to evaluate the ratio.
-        Default is `CALIBRATION_RATIO_DEPTHS` (0, 1, and 2).
+    `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
+    check the baseline fit, or an already-centered trace with `f0=0` to
+    check its own residual-to-noise consistency directly.
 
     Returns
     -------
-    ratios : dict
-        {f"k{k}": ratio}, one per requested depth. A depth's ratio is NaN
-        if fewer than 10 residuals fall beyond it, or sigma is 0.
-    sigma : float
-        The trace's estimated noise std (`noise_std(signal, method="welch")`).
+    ratio, sigma : float
+        `ratio` is NaN if fewer than 10 residuals are negative, or sigma
+        (`noise_std(signal, method="welch")`) is 0.
     """
     resid = signal - f0
     valid = np.isfinite(resid)
     sigma = float(noise_std(signal[valid], method="welch"))
-    ratios = {}
-    for k in depths:
-        deep = resid[valid & (resid < -k * sigma)]
-        if len(deep) <= 10 or sigma == 0:
-            ratios[f"k{k}"] = np.nan
-            continue
-        ratios[f"k{k}"] = float(np.median(-k * sigma - deep) / (_neg_tail_const(k) * sigma))
-    return ratios, sigma
+    deep = resid[valid & (resid < 0)]
+    if len(deep) <= 10 or sigma == 0:
+        return np.nan, sigma
+    return float(np.median(-deep) / (0.6745 * sigma)), sigma
 
 
 #: Fallback window (seconds relative to reward time) for sessions with no
@@ -829,25 +748,17 @@ def _get_pregocue_windows(
     """Per-trial windows to align the pre-event dF/F regression to.
 
     Prefers each trial's own Delay period, [delay_start_time,
-    goCue_start_time): task design guarantees this window can never overlap
-    the previous trial's ITI or reward-consumption period, unlike a fixed
-    duration before GoCue, which is longer than the Delay period itself at
-    some training stages and would reach back into the previous trial.
-    Falls back to a fixed window before reward time for sessions without a
+    goCue_start_time): guaranteed by task design to never overlap the
+    previous trial's ITI, unlike a fixed duration before GoCue. Falls back
+    to a fixed window before reward time for sessions without a
     GoCue-based Delay period.
-
-    Parameters
-    ----------
-    nwb_file : pynwb.NWBFile
-        The (already read) NWB file.
 
     Returns
     -------
     starts, ends : np.ndarray or None
-        Per-trial window start/end times (same clock as `time_fip`), for
-        trials with a finite, positive-duration window. None if the
-        session's trials table has neither a GoCue-based Delay period nor a
-        reward column.
+        Per-trial window start/end times (same clock as `time_fip`); None
+        if `nwb_file` has neither a GoCue-based Delay period nor a reward
+        column.
     label : str or None
         "GoCue" or "reward", matching `starts`/`ends`; None if they are None.
     """
@@ -877,12 +788,7 @@ def _get_pregocue_windows(
 def _pregocue_drift_stats(
     dff: np.ndarray, t: np.ndarray, starts: np.ndarray, ends: np.ndarray
 ) -> dict:
-    """Per-trial pre-event mean dF/F, plus an OLS trend across trials, plus
-    two *within-trial* ramp estimates (does dF/F itself change across a
-    single trial's pre-event window, not just drift from trial to trial?
-    -- see the brightfit-comparison.ipynb event-triggered time-course check
-    this mirrors, now computed at production scale instead of 5 hand-picked
-    sessions).
+    """Per-trial pre-event mean dF/F, plus an OLS trend across trials.
 
     Parameters
     ----------
@@ -902,42 +808,11 @@ def _pregocue_drift_stats(
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
-        ramp_median, ramp_n_valid : median (across trials) of each trial's
-            own late-half-minus-early-half dF/F contrast WITHIN its
-            pre-event window -- a shape-agnostic magnitude, robust to
-            whatever the true within-window dynamic looks like (smooth
-            ramp, late jump, etc.), and the number of trials with enough
-            valid samples in both halves to compute it.
-        within_trial_slope_median, within_trial_slope_n_valid : median
-            (across trials) of each trial's own OLS-fit dF/F-vs-time slope
-            WITHIN its pre-event window -- a physically interpretable rate
-            (dF/F per second), more statistically efficient than the ramp
-            above (uses every sample, not just two half-window means), but
-            assumes the within-window dynamic is close to linear. Comparing
-            this (times window duration) against ramp_median directly
-            checks that assumption -- a mismatch points at a late-
-            concentrated change rather than a steady ramp.
         per_trial_mean : np.ndarray, one pre-event mean per trial in
             `starts`/`ends` (including NaNs), for plotting.
     """
-    y, ramps, within_slopes = [], [], []
-    for s, e in zip(starts, ends):
-        window = (s < t) & (t < e)
-        v, tt = dff[window], t[window]
-        y.append(np.nanmean(v))
-
-        half_t = (s + e) / 2
-        early, late = v[tt < half_t], v[tt >= half_t]
-        if np.isfinite(early).sum() >= 3 and np.isfinite(late).sum() >= 3:
-            ramps.append(np.nanmean(late) - np.nanmean(early))
-
-        valid_v = np.isfinite(v)
-        if valid_v.sum() >= 6:  # enough points within one trial's window to trust an OLS slope
-            within_slopes.append(linregress(tt[valid_v], v[valid_v]).slope)
-
+    y = [np.nanmean(dff[(s < t) & (t < e)]) for s, e in zip(starts, ends)]
     y = np.array(y)
-    ramps = np.array(ramps)
-    within_slopes = np.array(within_slopes)
 
     valid = np.isfinite(y)
     if valid.sum() < 5:
@@ -948,10 +823,6 @@ def _pregocue_drift_stats(
             mean_dff=np.nan,
             mean_p=np.nan,
             n_trials=int(valid.sum()),
-            ramp_median=float(np.median(ramps)) if len(ramps) else np.nan,
-            ramp_n_valid=int(len(ramps)),
-            within_trial_slope_median=float(np.median(within_slopes)) if len(within_slopes) else np.nan,
-            within_trial_slope_n_valid=int(len(within_slopes)),
             per_trial_mean=y,
         )
     x_v, y_v = np.arange(len(y))[valid], y[valid]
@@ -964,10 +835,6 @@ def _pregocue_drift_stats(
         mean_dff=float(y_v.mean()),
         mean_p=float(mean_p),
         n_trials=int(valid.sum()),
-        ramp_median=float(np.median(ramps)) if len(ramps) else np.nan,
-        ramp_n_valid=int(len(ramps)),
-        within_trial_slope_median=float(np.median(within_slopes)) if len(within_slopes) else np.nan,
-        within_trial_slope_n_valid=int(len(within_slopes)),
         per_trial_mean=y,
     )
 
@@ -986,20 +853,12 @@ def plot_pregocue_regression(
     line, for each channel -- a QC check for within-session baseline drift
     (see aind-fip-dff#75). Two rows: dF/F before motion correction ("dff",
     isolates the baseline-fit method) and after ("motion_corrected", the
-    actual production output, where demean vs. intercept differ).
+    actual production output).
 
     Parameters
     ----------
     df_fip_pp : pd.DataFrame
         Preprocessed fiber photometry dataframe (see `plot_dff`).
-    fiber : str
-        Fiber/ROI identifier to plot.
-    channels : list[str]
-        Channel names to include (e.g., ['G', 'Iso', 'R']).
-    method : str
-        Preprocessing method name.
-    fig_path : Path
-        Directory to save the plot to.
     starts, ends : np.ndarray
         Per-trial window start/end times (seconds, same clock as
         `time_fip`) -- see `_get_pregocue_windows`.
@@ -1132,17 +991,17 @@ def create_metric(fiber, method, reference, value, motion=False):
 def create_calibration_metric(fiber, method, ratio_by_channel):
     """Create a QC metric for the per-channel negative-residual calibration ratio.
 
-    `ratio_by_channel` is `{channel: {"dff": {"k0": ratio, "k1": ratio, ...}}}`
-    -- "dff" stage only (before motion correction); see `_calibration_ratio`
-    for the definition at each depth. Deliberately NOT also computed on the
-    motion-corrected trace: `_calibration_ratio`'s sigma comes from a
-    high-frequency-band noise estimate (`noise_std`, Welch's method), an
-    assumption `motion_correct`'s own final noise filter breaks -- it
-    suppresses exactly the band that estimate relies on, while genuine
-    slow residual structure survives largely unattenuated, inflating the
-    ratio by roughly the filter's own attenuation factor (order 10-40x
-    observed) rather than reflecting fit quality. See the drift-stats
-    metric instead for a motion-corrected-stage QC signal.
+    `ratio_by_channel` is `{channel: {"dff": ratio}}` -- "dff" stage only
+    (before motion correction); see `_calibration_ratio` for the
+    definition. Deliberately NOT also computed on the motion-corrected
+    trace: `_calibration_ratio`'s sigma comes from a high-frequency-band
+    noise estimate (`noise_std`, Welch's method), an assumption
+    `motion_correct`'s own final noise filter breaks -- it suppresses
+    exactly the band that estimate relies on, while genuine slow residual
+    structure survives largely unattenuated, inflating the ratio by
+    roughly the filter's own attenuation factor (order 10-40x observed)
+    rather than reflecting fit quality. See the drift-stats metric instead
+    for a motion-corrected-stage QC signal.
     """
     return QCMetric(
         name=f"Calibration ratio of ROI {fiber} using method '{method}'",
@@ -1154,23 +1013,15 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
         ],
         value=ratio_by_channel,
         description=(
-            "Per-channel median-negative-residual calibration ratio, at one "
-            "or more depths (sigma below baseline), computed on dF/F "
-            "('dff' stage, before motion correction) only -- see "
-            "create_calibration_metric's own docstring for why this isn't "
-            "also computed on the motion-corrected trace. "
-            "'k0' is the classical median|negative residual| / "
-            "(0.6745 * noise std) -- the same diagnostic used during model "
-            "selection in aind_ophys_dff_library.triexp_dff. 'k1'/'k2' use "
-            "only residuals that far below baseline, exponentially less "
-            "exposed to lingering, not-yet-decayed transients near it. "
-            "Expected to be close to 1, but not exactly -- treat outlier "
-            "values and a large divergence across depths (which "
-            "specifically suggests near-baseline transient contamination --"
-            " if that's the real explanation, the ratio should move "
-            "monotonically closer to 1 from k0 to k1 to k2, not diverge "
-            "further or move inconsistently) as the actionable signals, "
-            "not small deviations from 1."
+            "Per-channel median-negative-residual calibration ratio, "
+            "computed on dF/F ('dff' stage, before motion correction) "
+            "only -- see create_calibration_metric's own docstring for why "
+            "this isn't also computed on the motion-corrected trace. "
+            "median|negative residual| / (0.6745 * noise std) -- the same "
+            "diagnostic used during model selection in "
+            "aind_ophys_dff_library.triexp_dff. Expected to be close to 1, "
+            "but not exactly -- treat outlier values, not small deviations "
+            "from 1, as the actionable signal."
         ),
     )
 
@@ -1238,10 +1089,7 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(
-    channel, df_fip, fiber_number, pp_name, correction=None, M=None, b_percentile=0.7,
-    correction_space="raw",
-):
+def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -1254,9 +1102,6 @@ def _process1channel(
         NM_values,
         timestamps - timestamps[0],
         method=pp_name,
-        correction=correction,
-        correction_space=correction_space,
-        M=M,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
     )
@@ -1290,11 +1135,7 @@ def _process1fiber(
     cutoff_freq_motion,
     cutoff_freq_noise,
     serial,
-    correction=None,
-    motion_correction_mode="demean",
-    M=None,
     b_percentile=0.7,
-    correction_space="raw",
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1314,33 +1155,11 @@ def _process1fiber(
         Cutoff frequency for noise filtering.
     serial : bool
         Whether to process channels serially.
-    correction : float, "mode", or None, optional
-        Optional per-trace centering correction (only 'bright' method, see
-        `tc_brightfit_v2` for the full semantics: a float is a residual
-        percentile in [0, 100] -- 50 is the plain median, 35 approximates
-        the old "pct70" convention; "mode" uses the half-sample mode).
-        Default is None (no correction).
-    motion_correction_mode : str, optional
-        "demean" or "intercept", see `motion_correct`. Default is "demean".
-    M : RobustNorm or None, optional
-        Optional M-estimator override for the 'bright' method's IRLS fit
-        (only 'bright' method; no effect on any other method). Default is
-        None, which leaves `tc_brightfit_v2` on its own default (`M_DFF`).
     b_percentile : float, optional
         Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
-        'tri-exp' only, no effect on 'bright'/'bright_legacy'. 1.0 gives the
-        plain median of the whole residual distribution (no truncation),
-        the same recipe as 'bright'/`--correction median`, just applied to
-        these methods' own ratio-based residual. Default is 0.7 (median of
-        the lowest 70%), matching `chunk_processing`'s own default.
-    correction_space : {"raw", "ratio"}, optional
-        Where `correction` is applied (only 'bright' method; see
-        `chunk_processing` for the full semantics). "raw" (default): shift
-        the fitted baseline before dividing, in raw-fluorescence units.
-        "ratio": divide first, then shift the dF/F trace itself -- mirrors
-        `b_percentile`'s own ratio-space correction for 'poly'/'exp'/
-        'tri-exp', but for 'bright'. Not equivalent to "raw" (division is
-        nonlinear).
+        'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
+        0.7 (median of the lowest 70%), matching `chunk_processing`'s own
+        default.
 
     Returns
     -------
@@ -1360,18 +1179,12 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(
-                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile,
-                correction_space,
-            )
+            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile)
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(
-                ch, df_fip, fiber_number, pp_name, correction, M, b_percentile,
-                correction_space,
-            )
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, b_percentile)
             for ch in channels
         )
 
@@ -1390,7 +1203,6 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
-        mode=motion_correction_mode,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -1461,16 +1273,6 @@ def process_nwb_file(
     channels = df_fip["channel"].unique()
     channels = channels[~pd.isna(channels)]
 
-    # Optional M-estimator override for the 'bright' method's dF/F IRLS fit
-    # (--c_pos/--c_neg), distinct from motion_correct's own M-estimator.
-    # None (the default when neither flag is given) leaves tc_brightfit_v2 on
-    # its own default (M_DFF, AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)).
-    M_dff_override = (
-        AsymmetricTukeyBiweight(c_pos=args.c_pos, c_neg=args.c_neg)
-        if args.c_pos is not None
-        else None
-    )
-
     for pp_name in args.dff_methods:
         if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy"]:
             continue
@@ -1485,11 +1287,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
-                    args.correction,
-                    args.motion_correction_mode,
-                    M_dff_override,
                     args.b_percentile,
-                    args.correction_space,
                 )
                 for fib in fiber_numbers
             ]
@@ -1503,11 +1301,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
-                    args.correction,
-                    args.motion_correction_mode,
-                    M_dff_override,
                     args.b_percentile,
-                    args.correction_space,
                 )
                 for fib in fiber_numbers
             )
@@ -1606,13 +1400,11 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}[
-        method
-    ]
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
-    ][["channel"] + list(range(n_params))]
+    ][["channel"] + list(range(n_params[method]))]
     param_names = {
         "poly": [*"abcde"],
         "exp": [*"abcd"],
@@ -1688,7 +1480,7 @@ def generate_qc_plots(
     QualityControl
         Quality control object with evaluations.
     """
-    channels = sorted(df_fip_pp["channel"].unique())
+    channels = df_fip_pp["channel"].unique()
     fibers = df_fip_pp["fiber_number"].unique()
 
     # Prepare arguments for parallel plotting
@@ -1793,37 +1585,9 @@ def generate_qc_plots(
     return qc
 
 
-_CORRECTION_LEGACY_ALIASES = {"median": 50.0, "pct70": 35.0}
-
-
-def _correction_type(s: str) -> float | str:
-    """argparse type for --correction: a percentile in [0, 100], or "mode".
-    Also accepts the pre-57814c6 literal strings "median"/"pct70" as
-    backward-compatible aliases for 50/35, so existing callers/scripts don't
-    break on this CLI's own upgrade."""
-    if s.lower() == "mode":
-        return "mode"
-    if s.lower() in _CORRECTION_LEGACY_ALIASES:
-        return _CORRECTION_LEGACY_ALIASES[s.lower()]
-    try:
-        val = float(s)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"--correction must be a percentile in [0, 100], \"mode\", "
-            f"or a legacy alias ({', '.join(_CORRECTION_LEGACY_ALIASES)}); got {s!r}"
-        )
-    if not (0 <= val <= 100):
-        raise argparse.ArgumentTypeError(
-            f"--correction percentile must be in [0, 100], got {val}"
-        )
-    return val
-
-
 def _b_percentile_type(s: str) -> float | str:
-    """argparse type for --b_percentile: a fraction in (0, 1], or "mode".
-    Note this is a DIFFERENT scale from --correction's [0, 100] percentile
-    -- tc_dFF's own long-standing (0, 1] fraction convention, not
-    interchangeable."""
+    """argparse type for --b_percentile: a fraction in (0, 1], or "mode"
+    -- tc_dFF's own long-standing (0, 1] fraction convention."""
     if s.lower() == "mode":
         return "mode"
     try:
@@ -1876,116 +1640,18 @@ def main():
         ),
     )
     parser.add_argument(
-        "--correction",
-        type=_correction_type,
-        default=None,
-        help=(
-            "Optional per-trace, post-hoc centering correction applied to the "
-            "'bright' method's fitted baseline (see tc_brightfit_v2). Either "
-            "a percentile in [0, 100] or the literal string 'mode'. "
-            "50 (median): shift by the plain median of the residuals -- "
-            "exactly zero-centered on clean data, 50%% breakdown point. "
-            "35: approximates the old 'pct70' recipe (median of the lowest "
-            "70%% of residuals, the same convention 'poly'/'exp'/'tri-exp' "
-            "use in production via tc_dFF's b_percentile) -- not "
-            "bit-identical (uses np.percentile's interpolation instead), "
-            "but the same idea: a small guaranteed offset on clean data "
-            "for robustness up to 30%% one-sided contamination. Any other "
-            "percentile can be swept directly. 'mode': shift by the "
-            "residuals' half-sample mode instead -- theoretically less "
-            "biased by transient-driven skew, though real-data testing so "
-            "far shows median still wins in practice (its own estimator "
-            "has lower variance at typical per-trace sample sizes). The "
-            "legacy literal strings 'median' and 'pct70' are also accepted, "
-            "as aliases for 50 and 35 respectively (backward-compatible "
-            "with scripts written before this flag took a percentile). Has "
-            "no effect on methods other than 'bright' -- see --b_percentile "
-            "for the analogous (but mechanistically different: mandatory, "
-            "0.0-1.0 scale) knob for 'poly'/'exp'/'tri-exp', which also "
-            "accepts 'mode'. Default is no correction."
-        ),
-    )
-    parser.add_argument(
-        "--correction_space",
-        choices=["raw", "ratio"],
-        default="raw",
-        help=(
-            "Where --correction is applied (only 'bright' method; no effect "
-            "if --correction is not given). 'raw' (default): shift the "
-            "fitted baseline additively in raw-fluorescence units, from the "
-            "pre-division residual, before computing dF/F -- the original "
-            "behavior. 'ratio': compute dF/F first, then shift the dF/F "
-            "trace itself additively (same percentile/mode statistic, "
-            "computed from dF/F's own distribution instead) -- mirrors how "
-            "--b_percentile's correction works for 'poly'/'exp'/'tri-exp', "
-            "but for 'bright'. NOT equivalent to 'raw': division is "
-            "nonlinear, so the two orderings give different results (by a "
-            "term proportional to the correction size over F0, scaled by "
-            "the instantaneous dF/F -- small in practice, but not exactly "
-            "zero). Added to test this ordering question directly."
-        ),
-    )
-    parser.add_argument(
         "--b_percentile",
         type=_b_percentile_type,
         default=0.7,
         help=(
             "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
-            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy' "
-            "(which use --correction instead). Looks similar to --correction "
-            "(both pick a percentile) but is mechanistically different, not "
-            "just a differently-scoped copy of it: this is a MANDATORY, "
-            "built-in part of tc_dFF's own ratio-based dF/F formula (there "
-            "is no 'off' state -- every poly/exp/tri-exp trace uses some "
-            "percentile/mode), whereas --correction is an OPTIONAL additive "
-            "shift bolted on after bright's fit is already complete "
-            "(default is no shift at all). Also note the different scale "
-            "for the numeric case: a 0.0-1.0 fraction here (of the lowest "
-            "values), vs. --correction's direct 0-100 percentile -- not "
-            "interchangeable. 1.0 gives the plain median of the whole "
-            "ratio distribution (no truncation) -- the same idea as "
-            "--correction 50, just applied to these methods' own ratio-based "
-            "residual instead of bright's additive one. 'mode': the "
-            "half-sample mode of the whole ratio distribution instead -- "
-            "mirrors --correction's own percentile-vs-mode option, added "
-            "for a direct real-data comparison. Default is 0.7 (median of "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy'. "
+            "A fraction in (0, 1]: the plain median of the lowest "
+            "`b_percentile` fraction of the whole ratio distribution is "
+            "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
+            "median of everything). 'mode': the half-sample mode of the "
+            "whole ratio distribution instead. Default is 0.7 (median of "
             "the lowest 70%%), matching production."
-        ),
-    )
-    parser.add_argument(
-        "--c_pos",
-        type=float,
-        default=None,
-        help=(
-            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
-            "positive-residual threshold (AsymmetricTukeyBiweight(c_pos, c_neg), "
-            "see tc_brightfit_v2's M_DFF). Has no effect on other methods. Must "
-            "be given together with --c_neg. Default is None, which leaves "
-            "tc_brightfit_v2 on its own default (c_pos=3.5, c_neg=4.0)."
-        ),
-    )
-    parser.add_argument(
-        "--c_neg",
-        type=float,
-        default=None,
-        help=(
-            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
-            "negative-residual threshold -- see --c_pos. Must be given together "
-            "with --c_pos."
-        ),
-    )
-    parser.add_argument(
-        "--motion_correction_mode",
-        choices=["demean", "intercept"],
-        default="demean",
-        help=(
-            "How motion_correct applies the fitted Iso regression: 'demean' "
-            "discards the fitted intercept (safe default -- a channel's own "
-            "F0-fitting bias passes through unchanged); 'intercept' also "
-            "subtracts the fitted intercept, which additionally removes each "
-            "channel's own constant F0-fitting bias but assumes that channel "
-            "has no genuine tonic (constant, non-transient) signal of interest. "
-            "Default is 'demean'."
         ),
     )
     parser.add_argument(
@@ -2013,8 +1679,6 @@ def main():
     )
     parser.add_argument("--no_qc", action="store_true", help="Skip QC plots.")
     args = parser.parse_args()
-    if (args.c_pos is None) != (args.c_neg is None):
-        parser.error("--c_pos and --c_neg must be given together.")
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
     data_desc_fp = next(fiber_path.rglob("data_description.json"))

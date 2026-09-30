@@ -19,7 +19,6 @@ from run_capsule import (
     process_nwb_file,
     write_output_metadata,
     setup_logging_from_metadata,
-    _correction_type,
     _b_percentile_type,
 )
 
@@ -213,116 +212,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--correction",
-        type=_correction_type,
-        default=None,
-        help=(
-            "Optional per-trace, post-hoc centering correction applied to the "
-            "'bright' method's fitted baseline (see tc_brightfit_v2). Either "
-            "a percentile in [0, 100] or the literal string 'mode'. "
-            "50 (median): shift by the plain median of the residuals -- "
-            "exactly zero-centered on clean data, 50%% breakdown point. "
-            "35: approximates the old 'pct70' recipe (median of the lowest "
-            "70%% of residuals, the same convention 'poly'/'exp'/'tri-exp' "
-            "use in production via tc_dFF's b_percentile) -- not "
-            "bit-identical (uses np.percentile's interpolation instead), "
-            "but the same idea: a small guaranteed offset on clean data "
-            "for robustness up to 30%% one-sided contamination. Any other "
-            "percentile can be swept directly. 'mode': shift by the "
-            "residuals' half-sample mode instead -- theoretically less "
-            "biased by transient-driven skew, though real-data testing so "
-            "far shows median still wins in practice (its own estimator "
-            "has lower variance at typical per-trace sample sizes). The "
-            "legacy literal strings 'median' and 'pct70' are also accepted, "
-            "as aliases for 50 and 35 respectively (backward-compatible "
-            "with scripts written before this flag took a percentile). Has "
-            "no effect on methods other than 'bright' -- see --b_percentile "
-            "for the analogous (but mechanistically different: mandatory, "
-            "0.0-1.0 scale) knob for 'poly'/'exp'/'tri-exp', which also "
-            "accepts 'mode'. Default is no correction."
-        ),
-    )
-    parser.add_argument(
-        "--correction_space",
-        choices=["raw", "ratio"],
-        default="raw",
-        help=(
-            "Where --correction is applied (only 'bright' method; no effect "
-            "if --correction is not given). 'raw' (default): shift the "
-            "fitted baseline additively in raw-fluorescence units, from the "
-            "pre-division residual, before computing dF/F -- the original "
-            "behavior. 'ratio': compute dF/F first, then shift the dF/F "
-            "trace itself additively (same percentile/mode statistic, "
-            "computed from dF/F's own distribution instead) -- mirrors how "
-            "--b_percentile's correction works for 'poly'/'exp'/'tri-exp', "
-            "but for 'bright'. NOT equivalent to 'raw': division is "
-            "nonlinear, so the two orderings give different results (by a "
-            "term proportional to the correction size over F0, scaled by "
-            "the instantaneous dF/F -- small in practice, but not exactly "
-            "zero). Added to test this ordering question directly."
-        ),
-    )
-    parser.add_argument(
         "--b_percentile",
         type=_b_percentile_type,
         default=0.7,
         help=(
             "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
-            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy' "
-            "(which use --correction instead). Looks similar to --correction "
-            "(both pick a percentile) but is mechanistically different, not "
-            "just a differently-scoped copy of it: this is a MANDATORY, "
-            "built-in part of tc_dFF's own ratio-based dF/F formula (there "
-            "is no 'off' state -- every poly/exp/tri-exp trace uses some "
-            "percentile/mode), whereas --correction is an OPTIONAL additive "
-            "shift bolted on after bright's fit is already complete "
-            "(default is no shift at all). Also note the different scale "
-            "for the numeric case: a 0.0-1.0 fraction here (of the lowest "
-            "values), vs. --correction's direct 0-100 percentile -- not "
-            "interchangeable. 1.0 gives the plain median of the whole "
-            "ratio distribution (no truncation) -- the same idea as "
-            "--correction 50, just applied to these methods' own ratio-based "
-            "residual instead of bright's additive one. 'mode': the "
-            "half-sample mode of the whole ratio distribution instead -- "
-            "mirrors --correction's own percentile-vs-mode option, added "
-            "for a direct real-data comparison. Default is 0.7 (median of "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy'. "
+            "A fraction in (0, 1]: the plain median of the lowest "
+            "`b_percentile` fraction of the whole ratio distribution is "
+            "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
+            "median of everything). 'mode': the half-sample mode of the "
+            "whole ratio distribution instead. Default is 0.7 (median of "
             "the lowest 70%%), matching production."
-        ),
-    )
-    parser.add_argument(
-        "--c_pos",
-        type=float,
-        default=None,
-        help=(
-            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
-            "positive-residual threshold (AsymmetricTukeyBiweight(c_pos, c_neg), "
-            "see tc_brightfit_v2's M_DFF). Has no effect on other methods. Must "
-            "be given together with --c_neg. Default is None, which leaves "
-            "tc_brightfit_v2 on its own default (c_pos=3.5, c_neg=4.0)."
-        ),
-    )
-    parser.add_argument(
-        "--c_neg",
-        type=float,
-        default=None,
-        help=(
-            "Optional override for the 'bright' method's dF/F IRLS M-estimator "
-            "negative-residual threshold -- see --c_pos. Must be given together "
-            "with --c_pos."
-        ),
-    )
-    parser.add_argument(
-        "--motion_correction_mode",
-        choices=["demean", "intercept"],
-        default="demean",
-        help=(
-            "How motion_correct applies the fitted Iso regression: 'demean' "
-            "discards the fitted intercept (safe default -- a channel's own "
-            "F0-fitting bias passes through unchanged); 'intercept' also "
-            "subtracts the fitted intercept, which additionally removes each "
-            "channel's own constant F0-fitting bias but assumes that channel "
-            "has no genuine tonic (constant, non-transient) signal of interest. "
-            "Default is 'demean'."
         ),
     )
     parser.add_argument(
@@ -352,9 +253,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.serial = not args.parallel
 
-    if (args.c_pos is None) != (args.c_neg is None):
-        parser.error("--c_pos and --c_neg must be given together.")
-
     # Create the destination directory if it doesn't exist
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -366,17 +264,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(source_paths) > 1:
-        # Force matplotlib to finish building its font cache exactly once,
-        # here in the single-threaded parent process, before any worker is
-        # forked below. On a freshly-built Docker image (no pre-existing
-        # ~/.cache/matplotlib font cache), N outer worker processes each
-        # hitting matplotlib for the first time *simultaneously* race to
-        # build/write that cache -- observed both as pyparsing mathtext
-        # ParseExceptions on otherwise-valid strings, and (this run) as
-        # RendererAgg.__init__ receiving a corrupted garbage height
-        # (~4.7e14). Rendering one throwaway figure here completes the
-        # font-cache build before Parallel(...) starts, so workers see an
-        # already-finished cache instead of racing to build it themselves.
+        # Force matplotlib to finish building its font cache here, once, in
+        # the single-threaded parent, before any worker is forked below --
+        # on a freshly-built image with no cache yet, N workers hitting
+        # matplotlib for the first time simultaneously race to build it,
+        # corrupting figure rendering. Renders one throwaway figure so
+        # workers see an already-finished cache instead.
         import matplotlib.pyplot as _plt
 
         _fig = _plt.figure()
