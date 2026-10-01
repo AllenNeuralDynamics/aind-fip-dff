@@ -806,8 +806,9 @@ def _pregocue_drift_stats(
     -------
     dict
         slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs. each
-            trial's own window midpoint time in seconds (drift ACROSS the
-            session), and the slope's p-value.
+            trial's own window midpoint time in seconds, relative to `t`'s
+            first sample (matching the other QC plots' time axis) (drift
+            ACROSS the session), and the slope's p-value.
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
@@ -852,7 +853,8 @@ def _pregocue_drift_stats(
             n_trials=int(valid.sum()),
             per_trial_mean=y,
         )
-    mid_times = (starts + ends) / 2.0
+    t0 = t[0] if len(t) else 0.0
+    mid_times = (starts + ends) / 2.0 - t0
     x_v, y_v = mid_times[valid], y[valid]
     reg = linregress(x_v, y_v)
     _, mean_p = ttest_1samp(y_v, popmean=0)
@@ -916,11 +918,15 @@ def plot_pregocue_regression(
                 & (df_fip_pp.preprocess == method)
             ]
             color = colors.get(ch, f"C{c}")
-            s = _pregocue_drift_stats(df[col].values, df.time_fip.values, starts, ends)
+            t = df.time_fip.values
+            s = _pregocue_drift_stats(df[col].values, t, starts, ends)
             stats[ch][stage] = s
 
-            # Matches the x-axis `_pregocue_drift_stats` regresses against.
-            mid_times = (starts + ends) / 2.0
+            # Zero-based like the other QC plots' time axis (plot_dff,
+            # plot_motion_correction); matches what _pregocue_drift_stats
+            # itself regresses against.
+            t0 = t[0] if len(t) else 0.0
+            mid_times = (starts + ends) / 2.0 - t0
             valid = np.isfinite(s["per_trial_mean"])
             ax.scatter(
                 mid_times[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color
