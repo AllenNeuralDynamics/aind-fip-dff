@@ -561,7 +561,8 @@ def _init_sum_of_exps(
     trace : np.ndarray
         Fiber photometry signal (after cropping the initial transient).
     n_exp : int
-        Number of bleaching exponential terms. 1, 2, or 3.
+        Number of bleaching exponential terms. 0 (bleach-free, only valid
+        with `include_brightening=True`), 1, 2, or 3.
     include_brightening : bool
         Add a negative-amplitude exponential term for brightening.
 
@@ -581,9 +582,10 @@ def _init_sum_of_exps(
     amp = float(trace[:500].mean() - b_inf)
     amp_cap = AMP_CAP_FACTOR * max(abs(amp), 1.0)
 
-    amp_fracs = {1: [1.0], 2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
-    tau_inits = {1: [600.0], 2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
+    amp_fracs = {0: [], 1: [1.0], 2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
+    tau_inits = {0: [], 1: [600.0], 2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
     tau_bounds = {
+        0: [],
         1: [(60, TAU1_CAP)],
         2: [(300, TAU1_CAP), (1, 5000)],
         3: [(300, TAU1_CAP), (1, 5000), (1, 180)],
@@ -654,7 +656,11 @@ def _snap_degenerate_slow_terms(
     new_n_exp = n_exp - (1 if "tau1" in snapped else 0)
     new_bright = include_bright and "bright" not in snapped
     if new_n_exp < 1:
-        return np.array([float(np.mean(tc))]), 0, False, snapped
+        new_n_exp = 0
+        if not new_bright:
+            # Nothing valid left (no bleach term, no brightening) -- a flat
+            # constant is the only model left to fit.
+            return np.array([float(np.mean(tc))]), 0, False, snapped
 
     x0, bnd = _init_sum_of_exps(tc, n_exp=new_n_exp, include_brightening=new_bright)
     _, res = nonlinear_fit(tc, ts, model=sum_of_exps, x0=x0, bounds=bnd, M=None)
@@ -756,8 +762,11 @@ def tc_brightfit_v2(
     fixed_sigma : float or "auto" or None, optional
         IRLS noise scale for the final fit. "auto" (default) estimates it
         via `noise_std(trace, method="welch")` (a high-frequency-band
-        estimate, unbiased by calcium transients unlike a MAD-based one);
-        a float uses that value directly; None uses `nonlinear_fit`'s own
+        estimate, unbiased by calcium transients unlike a MAD-based one),
+        falling back to `None` if that estimate is non-finite or <= 0 (a
+        constant/noiseless trace) -- dividing the robust loss by a zero
+        scale would otherwise make it non-finite everywhere; a float uses
+        that value directly; `None` uses `nonlinear_fit`'s own
         adaptive-scale IRLS instead.
     sigma_anneal_steps : int, optional
         Geometric IRLS-sigma annealing steps passed to `nonlinear_fit`.
@@ -800,7 +809,8 @@ def tc_brightfit_v2(
         ts_valid = timestamps
 
     if fixed_sigma == "auto":
-        fixed_sigma = float(noise_std(trace_valid, method="welch"))
+        sigma_est = float(noise_std(trace_valid, method="welch"))
+        fixed_sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
 
     tc_ds = downsample_array(trace_valid, factors=ds, strategy="first")
     ts_ds = downsample_array(ts_valid, factors=ds, strategy="first")
@@ -873,7 +883,7 @@ def tc_brightfit_v2(
         model_str += f" [snapped: {','.join(snapped)}]"
 
     # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
-    if n_exp_won == 0:
+    if n_exp_won == 0 and not include_bright:
         f0 = np.full_like(trace_valid, params_ds[0])
     else:
         _, bnd_full = _init_sum_of_exps(
@@ -896,7 +906,7 @@ def tc_brightfit_v2(
                 break
             n_exp_won, include_bright = n_exp_final, include_bright_final
             model_str += f" [snapped: {','.join(snapped_final)}]"
-            if n_exp_won == 0:
+            if n_exp_won == 0 and not include_bright:
                 f0 = np.full_like(trace_valid, params_full[0])
                 break
             _, bnd_full = _init_sum_of_exps(
