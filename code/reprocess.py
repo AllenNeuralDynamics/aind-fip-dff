@@ -25,7 +25,7 @@ from run_capsule import (
 """
 This script reprocesses fiber photometry data from multiple datasets in parallel.
 The subfolder for each dataset includes the NWB file as well as metadata JSONs.
-For each dataset, the script processes each channel (typically 4) of each ROI
+For each dataset, the script processes each channel (typically 3) of each ROI
 (typically 4) by generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then overwritten in the NWB file. It also updates the processing.json
 and quality_control.json files for each dataset.
@@ -165,7 +165,9 @@ def process1dataset(source_path, args, start_time):
 
 
 def _process1dataset_safe(source_path, args, start_time):
-    """Process one dataset and return any failure for reporting by the caller."""
+    """Wrap process1dataset so one dataset's unhandled exception logs and
+    gets skipped (partial output removed) instead of aborting the whole
+    outer Parallel job. Returns the failed path for the caller to log."""
     destination_path = args.output_dir / Path(source_path).parent.parent.name
     destination_existed = destination_path.exists()
     try:
@@ -174,7 +176,7 @@ def _process1dataset_safe(source_path, args, start_time):
     except Exception:
         logging.exception(f"Failed processing {source_path}")
         if not destination_existed and destination_path.exists():
-            shutil.rmtree(destination_path)
+            shutil.rmtree(destination_path, ignore_errors=True)
         return source_path
 
 
@@ -284,7 +286,7 @@ if __name__ == "__main__":
         )
         failures = [path for path in failures if path is not None]
         if failures:
+            # Logged, not raised -- one bad dataset shouldn't fail the batch.
             logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
-            sys.exit(1)
     else:
         process1dataset(source_paths[0], args, start_time)

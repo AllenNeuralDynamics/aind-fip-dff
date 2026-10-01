@@ -48,7 +48,7 @@ from utils.preprocess import chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
-then process each channel (usually 4) of each ROI (usually 4) by
+then process each channel (usually 3) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
 """
@@ -805,8 +805,9 @@ def _pregocue_drift_stats(
     Returns
     -------
     dict
-        slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs.
-            trial index (drift ACROSS the session), and the slope's p-value.
+        slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs. each
+            trial's own window midpoint time in seconds (drift ACROSS the
+            session), and the slope's p-value.
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
@@ -851,7 +852,8 @@ def _pregocue_drift_stats(
             n_trials=int(valid.sum()),
             per_trial_mean=y,
         )
-    x_v, y_v = np.arange(len(y))[valid], y[valid]
+    mid_times = (starts + ends) / 2.0
+    x_v, y_v = mid_times[valid], y[valid]
     reg = linregress(x_v, y_v)
     _, mean_p = ttest_1samp(y_v, popmean=0)
     return dict(
@@ -917,27 +919,28 @@ def plot_pregocue_regression(
             s = _pregocue_drift_stats(df[col].values, df.time_fip.values, starts, ends)
             stats[ch][stage] = s
 
-            trial = np.arange(len(s["per_trial_mean"]))
+            # Matches the x-axis `_pregocue_drift_stats` regresses against.
+            mid_times = (starts + ends) / 2.0
             valid = np.isfinite(s["per_trial_mean"])
             ax.scatter(
-                trial[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color
+                mid_times[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color
             )
             if np.isfinite(s["slope"]):
                 ax.plot(
-                    trial[valid],
-                    (s["intercept"] + s["slope"] * trial[valid]) * 100,
+                    mid_times[valid],
+                    (s["intercept"] + s["slope"] * mid_times[valid]) * 100,
                     c="k",
                     lw=1.5,
                 )
             ax.axhline(0, c="k", ls="--", lw=0.8)
             ax.set_title(f"{ch} ({stage})", color=color, fontsize=9)
             if r == len(stage_cols) - 1:
-                ax.set_xlabel("Trial #")
+                ax.set_xlabel("Session time [s]")
             if c == 0:
                 ax.set_ylabel(rf"pre-{event_label} $\Delta$F/F [%]")
             ax.annotate(
                 f"mean={s['mean_dff']*100:.3f}% (p={s['mean_p']:.2g})\n"
-                f"slope={s['slope']*100:.2e}%/trial (p={s['slope_p']:.2g})\n"
+                f"slope={s['slope']*100:.2e}%/s (p={s['slope_p']:.2g})\n"
                 f"n={s['n_trials']}",
                 xy=(0.03, 0.97),
                 xycoords="axes fraction",
@@ -1390,7 +1393,9 @@ def _plot_both(
     pregocue_ends=None,
     event_label=None,
 ):
-    """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
+    """Helper function to plot both dff and motion correction (must be at
+    module level for pickling). Returns `plot_pregocue_regression`'s stats
+    (or None) for the caller to reuse instead of recomputing."""
     output_dir = Path(output_dir)
     plot_dff(
         df_fip_pp,
@@ -1412,7 +1417,7 @@ def _plot_both(
         cutoff_freq_noise,
     )
     if pregocue_starts is not None:
-        plot_pregocue_regression(
+        return plot_pregocue_regression(
             df_fip_pp,
             fiber,
             channels,
@@ -1422,6 +1427,7 @@ def _plot_both(
             pregocue_ends,
             event_label,
         )
+    return None
 
 
 def _params_as_dict(fiber, method, df_pp_params):
@@ -1532,12 +1538,16 @@ def generate_qc_plots(
     ]
 
     if args.serial:
-        for args_tuple in plot_args:
-            _plot_both(*args_tuple)
+        plot_results = [_plot_both(*args_tuple) for args_tuple in plot_args]
     else:
-        Parallel(n_jobs=-1)(
+        plot_results = Parallel(n_jobs=-1)(
             delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
         )
+    # {(fiber, method): plot_pregocue_regression's stats or None}, reused below.
+    pregocue_by_fiber_method = {
+        (args_tuple[0], args_tuple[1]): result
+        for args_tuple, result in zip(plot_args, plot_results)
+    }
 
     evaluations = []
     for method in methods:
@@ -1587,7 +1597,10 @@ def generate_qc_plots(
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
                 ratio_by_channel[ch] = {"dff": ratio_dff}
                 if pregocue_starts is not None:
-                    drift_by_channel[ch] = {
+                    # Reuse the plotting pass's own stats; recompute only
+                    # if unexpectedly missing.
+                    reused = (pregocue_by_fiber_method.get((fiber, method)) or {}).get(ch)
+                    drift_by_channel[ch] = reused or {
                         "dff": _pregocue_drift_stats(
                             df.dFF.values, df.time_fip.values, pregocue_starts, pregocue_ends
                         ),
