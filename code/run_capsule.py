@@ -725,7 +725,7 @@ def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float
     Returns
     -------
     ratio, sigma : float
-        `ratio` is NaN if fewer than 10 residuals are negative, or sigma
+        `ratio` is NaN if 10 or fewer residuals are negative, or sigma
         (`noise_std(signal, method="welch")`) is 0.
     """
     resid = signal - f0

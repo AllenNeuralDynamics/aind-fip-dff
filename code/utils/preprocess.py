@@ -542,6 +542,15 @@ def tc_brightfit(
     return baseline(timestamps, *x), x
 
 
+#: tau1's and the brightening tau's upper bounds, shared between
+#: `_init_sum_of_exps` (which enforces them as fit bounds) and
+#: `_snap_degenerate_slow_terms` (which checks against them post-fit) --
+#: a single source of truth instead of two constants that must be kept
+#: in sync by hand.
+TAU1_CAP = 30000.0
+TAU_BRIGHT_CAP = 20000.0
+
+
 def _init_sum_of_exps(
     trace: np.ndarray, n_exp: int = 2, include_brightening: bool = False
 ) -> tuple[np.ndarray, tuple[tuple[float, float], ...]]:
@@ -573,9 +582,10 @@ def _init_sum_of_exps(
     bounds : tuple of (float, float)
         Bounds for each parameter in `x0`, for `nonlinear_fit`.
     """
-    TAU1_CAP = 30000.0
-    TAU_BRIGHT_CAP = 20000.0
     AMP_CAP_FACTOR = 10.0
+
+    if len(trace) == 0:
+        raise ValueError("_init_sum_of_exps: trace must have at least 1 sample.")
 
     b_inf = float(np.percentile(trace[-1000:], 10))
     b_inf_lo = float(trace[-1000:].mean() / 10)
@@ -644,9 +654,10 @@ def _snap_degenerate_slow_terms(
     snapped : list of str
         Which terms were dropped ("tau1", "bright"); empty if none.
     """
-    TAU1_CAP, TAU_BRIGHT_CAP = 30000.0, 20000.0  # must match _init_sum_of_exps
     snapped = []
-    if params[2] >= near_bound_frac * TAU1_CAP:
+    # n_exp==0 (bleach-free) has no tau1 term -- params[2] would then be
+    # tau_bright instead, so this check must not fire for it.
+    if n_exp >= 1 and params[2] >= near_bound_frac * TAU1_CAP:
         snapped.append("tau1")
     if include_bright and params[-1] >= near_bound_frac * TAU_BRIGHT_CAP:
         snapped.append("bright")

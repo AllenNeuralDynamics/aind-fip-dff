@@ -10,10 +10,9 @@ ENV VERSION=16.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 ENV PROCESS_NAME=aind-fip-dff
 
-RUN pip3 install -U --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+RUN pip3 install -U --no-cache-dir \
     aind-data-schema==1.4.0 \
     aind-metadata-upgrader==0.0.26 \
-    aind-ophys-utils==0.2.0 \
     aind-qcportal-schema==0.4.0 \
     hdmf-zarr==0.11.3 \
     matplotlib==3.10.6 \
@@ -22,6 +21,11 @@ RUN pip3 install -U --no-cache-dir --extra-index-url https://download.pytorch.or
     scikit-learn==1.7.2 \
     statsmodels==0.14.5 \
     watchtower==3.4.0
+
+# Separate step: --extra-index-url would otherwise apply to every
+# package in a shared pip invocation, not just the one that needs it.
+RUN pip3 install -U --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    aind-ophys-utils==0.2.0
 
 ADD "https://github.com/coder/code-server/releases/download/v4.100.3/code-server-4.100.3-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
 
