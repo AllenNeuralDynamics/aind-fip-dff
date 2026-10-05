@@ -1039,19 +1039,14 @@ def create_metric(fiber, method, reference, value, motion=False):
 #: Ratio's distribution is asymmetric around 1 (tightly bounded below 1,
 #: long heavy tail above -- transient contamination pushes F0 up, not
 #: down; see create_calibration_metric's docstring), so bounds are on
-#: `ratio` itself, not a symmetric `|ratio - 1|` band. All four grounded
-#: in the real 383-asset sweep (dff stage, demean run, bright method):
-#:  - PASS_UPPER=1.5 ~ each channel's own p75.
-#:  - FAIL_UPPER=3.0 ~ each channel's p95-p99 (2.0 was tried and rejected:
-#:    only p88 for G, auto-failing ~12% of assets). Confirmed directly
-#:    that switching M to (3,4) doesn't salvage flagged traces -- it's
-#:    worse on 75-95% of them -- so flagging for review is correct.
-#:  - PASS_LOWER=0.85: below 1 the real spread is much tighter (p90 only
-#:    ~0.10-0.12 below 1), so 0.85 is the honest "typical" floor; a
-#:    blanket [0.5, 1.0)->Pending was rejected (collapses PASS rate, e.g.
-#:    R: 90%->36%, for near-zero benefit).
-#:  - FAIL_LOWER=0.5: a separate, rarely-triggered sanity floor (p1 stays
-#:    above ~0.75).
+#: `ratio` itself, not a symmetric `|ratio - 1|` band. Grounded in the
+#: real 383-asset sweep (dff stage, demean run, bright method):
+#:  - PASS_UPPER=1.5 ~ each channel's own p75; FAIL_UPPER=3.0 ~ p95-p99
+#:    (switching M to (3,4) for flagged traces was checked directly and
+#:    found to make 75-95% of them worse, so flagging is the right call).
+#:  - PASS_LOWER=0.85: below 1 the real spread is tighter (p90 only
+#:    ~0.10-0.12 below 1); FAIL_LOWER=0.5 is a separate, rarely-triggered
+#:    sanity floor (p1 stays above ~0.75).
 #: Net split: ~75-88% PASS, ~10-20% Pending, ~2-5% FAIL per channel.
 CALIBRATION_PASS_LOWER = 0.85
 CALIBRATION_PASS_UPPER = 1.5

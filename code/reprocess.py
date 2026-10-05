@@ -103,14 +103,10 @@ def process1dataset(source_path, args, start_time):
             event_label,
         ) = process_nwb_file(nwb_file_path, args)
 
-        # Per-(method, fiber, channel) fit timing -- NOT just cumulative
-        # processing time. `fit_time_s` is wall-clock time inside
-        # `_process1channel`'s `chunk_processing` call; when channels run
-        # concurrently (`--parallel`, threading backend), that wall-clock
-        # time can include contention with sibling threads rather than
-        # pure per-trace fit cost -- still useful for relative comparisons
-        # across methods, but not a substitute for a serial (`--serial`,
-        # the default) run if precise absolute timings are needed.
+        # Per-(method, fiber, channel) fit timing, not cumulative processing
+        # time. Under `--parallel` (threading), `fit_time_s` can include
+        # contention with sibling channels, so it's only precise for a
+        # serial (`--serial`, the default) run.
         df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
             destination_path / "dff_timing.csv", index=False
         )
@@ -268,11 +264,9 @@ if __name__ == "__main__":
 
     if len(source_paths) > 1:
         # Force matplotlib to finish building its font cache here, once, in
-        # the single-threaded parent, before any worker is forked below --
-        # on a freshly-built image with no cache yet, N workers hitting
-        # matplotlib for the first time simultaneously race to build it,
-        # corrupting figure rendering. Renders one throwaway figure so
-        # workers see an already-finished cache instead.
+        # the single-threaded parent -- on a fresh image, N workers racing
+        # to build it on first use corrupts figure rendering. Render one
+        # throwaway figure so workers see an already-finished cache.
         import matplotlib.pyplot as _plt
 
         _fig = _plt.figure()

@@ -795,11 +795,7 @@ def tc_brightfit_v2(
         [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
         (unused terms set to amplitude=0, tau=inf).
     """
-    # Guard against non-finite samples: drop (not interpolate) any frame
-    # where the trace or its timestamp is non-finite, before anything else
-    # touches them. A single corrupted sample can otherwise poison the
-    # IRLS loss to NaN everywhere, collapsing the fit to its parameter
-    # bounds with no usable gradient.
+    # Drop (don't interpolate) non-finite samples -- see docstring.
     valid = np.isfinite(trace) & np.isfinite(timestamps)
     n_dropped = int((~valid).sum())
     if n_dropped:
