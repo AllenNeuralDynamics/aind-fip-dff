@@ -889,8 +889,9 @@ def plot_pregocue_regression(
     ends: np.ndarray,
     event_label: str,
 ) -> dict:
-    """Plot per-trial pre-event dF/F against trial index, with an OLS trend
-    line, for each channel -- a QC check for within-session baseline drift
+    """Plot per-trial pre-event dF/F against each trial's own window
+    midpoint time (session seconds, zero-based), with an OLS trend line,
+    for each channel -- a QC check for within-session baseline drift
     (see aind-fip-dff#75). One figure per stage (not one combined figure):
     dF/F before motion correction ("dff", isolates the baseline-fit
     method) and after ("motion_corrected", the actual production output)
