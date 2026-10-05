@@ -1231,8 +1231,8 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
                 description=(
                     f"Per-channel pre-{event_label} dF/F mean and OLS "
                     "slope (each with a p-value), implied total drift, "
-                    f"and trial count ({stage} stage) -- a within-session "
-                    "baseline-drift check. Pending below "
+                    "and trial count -- a within-session baseline-drift "
+                    "check. Pending below "
                     f"{DRIFT_MIN_TRIALS} trials; else fails if |mean| or "
                     f"|total_drift| > {DRIFT_FAIL_THRESHOLD_PCT:g}%, "
                     f"passes if both < {DRIFT_PASS_THRESHOLD_PCT:g}%, "
