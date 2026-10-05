@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime as dt
 from joblib import Parallel, delayed
 from pathlib import Path
@@ -35,9 +36,11 @@ from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgra
 from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
 from aind_logging import setup_logging
 from hdmf_zarr import NWBZarrIO
+from aind_ophys_utils.signal_utils import noise_std
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
+from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
@@ -45,7 +48,7 @@ from utils.preprocess import chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
-then process each channel (usually 4) of each ROI (usually 4) by
+then process each channel (usually 3) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
 """
@@ -562,7 +565,10 @@ def plot_motion_correction(
         matplotlib.axes.Axes
             The axis with the PSD plot.
         """
-        psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
+        # np.asarray guards against pandas Series input: scipy>=1.15's welch
+        # slices internally with an Ellipsis+tuple index that Series.__getitem__
+        # doesn't support (raises KeyError), whereas ndarray input works fine.
+        psd = np.array(welch(np.asarray(data) * 100, nperseg=1024))[:, 1:-1]
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
@@ -703,6 +709,278 @@ def plot_motion_correction(
     plt.close()
 
 
+def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float]:
+    """Negative-residual calibration ratio for a fitted baseline: median
+    absolute negative residual (signal - f0), compared to what pure
+    Gaussian noise at the trace's own estimated std would produce
+    (0.6745 * sigma) -- the same diagnostic `aind_ophys_dff_library.triexp_dff`
+    uses during model selection. A ratio far from 1 suggests the fit is
+    systematically biased or the robust fit is over/under-aggressive (not
+    necessarily exactly 1 on real, transient-containing data).
+
+    `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
+    check the baseline fit, or an already-centered trace with `f0=0` to
+    check its own residual-to-noise consistency directly.
+
+    Returns
+    -------
+    ratio, sigma : float
+        `ratio` is NaN if 10 or fewer residuals are negative, or sigma
+        (`noise_std(signal, method="welch")`) is 0.
+    """
+    resid = signal - f0
+    valid = np.isfinite(resid)
+    if not valid.any():
+        return np.nan, np.nan
+    sigma = float(noise_std(signal[valid], method="welch"))
+    deep = resid[valid & (resid < 0)]
+    if len(deep) <= 10 or sigma == 0:
+        return np.nan, sigma
+    return float(np.median(-deep) / (0.6745 * sigma)), sigma
+
+
+#: Fallback window (seconds relative to reward time) for sessions with no
+#: GoCue-based Delay period to use instead (see `_get_pregocue_windows`).
+PREGOCUE_FALLBACK_INTERVAL = (-1, 0)
+
+
+def _get_pregocue_windows(
+    nwb_file,
+) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None], Union[str, None]]:
+    """Per-trial windows to align the pre-event dF/F regression to.
+
+    Prefers each trial's own Delay period, [delay_start_time,
+    goCue_start_time): guaranteed by task design to never overlap the
+    previous trial's ITI, unlike a fixed duration before GoCue. Falls back
+    to a fixed window before reward time for sessions without a
+    GoCue-based Delay period.
+
+    Returns
+    -------
+    starts, ends : np.ndarray or None
+        Per-trial window start/end times (same clock as `time_fip`); None
+        if `nwb_file` has neither a GoCue-based Delay period nor a reward
+        column.
+    label : str or None
+        "GoCue" or "reward", matching `starts`/`ends`; None if they are None.
+    """
+    trials = getattr(nwb_file, "trials", None)
+    if trials is None:
+        return None, None, None
+    colnames = getattr(trials, "colnames", ())
+    if "delay_start_time" in colnames and "goCue_start_time" in colnames:
+        starts = np.asarray(pd.to_numeric(trials["delay_start_time"][:], errors="coerce"))
+        ends = np.asarray(pd.to_numeric(trials["goCue_start_time"][:], errors="coerce"))
+        valid = np.isfinite(starts) & np.isfinite(ends) & (ends > starts)
+        if valid.sum() > 0:
+            return starts[valid], ends[valid], "GoCue"
+    for key, label in (("reward_start_time", "reward"), ("reward_time", "reward")):
+        if key in colnames:
+            events = np.asarray(pd.to_numeric(trials[key][:], errors="coerce"))
+            events = events[np.isfinite(events)]
+            if len(events) > 0:
+                return (
+                    events + PREGOCUE_FALLBACK_INTERVAL[0],
+                    events + PREGOCUE_FALLBACK_INTERVAL[1],
+                    label,
+                )
+    return None, None, None
+
+
+def _pregocue_drift_stats(
+    dff: np.ndarray, t: np.ndarray, starts: np.ndarray, ends: np.ndarray
+) -> dict:
+    """Per-trial pre-event mean dF/F, plus an OLS trend across trials.
+
+    Parameters
+    ----------
+    dff : np.ndarray
+        dF/F trace.
+    t : np.ndarray
+        Timestamps for `dff`, in seconds (same clock as `starts`/`ends`).
+    starts, ends : np.ndarray
+        Per-trial window start/end times, e.g. each trial's own
+        [delay_start_time, goCue_start_time) -- see `_get_pregocue_windows`.
+
+    Returns
+    -------
+    dict
+        slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs. each
+            trial's own window midpoint time in seconds, relative to `t`'s
+            first sample (matching the other QC plots' time axis) (drift
+            ACROSS the session), and the slope's p-value.
+        total_drift : `slope` times the session span actually fit (last
+            minus first included trial's midpoint time) -- the cumulative
+            drift implied over the session, in the same (fractional, not
+            percent) units as `mean_dff`. A rate like `slope` [%/s] is
+            awkward to threshold directly (tiny even for a real effect,
+            since it's spread over a session lasting thousands of
+            seconds); this is the comparable, interpretable quantity.
+        mean_dff, mean_p : mean pre-event dF/F across trials, and the
+            p-value of a one-sample t-test against 0.
+        n_trials : number of trials with a finite pre-event mean.
+        per_trial_mean : np.ndarray, one pre-event mean per trial in
+            `starts`/`ends` (including NaNs), for plotting.
+    """
+    dff, t = np.asarray(dff), np.asarray(t)
+    starts, ends = np.asarray(starts), np.asarray(ends)
+    y = np.full(len(starts), np.nan)
+    valid_windows = np.isfinite(starts) & np.isfinite(ends) & (ends > starts)
+
+    if np.all(np.isfinite(t)) and np.all(t[1:] >= t[:-1]):
+        # Searchsorted and prefix sums avoid scanning the entire trace once
+        # per trial. The half-open interval includes start and excludes end.
+        left = np.searchsorted(t, starts[valid_windows], side="left")
+        right = np.searchsorted(t, ends[valid_windows], side="left")
+        finite_dff = np.isfinite(dff)
+        values = np.where(finite_dff, dff, 0.0)
+        sums = np.concatenate(([0.0], np.cumsum(values)))
+        counts = np.concatenate(([0], np.cumsum(finite_dff)))
+        window_counts = counts[right] - counts[left]
+        nonempty = window_counts > 0
+        window_means = np.full(len(left), np.nan)
+        window_means[nonempty] = (
+            sums[right[nonempty]] - sums[left[nonempty]]
+        ) / window_counts[nonempty]
+        y[valid_windows] = window_means
+    else:
+        for i in np.flatnonzero(valid_windows):
+            in_window = (t >= starts[i]) & (t < ends[i]) & np.isfinite(dff)
+            if in_window.any():
+                y[i] = np.mean(dff[in_window])
+
+    valid = np.isfinite(y)
+    if valid.sum() < 5:
+        return dict(
+            slope=np.nan,
+            intercept=np.nan,
+            slope_p=np.nan,
+            total_drift=np.nan,
+            mean_dff=np.nan,
+            mean_p=np.nan,
+            n_trials=int(valid.sum()),
+            per_trial_mean=y,
+        )
+    t0 = t[0] if len(t) else 0.0
+    mid_times = (starts + ends) / 2.0 - t0
+    x_v, y_v = mid_times[valid], y[valid]
+    reg = linregress(x_v, y_v)
+    _, mean_p = ttest_1samp(y_v, popmean=0)
+    span = float(x_v.max() - x_v.min())
+    return dict(
+        slope=float(reg.slope),
+        intercept=float(reg.intercept),
+        slope_p=float(reg.pvalue),
+        total_drift=float(reg.slope) * span,
+        mean_dff=float(y_v.mean()),
+        mean_p=float(mean_p),
+        n_trials=int(valid.sum()),
+        per_trial_mean=y,
+    )
+
+
+def plot_pregocue_regression(
+    df_fip_pp: pd.DataFrame,
+    fiber: str,
+    channels: list[str],
+    method: str,
+    fig_path: Path,
+    starts: np.ndarray,
+    ends: np.ndarray,
+    event_label: str,
+) -> dict:
+    """Plot per-trial pre-event dF/F against each trial's own window
+    midpoint time (session seconds, zero-based), with an OLS trend line,
+    for each channel -- a QC check for within-session baseline drift
+    (see aind-fip-dff#75). One figure per stage (not one combined figure):
+    dF/F before motion correction ("dff", isolates the baseline-fit
+    method) and after ("motion_corrected", the actual production output)
+    -- matching create_pregocue_metric's own per-stage metric split, so
+    each metric references only its own stage's plot.
+
+    Parameters
+    ----------
+    df_fip_pp : pd.DataFrame
+        Preprocessed fiber photometry dataframe (see `plot_dff`).
+    starts, ends : np.ndarray
+        Per-trial window start/end times (seconds, same clock as
+        `time_fip`) -- see `_get_pregocue_windows`.
+    event_label : str
+        "GoCue" or "reward" -- used in the plot title/axis label.
+
+    Returns
+    -------
+    dict
+        `{channel: {"dff": stats, "motion_corrected": stats}}` (see
+        `_pregocue_drift_stats` for the per-stage stats).
+    """
+    colors = {"G": "#009E73", "Iso": "#0072B2", "R": "#D55E00"}
+    channels = sorted(channels)
+    stage_cols = (("dff", "dFF"), ("motion_corrected", "motion_corrected"))
+    fig_path.mkdir(parents=True, exist_ok=True)
+
+    stats = {ch: {} for ch in channels}
+    for stage, col in stage_cols:
+        fig, axes = plt.subplots(
+            1, len(channels), figsize=(4.5 * len(channels), 4), squeeze=False
+        )
+        for c, ch in enumerate(channels):
+            ax = axes[0, c]
+            df = df_fip_pp[
+                (df_fip_pp.channel == ch)
+                & (df_fip_pp.fiber_number == fiber)
+                & (df_fip_pp.preprocess == method)
+            ]
+            color = colors.get(ch, f"C{c}")
+            t = df.time_fip.values
+            s = _pregocue_drift_stats(df[col].values, t, starts, ends)
+            stats[ch][stage] = s
+
+            # Zero-based like the other QC plots' time axis (plot_dff,
+            # plot_motion_correction); matches what _pregocue_drift_stats
+            # itself regresses against.
+            t0 = t[0] if len(t) else 0.0
+            mid_times = (starts + ends) / 2.0 - t0
+            valid = np.isfinite(s["per_trial_mean"])
+            ax.scatter(
+                mid_times[valid], s["per_trial_mean"][valid] * 100, s=8, alpha=0.5, c=color
+            )
+            if np.isfinite(s["slope"]):
+                ax.plot(
+                    mid_times[valid],
+                    (s["intercept"] + s["slope"] * mid_times[valid]) * 100,
+                    c="k",
+                    lw=1.5,
+                )
+            ax.axhline(0, c="k", ls="--", lw=0.8)
+            ax.set_title(ch, color=color, fontsize=9)
+            ax.set_xlabel("Session time [s]")
+            if c == 0:
+                ax.set_ylabel(rf"pre-{event_label} $\Delta$F/F [%]")
+            ax.annotate(
+                f"mean={s['mean_dff']*100:.3f}% (p={s['mean_p']:.2g})\n"
+                f"slope={s['slope']*100:.2e}%/s (p={s['slope_p']:.2g})\n"
+                f"n={s['n_trials']}",
+                xy=(0.03, 0.97),
+                xycoords="axes fraction",
+                va="top",
+                fontsize=8,
+            )
+
+        plt.suptitle(
+            f"Pre-{event_label} $\\Delta F/F_0$ regression ({stage})   "
+            f"Method: {method},  ROI: {fiber}",
+            y=1.02,
+        )
+        plt.tight_layout()
+
+        fig_file = fig_path / f"ROI{fiber}_dff-{method}_pregocue-regression-{stage}.png"
+        plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
+        plt.close()
+
+    return stats
+
+
 def create_metric(fiber, method, reference, value, motion=False):
     """Create a QC metric for baseline or motion correction.
 
@@ -728,9 +1006,13 @@ def create_metric(fiber, method, reference, value, motion=False):
         "poly": "$$a t^4 + b t^3 + c t^2 + d t + e$$",
         "exp": "$$a \exp(-b t) + c \exp(-d t)$$",
         "tri-exp": "$$a \exp(-b t) + c \exp(-d t) + e \exp(-f t) + g$$",
-        "bright": (
+        "bright_legacy": (
             "$$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
+        ),
+        "bright": (
+            "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
+            "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
     }
     return QCMetric(
@@ -752,6 +1034,213 @@ def create_metric(fiber, method, reference, value, motion=False):
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
     )
+
+
+#: Ratio's distribution is asymmetric around 1 (tightly bounded below 1,
+#: long heavy tail above -- transient contamination pushes F0 up, not
+#: down; see create_calibration_metric's docstring), so bounds are on
+#: `ratio` itself, not a symmetric `|ratio - 1|` band. Grounded in the
+#: real 383-asset sweep (dff stage, demean run, bright method):
+#:  - PASS_UPPER=1.5 ~ each channel's own p75; FAIL_UPPER=3.0 ~ p95-p99
+#:    (switching M to (3,4) for flagged traces was checked directly and
+#:    found to make 75-95% of them worse, so flagging is the right call).
+#:  - PASS_LOWER=0.85: below 1 the real spread is tighter (p90 only
+#:    ~0.10-0.12 below 1); FAIL_LOWER=0.5 is a separate, rarely-triggered
+#:    sanity floor (p1 stays above ~0.75).
+#: Net split: ~75-88% PASS, ~10-20% Pending, ~2-5% FAIL per channel.
+CALIBRATION_PASS_LOWER = 0.85
+CALIBRATION_PASS_UPPER = 1.5
+CALIBRATION_FAIL_UPPER = 3.0
+CALIBRATION_FAIL_LOWER = 0.5
+
+
+def _worst_status(statuses):
+    """Aggregate per-channel statuses: FAIL > Pending > PASS -- the
+    convention already documented for `aind_qcportal_schema.CheckboxMetric`,
+    used identically by both `create_calibration_metric` and
+    `create_pregocue_metric`."""
+    if Status.FAIL in statuses:
+        return Status.FAIL
+    if not statuses or Status.PENDING in statuses:
+        return Status.PENDING
+    return Status.PASS
+
+
+def _auto_status_history(status):
+    """Single-entry status_history for an automatically-computed status."""
+    return [
+        QCStatus(
+            evaluator="Pending review" if status == Status.PENDING else "Automatic",
+            timestamp=dt.now(),
+            status=status,
+        )
+    ]
+
+
+def create_calibration_metric(fiber, method, ratio_by_channel):
+    """Create a QC metric for the per-channel negative-residual calibration ratio.
+
+    `ratio_by_channel` is `{channel: ratio}` -- dF/F stage only (before
+    motion correction); see `_calibration_ratio` for the definition.
+    Serialized transposed, as `{"index": [channel, ...], "ratio": [ratio,
+    ...]}`, so the QC portal renders a channel-indexed table (and, unlike
+    a one-row table, doesn't leak a stray "index" row-index label).
+
+    Deliberately NOT computed on the motion-corrected trace:
+    `_calibration_ratio`'s sigma assumes high-frequency noise that
+    `motion_correct`'s own final filter suppresses, inflating the ratio
+    by its attenuation factor (10-40x observed) rather than reflecting
+    fit quality -- see the drift-stats metric for a motion-corrected-stage
+    signal instead.
+
+    Per channel: a NaN ratio (too few negative residuals, or zero noise
+    estimate -- see `_calibration_ratio`) always stays Pending; otherwise
+    FAILs if `ratio` is outside `[CALIBRATION_FAIL_LOWER,
+    CALIBRATION_FAIL_UPPER]`, PASSes if within `[CALIBRATION_PASS_LOWER,
+    CALIBRATION_PASS_UPPER)`, else Pending -- see the constants' own
+    comment for why these are asymmetric around 1. Overall status is the
+    worst across channels, via `_worst_status`.
+    """
+    channel_statuses = []
+    for ratio in ratio_by_channel.values():
+        if not np.isfinite(ratio):
+            channel_statuses.append(Status.PENDING)
+        elif ratio < CALIBRATION_FAIL_LOWER or ratio > CALIBRATION_FAIL_UPPER:
+            channel_statuses.append(Status.FAIL)
+        elif CALIBRATION_PASS_LOWER <= ratio < CALIBRATION_PASS_UPPER:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    status = _worst_status(channel_statuses)
+
+    return QCMetric(
+        name=f"Calibration ratio of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}.png",
+        status_history=_auto_status_history(status),
+        value={"index": list(ratio_by_channel), "ratio": list(ratio_by_channel.values())},
+        description=(
+            "Per-channel calibration ratio (dF/F stage only). Expected "
+            "near 1. Pending if NaN; else fails if ratio outside "
+            f"[{CALIBRATION_FAIL_LOWER:g}, {CALIBRATION_FAIL_UPPER:g}], "
+            f"passes if in [{CALIBRATION_PASS_LOWER:g}, "
+            f"{CALIBRATION_PASS_UPPER:g}), else Pending. Worst channel "
+            "status wins."
+        ),
+    )
+
+
+#: |mean dF/F| / |total_drift| [%] bounds for auto-fail/pass, grounded in
+#: the real 383-asset sweep (dff stage, G channel, heaviest-tailed).
+#: FAIL sits just below p95 (~4-5%), well below p99 (~10-15%) -- extreme
+#: outliers only (median is ~0.1-0.3%). `total_drift` predates the
+#: trial-index->event-time regression change, but slope*span is
+#: affine-invariant, so the old sweep's `slope * (n_trials - 1)` is a
+#: valid proxy. Net: ~81-96% auto-PASS, ~1-6% auto-FAIL, rest Pending.
+DRIFT_FAIL_THRESHOLD_PCT = 5.0
+DRIFT_PASS_THRESHOLD_PCT = 1.0
+#: Trials needed to trust mean_dff/total_drift -- matches the n_trials<20
+#: "likely non-GoCue session" cutoff already used by aggregate_bright_v2_qc.py.
+DRIFT_MIN_TRIALS = 20
+
+
+def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
+    """Create one QC metric per stage for pre-event dF/F drift across trials.
+
+    `stats_by_channel` is `{channel: {stage: stats}}`, where `stage` is
+    "dff" (before motion correction) or "motion_corrected" (after) -- see
+    `_pregocue_drift_stats` for the definition; relates to aind-fip-dff#75
+    (baseline drift within a session).
+
+    Split into one metric per stage (mirroring `create_metric`'s existing
+    baseline/motion split) rather than one combined metric: each stage
+    gets its own automatic status, and each metric's value is
+    channel-indexed (`{"index": [channel, ...], field: [value, ...]}`,
+    matching `create_metric`/`create_calibration_metric`'s own
+    orientation) so the QC portal renders it as a table instead of
+    falling back to its generic JSON-editor widget.
+
+    Per channel (motion_corrected's Iso excluded -- it's trivially 0 by
+    construction, being the motion-correction reference channel, not a
+    real signal), with fewer than `DRIFT_MIN_TRIALS` trials always stays
+    Pending; otherwise FAILs if `|mean_dff|` or `|total_drift|` exceeds
+    `DRIFT_FAIL_THRESHOLD_PCT`, PASSes if both are under
+    `DRIFT_PASS_THRESHOLD_PCT`, else Pending -- checking both catches a
+    session that drifts a lot but happens to start and end near 0 (small
+    mean, large drift), not just a uniformly-offset one. Overall status
+    is the worst across evaluated channels, via `_worst_status`.
+
+    Returns
+    -------
+    list of QCMetric
+        One per stage present in `stats_by_channel`.
+    """
+    channels = list(stats_by_channel.keys())
+    stages = sorted({stage for stats in stats_by_channel.values() for stage in stats})
+    # intercept is deliberately not serialized here -- it's only used to
+    # draw the regression line in the reference plot (see
+    # plot_pregocue_regression), not needed for the auto-status decision,
+    # and not recoverable from the other fields after the fact (it'd take
+    # mean(trial midpoint times) for this channel/stage's specific set of
+    # valid trials, which isn't otherwise stored).
+    fields = ["mean_dff", "mean_p", "slope", "slope_p", "total_drift", "n_trials"]
+
+    metrics = []
+    for stage in stages:
+        # Channel-indexed (not field-indexed): keeps each column's dtype
+        # homogeneous (e.g. n_trials stays a plain int column instead of
+        # being upcast to float and shown in scientific notation
+        # alongside p-values as small as ~1e-300), and matches
+        # create_metric/create_calibration_metric's own orientation.
+        present = [ch for ch in channels if stats_by_channel[ch].get(stage) is not None]
+        value = {"index": present}
+        for f in fields:
+            value[f] = [stats_by_channel[ch][stage][f] for ch in present]
+
+        channel_statuses = []
+        for ch in present:
+            if stage == "motion_corrected" and ch == "Iso":
+                continue
+            s = stats_by_channel[ch][stage]
+            worst_pct = max(
+                abs(s[f]) * 100 if np.isfinite(s[f]) else np.inf
+                for f in ("mean_dff", "total_drift")
+            )
+            if s["n_trials"] < DRIFT_MIN_TRIALS:
+                channel_statuses.append(Status.PENDING)
+            elif worst_pct > DRIFT_FAIL_THRESHOLD_PCT:
+                channel_statuses.append(Status.FAIL)
+            elif worst_pct < DRIFT_PASS_THRESHOLD_PCT:
+                channel_statuses.append(Status.PASS)
+            else:
+                channel_statuses.append(Status.PENDING)
+
+        status = _worst_status(channel_statuses)
+
+        metrics.append(
+            QCMetric(
+                name=(
+                    f"Pre-{event_label} dF/F drift of ROI {fiber} using "
+                    f"method '{method}' ({stage})"
+                ),
+                reference=(
+                    f"dff-qc/ROI{fiber}_dff-{method}_pregocue-regression-{stage}.png"
+                ),
+                status_history=_auto_status_history(status),
+                value=value,
+                description=(
+                    f"Per-channel pre-{event_label} dF/F mean and OLS "
+                    "slope (each with a p-value), implied total drift, "
+                    "and trial count -- a within-session baseline-drift "
+                    "check. Pending below "
+                    f"{DRIFT_MIN_TRIALS} trials; else fails if |mean| or "
+                    f"|total_drift| > {DRIFT_FAIL_THRESHOLD_PCT:g}%, "
+                    f"passes if both < {DRIFT_PASS_THRESHOLD_PCT:g}%, "
+                    "else Pending. Worst channel status wins."
+                ),
+            )
+        )
+    return metrics
 
 
 def create_evaluation(method, metrics):
@@ -783,7 +1272,7 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name):
+def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -791,16 +1280,19 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
 
     NM_values = df_fip_iter["signal"].values
     timestamps = df_fip_iter["time_fip"].values
+    _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
         timestamps - timestamps[0],
         method=pp_name,
+        b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
     )
+    fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
     logging.info(
         f"Fitted parameters for {channel:>3}{fiber_number} "
-        f"using method '{pp_name}':  {params_str}"
+        f"using method '{pp_name}' ({fit_time_s:.3f}s):  {params_str}"
     )
     df_fip_iter.loc[:, "dFF"] = NM_preprocessed
     df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -811,6 +1303,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
             "preprocess": pp_name,
             "channel": channel,
             "fiber_number": fiber_number,
+            "fit_time_s": fit_time_s,
         }
     )
     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
@@ -825,6 +1318,7 @@ def _process1fiber(
     cutoff_freq_motion,
     cutoff_freq_noise,
     serial,
+    b_percentile=0.7,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -844,6 +1338,11 @@ def _process1fiber(
         Cutoff frequency for noise filtering.
     serial : bool
         Whether to process channels serially.
+    b_percentile : float, optional
+        Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
+        'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
+        0.7 (median of the lowest 70%), matching `chunk_processing`'s own
+        default.
 
     Returns
     -------
@@ -862,10 +1361,13 @@ def _process1fiber(
     """
     # dF/F - process each channel
     if serial:
-        res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
+        res = [
+            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile)
+            for ch in channels
+        ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name)
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, b_percentile)
             for ch in channels
         )
 
@@ -898,7 +1400,17 @@ def _process1fiber(
 def process_nwb_file(
     nwb_file_path: Path,
     args,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict, list]:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    dict,
+    dict,
+    dict,
+    list,
+    Union[np.ndarray, None],
+    Union[np.ndarray, None],
+    Union[str, None],
+]:
     """Process a single NWB file: compute dF/F and motion correction.
 
     Parameters
@@ -924,11 +1436,18 @@ def process_nwb_file(
             IRLS weights by method.
         - methods : list
             List of preprocessing methods used.
+        - pregocue_starts, pregocue_ends : np.ndarray or None
+            Per-trial pre-event window start/end times, for the pre-event
+            drift QC plot/metric. None if neither a GoCue-based Delay
+            period nor a reward time is present.
+        - event_label : str or None
+            "GoCue" or "reward", matching the windows; None if they are None.
     """
     # Open NWB file and convert to dataframe
     with NWBZarrIO(path=str(nwb_file_path), mode="r") as io:
         nwb_file = io.read()
         df_fip = nwb_utils.nwb_to_dataframe(nwb_file)
+        pregocue_starts, pregocue_ends, event_label = _get_pregocue_windows(nwb_file)
 
     df_fip_pp = pd.DataFrame()
     df_pp_params = pd.DataFrame()
@@ -938,7 +1457,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy"]:
             continue
 
         if args.serial:
@@ -951,6 +1470,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             ]
@@ -964,6 +1484,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             )
@@ -998,7 +1519,17 @@ def process_nwb_file(
             f" using methods {methods}"
         )
 
-    return df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods
+    return (
+        df_fip_pp,
+        df_pp_params,
+        coeffs,
+        intercepts,
+        weights,
+        methods,
+        pregocue_starts,
+        pregocue_ends,
+        event_label,
+    )
 
 
 def _plot_both(
@@ -1012,8 +1543,13 @@ def _plot_both(
     weights,
     cutoff_freq_motion,
     cutoff_freq_noise,
+    pregocue_starts=None,
+    pregocue_ends=None,
+    event_label=None,
 ):
-    """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
+    """Helper function to plot both dff and motion correction (must be at
+    module level for pickling). Returns `plot_pregocue_regression`'s stats
+    (or None) for the caller to reuse instead of recomputing."""
     output_dir = Path(output_dir)
     plot_dff(
         df_fip_pp,
@@ -1034,22 +1570,32 @@ def _plot_both(
         cutoff_freq_motion,
         cutoff_freq_noise,
     )
+    if pregocue_starts is not None:
+        return plot_pregocue_regression(
+            df_fip_pp,
+            fiber,
+            channels,
+            method,
+            output_dir / "dff-qc",
+            pregocue_starts,
+            pregocue_ends,
+            event_label,
+        )
+    return None
 
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
-    ][
-        ["channel"]
-        + list(range({"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]))
-    ]
+    ][["channel"] + list(range(n_params[method]))]
     param_names = {
         "poly": [*"abcde"],
         "exp": [*"abcd"],
         "tri-exp": [*"abcdefg"],
-        "bright": [
+        "bright_legacy": [
             "b_inf",
             "b_slow",
             "b_fast",
@@ -1060,8 +1606,22 @@ def _params_as_dict(fiber, method, df_pp_params):
             "t_rapid",
             "t_bright",
         ],
+        "bright": [
+            "b_inf",
+            "b1",
+            "tau1",
+            "b2",
+            "tau2",
+            "b3",
+            "tau3",
+            "b_bright",
+            "tau_bright",
+        ],
     }
-    df.columns = ["channel"] + param_names[method]
+    # "index" (not "channel") so the QC portal uses channel names as the
+    # DataFrame's row index instead of a redundant data column -- same
+    # convention create_pregocue_metric uses for its field names.
+    df.columns = ["index"] + param_names[method]
     return df.to_dict("list")
 
 
@@ -1074,6 +1634,9 @@ def generate_qc_plots(
     methods: list,
     args,
     output_dir: Path,
+    pregocue_starts: Union[np.ndarray, None] = None,
+    pregocue_ends: Union[np.ndarray, None] = None,
+    event_label: Union[str, None] = None,
 ) -> QualityControl:
     """Generate QC plots and return QualityControl object.
 
@@ -1095,6 +1658,11 @@ def generate_qc_plots(
         Command-line arguments.
     output_dir : Path
         Output directory for QC plots.
+    pregocue_starts, pregocue_ends : np.ndarray or None, optional
+        Per-trial pre-event window start/end times for the pre-event drift
+        QC plot and metric; see `_get_pregocue_windows`. Skipped if None.
+    event_label : str or None, optional
+        "GoCue" or "reward", matching the windows.
 
     Returns
     -------
@@ -1119,17 +1687,24 @@ def generate_qc_plots(
             weights,
             args.cutoff_freq_motion,
             args.cutoff_freq_noise,
+            pregocue_starts,
+            pregocue_ends,
+            event_label,
         )
         for fiber, method in itertools.product(fibers, methods)
     ]
 
     if args.serial:
-        for args_tuple in plot_args:
-            _plot_both(*args_tuple)
+        plot_results = [_plot_both(*args_tuple) for args_tuple in plot_args]
     else:
-        Parallel(n_jobs=-1)(
+        plot_results = Parallel(n_jobs=-1)(
             delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
         )
+    # {(fiber, method): plot_pregocue_regression's stats or None}, reused below.
+    pregocue_by_fiber_method = {
+        (args_tuple[0], args_tuple[1]): result
+        for args_tuple, result in zip(plot_args, plot_results)
+    }
 
     evaluations = []
     for method in methods:
@@ -1152,12 +1727,66 @@ def generate_qc_plots(
                     True,
                 )
             )
+
+            ratio_by_channel, drift_by_channel = {}, {}
+            for ch in channels:
+                df = df_fip_pp[
+                    (df_fip_pp.channel == ch)
+                    & (df_fip_pp.fiber_number == fiber)
+                    & (df_fip_pp.preprocess == method)
+                ]
+                if df.empty:
+                    continue
+                # Calibration ratio is "dff"-stage only -- see
+                # create_calibration_metric's docstring for why. Drift
+                # stats (below) don't share that problem, so those are
+                # still computed at both stages.
+                ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
+                ratio_by_channel[ch] = ratio_dff
+                if pregocue_starts is not None:
+                    # Reuse the plotting pass's own stats; recompute only
+                    # if unexpectedly missing.
+                    reused = (pregocue_by_fiber_method.get((fiber, method)) or {}).get(ch)
+                    drift_by_channel[ch] = reused or {
+                        "dff": _pregocue_drift_stats(
+                            df.dFF.values, df.time_fip.values, pregocue_starts, pregocue_ends
+                        ),
+                        "motion_corrected": _pregocue_drift_stats(
+                            df.motion_corrected.values,
+                            df.time_fip.values,
+                            pregocue_starts,
+                            pregocue_ends,
+                        ),
+                    }
+            metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
+            if pregocue_starts is not None:
+                metrics.extend(
+                    create_pregocue_metric(fiber, method, event_label, drift_by_channel)
+                )
         evaluations.append(create_evaluation(method, metrics))
 
     # Create QC object and save
     qc = QualityControl(evaluations=evaluations)
     qc.write_standard_file(output_directory=output_dir / "dff-qc")
     return qc
+
+
+def _b_percentile_type(s: str) -> float | str:
+    """argparse type for --b_percentile: a fraction in (0, 1], or "mode"
+    -- tc_dFF's own long-standing (0, 1] fraction convention."""
+    if s.lower() == "mode":
+        return "mode"
+    try:
+        val = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f'--b_percentile must be a fraction in (0, 1] or "mode", got {s!r}'
+        )
+    if not (0 < val <= 1):
+        raise argparse.ArgumentTypeError(
+            f"--b_percentile must be in (0, 1], got {val}"
+        )
+    return val
 
 
 def main():
@@ -1187,9 +1816,28 @@ def main():
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
             "  'tri-exp': Fit with triphasic exponential using OLS\n"
-            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
-            "[Increasing saturating exponential (brightening)] using iteratively "
-            "reweighted least squares (IRLS)"
+            "  'bright': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "optionally with a brightening term) selected and fit via "
+            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2)\n"
+            "  'bright_legacy': The previous 'bright' implementation -- robust fit "
+            "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
+            "saturating exponential (brightening)] using iteratively reweighted "
+            "least squares (IRLS)"
+        ),
+    )
+    parser.add_argument(
+        "--b_percentile",
+        type=_b_percentile_type,
+        default=0.7,
+        help=(
+            "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy'. "
+            "A fraction in (0, 1]: the plain median of the lowest "
+            "`b_percentile` fraction of the whole ratio distribution is "
+            "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
+            "median of everything). 'mode': the half-sample mode of the "
+            "whole ratio distribution instead. Default is 0.7 (median of "
+            "the lowest 70%%), matching production."
         ),
     )
     parser.add_argument(
@@ -1270,9 +1918,17 @@ def main():
             logging.info(f"Processing NWB file: {destination_path}")
 
             # Process the NWB file
-            df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
-                process_nwb_file(destination_path, args)
-            )
+            (
+                df_fip_pp,
+                df_pp_params,
+                coeffs,
+                intercepts,
+                weights,
+                methods,
+                pregocue_starts,
+                pregocue_ends,
+                event_label,
+            ) = process_nwb_file(destination_path, args)
 
             # Generate QC plots if requested
             if not args.no_qc:
@@ -1285,6 +1941,9 @@ def main():
                     methods,
                     args,
                     output_dir,
+                    pregocue_starts,
+                    pregocue_ends,
+                    event_label,
                 )
 
             process_name = (

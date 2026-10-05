@@ -19,12 +19,13 @@ from run_capsule import (
     process_nwb_file,
     write_output_metadata,
     setup_logging_from_metadata,
+    _b_percentile_type,
 )
 
 """
 This script reprocesses fiber photometry data from multiple datasets in parallel.
 The subfolder for each dataset includes the NWB file as well as metadata JSONs.
-For each dataset, the script processes each channel (typically 4) of each ROI
+For each dataset, the script processes each channel (typically 3) of each ROI
 (typically 4) by generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then overwritten in the NWB file. It also updates the processing.json
 and quality_control.json files for each dataset.
@@ -90,8 +91,24 @@ def process1dataset(source_path, args, start_time):
                     del store["processing"]
 
         # Use the shared processing function
-        df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
-            process_nwb_file(nwb_file_path, args)
+        (
+            df_fip_pp,
+            df_pp_params,
+            coeffs,
+            intercepts,
+            weights,
+            methods,
+            pregocue_starts,
+            pregocue_ends,
+            event_label,
+        ) = process_nwb_file(nwb_file_path, args)
+
+        # Per-(method, fiber, channel) fit timing, not cumulative processing
+        # time. Under `--parallel` (threading), `fit_time_s` can include
+        # contention with sibling channels, so it's only precise for a
+        # serial (`--serial`, the default) run.
+        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+            destination_path / "dff_timing.csv", index=False
         )
 
         # Generate QC plots if requested
@@ -105,6 +122,9 @@ def process1dataset(source_path, args, start_time):
                 methods,
                 args,
                 destination_path,
+                pregocue_starts,
+                pregocue_ends,
+                event_label,
             )
 
             # Update quality_control.json
@@ -140,6 +160,22 @@ def process1dataset(source_path, args, start_time):
     )
 
 
+def _process1dataset_safe(source_path, args, start_time):
+    """Wrap process1dataset so one dataset's unhandled exception logs and
+    gets skipped (partial output removed) instead of aborting the whole
+    outer Parallel job. Returns the failed path for the caller to log."""
+    destination_path = args.output_dir / Path(source_path).parent.parent.name
+    destination_existed = destination_path.exists()
+    try:
+        process1dataset(source_path, args, start_time)
+        return None
+    except Exception:
+        logging.exception(f"Failed processing {source_path}")
+        if not destination_existed and destination_path.exists():
+            shutil.rmtree(destination_path, ignore_errors=True)
+        return source_path
+
+
 if __name__ == "__main__":
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -165,9 +201,28 @@ if __name__ == "__main__":
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
             "  'tri-exp': Fit with triphasic exponential using OLS\n"
-            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
-            "[Increasing saturating exponential (brightening)] using iteratively "
-            "reweighted least squares (IRLS)"
+            "  'bright': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "optionally with a brightening term) selected and fit via "
+            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2)\n"
+            "  'bright_legacy': The previous 'bright' implementation -- robust fit "
+            "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
+            "saturating exponential (brightening)] using iteratively reweighted "
+            "least squares (IRLS)"
+        ),
+    )
+    parser.add_argument(
+        "--b_percentile",
+        type=_b_percentile_type,
+        default=0.7,
+        help=(
+            "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy'. "
+            "A fraction in (0, 1]: the plain median of the lowest "
+            "`b_percentile` fraction of the whole ratio distribution is "
+            "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
+            "median of everything). 'mode': the half-sample mode of the "
+            "whole ratio distribution instead. Default is 0.7 (median of "
+            "the lowest 70%%), matching production."
         ),
     )
     parser.add_argument(
@@ -208,9 +263,24 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(source_paths) > 1:
+        # Force matplotlib to finish building its font cache here, once, in
+        # the single-threaded parent -- on a fresh image, N workers racing
+        # to build it on first use corrupts figure rendering. Render one
+        # throwaway figure so workers see an already-finished cache.
+        import matplotlib.pyplot as _plt
+
+        _fig = _plt.figure()
+        _fig.text(0.5, 0.5, "warm font cache")
+        _fig.canvas.draw()
+        _plt.close(_fig)
+
         n_jobs = min(len(source_paths), int(os.getenv("CO_CPUS", -1)))
-        Parallel(n_jobs=n_jobs)(
-            delayed(process1dataset)(path, args, start_time) for path in source_paths
+        failures = Parallel(n_jobs=n_jobs)(
+            delayed(_process1dataset_safe)(path, args, start_time) for path in source_paths
         )
+        failures = [path for path in failures if path is not None]
+        if failures:
+            # Logged, not raised -- one bad dataset shouldn't fail the batch.
+            logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
     else:
         process1dataset(source_paths[0], args, start_time)
