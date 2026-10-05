@@ -1086,11 +1086,10 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
     """Create a QC metric for the per-channel negative-residual calibration ratio.
 
     `ratio_by_channel` is `{channel: ratio}` -- dF/F stage only (before
-    motion correction); see `_calibration_ratio` for the definition. Flat
-    (not nested under a stage key) so the QC portal renders it as a
-    per-channel table instead of falling back to its generic JSON-editor
-    widget, which it does for any dict whose values aren't themselves
-    str/int/float.
+    motion correction); see `_calibration_ratio` for the definition.
+    Serialized transposed, as `{"index": [channel, ...], "ratio": [ratio,
+    ...]}`, so the QC portal renders a channel-indexed table (and, unlike
+    a one-row table, doesn't leak a stray "index" row-index label).
 
     Deliberately NOT computed on the motion-corrected trace:
     `_calibration_ratio`'s sigma assumes high-frequency noise that
@@ -1124,12 +1123,10 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
         name=f"Calibration ratio of ROI {fiber} using method '{method}'",
         reference=f"dff-qc/ROI{fiber}_dff-{method}.png",
         status_history=_auto_status_history(status),
-        value=ratio_by_channel,
+        value={"index": list(ratio_by_channel), "ratio": list(ratio_by_channel.values())},
         description=(
-            "Per-channel calibration ratio (dF/F stage only -- see "
-            "create_calibration_metric's docstring for why). Expected "
-            "near 1; large deviations, not small ones, are the signal. "
-            "Per channel: Pending if NaN; else fails if ratio outside "
+            "Per-channel calibration ratio (dF/F stage only). Expected "
+            "near 1. Pending if NaN; else fails if ratio outside "
             f"[{CALIBRATION_FAIL_LOWER:g}, {CALIBRATION_FAIL_UPPER:g}], "
             f"passes if in [{CALIBRATION_PASS_LOWER:g}, "
             f"{CALIBRATION_PASS_UPPER:g}), else Pending. Worst channel "
@@ -1162,10 +1159,11 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
 
     Split into one metric per stage (mirroring `create_metric`'s existing
     baseline/motion split) rather than one combined metric: each stage
-    gets its own automatic status, and each metric's value is flat
-    (`{"index": [field, ...], channel: [value, ...]}`) so the QC portal
-    renders it as a per-channel table instead of falling back to its
-    generic JSON-editor widget.
+    gets its own automatic status, and each metric's value is
+    channel-indexed (`{"index": [channel, ...], field: [value, ...]}`,
+    matching `create_metric`/`create_calibration_metric`'s own
+    orientation) so the QC portal renders it as a table instead of
+    falling back to its generic JSON-editor widget.
 
     Per channel (motion_corrected's Iso excluded -- it's trivially 0 by
     construction, being the motion-correction reference channel, not a
@@ -1188,15 +1186,21 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
 
     metrics = []
     for stage in stages:
-        value = {"index": fields}
+        # Channel-indexed (not field-indexed): keeps each column's dtype
+        # homogeneous (e.g. n_trials stays a plain int column instead of
+        # being upcast to float and shown in scientific notation
+        # alongside p-values as small as ~1e-300), and matches
+        # create_metric/create_calibration_metric's own orientation.
+        present = [ch for ch in channels if stats_by_channel[ch].get(stage) is not None]
+        value = {"index": present}
+        for f in fields:
+            value[f] = [stats_by_channel[ch][stage][f] for ch in present]
+
         channel_statuses = []
-        for ch in channels:
-            s = stats_by_channel[ch].get(stage)
-            if s is None:
-                continue
-            value[ch] = [s[f] for f in fields]
+        for ch in present:
             if stage == "motion_corrected" and ch == "Iso":
                 continue
+            s = stats_by_channel[ch][stage]
             worst_pct = max(
                 abs(s[f]) * 100 if np.isfinite(s[f]) else np.inf
                 for f in ("mean_dff", "total_drift")
@@ -1224,12 +1228,10 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
                 status_history=_auto_status_history(status),
                 value=value,
                 description=(
-                    f"Per-channel pre-{event_label} dF/F mean (with its "
-                    "one-sample-test p-value), OLS slope/intercept (with "
-                    "the slope's p-value), implied total drift over the "
-                    f"session, and trial count ({stage} stage) -- "
-                    "within-session baseline-drift diagnostic "
-                    "(aind-fip-dff#75). Per channel: Pending below "
+                    f"Per-channel pre-{event_label} dF/F mean and OLS "
+                    "slope (each with a p-value), intercept, implied "
+                    f"total drift, and trial count ({stage} stage) -- a "
+                    "within-session baseline-drift check. Pending below "
                     f"{DRIFT_MIN_TRIALS} trials; else fails if |mean| or "
                     f"|total_drift| > {DRIFT_FAIL_THRESHOLD_PCT:g}%, "
                     f"passes if both < {DRIFT_PASS_THRESHOLD_PCT:g}%, "
@@ -1615,7 +1617,10 @@ def _params_as_dict(fiber, method, df_pp_params):
             "tau_bright",
         ],
     }
-    df.columns = ["channel"] + param_names[method]
+    # "index" (not "channel") so the QC portal uses channel names as the
+    # DataFrame's row index instead of a redundant data column -- same
+    # convention create_pregocue_metric uses for its field names.
+    df.columns = ["index"] + param_names[method]
     return df.to_dict("list")
 
 
