@@ -604,11 +604,15 @@ def _init_sum_of_exps(
     x0 = [b_inf]
     bounds = [(b_inf_lo, np.inf)]
     for frac, tau, (tlo, thi) in zip(amp_fracs, tau_inits, tau_bounds):
-        x0 += [amp * frac, tau]
+        # A trace dominated by brightening (net increasing) makes `amp`
+        # negative, which would start a bleach amplitude -- bounded >= 0
+        # below -- outside its own bounds.
+        x0 += [max(amp * frac, 0.0), tau]
         bounds += [(0, amp_cap), (tlo, thi)]
 
     if include_brightening:
-        x0 += [-0.05 * b_inf, 2000.0]
+        # Same clamp, mirrored: brightening's amplitude is bounded <= 0.
+        x0 += [min(-0.05 * b_inf, 0.0), 2000.0]
         bounds += [(-amp_cap, 0), (60, TAU_BRIGHT_CAP)]
 
     return np.array(x0), tuple(bounds)
@@ -848,7 +852,9 @@ def tc_brightfit_v2(
     include_bright = False
 
     # Step 2: try adding brightening (full decimated-trace RSS).
-    x0_b = np.concatenate([params_ds, [-0.05 * params_ds[0], 2000.0]])
+    # Clamped as in `_init_sum_of_exps`: brightening's amplitude bound is
+    # (-amp_cap, 0), so this warm-start guess must stay <= 0 too.
+    x0_b = np.concatenate([params_ds, [min(-0.05 * params_ds[0], 0.0), 2000.0]])
     _, bnd_b = _init_sum_of_exps(tc_ds, n_exp=n_exp_won, include_brightening=True)
     f0_b_ds, res_b_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_b, bounds=bnd_b, **kw_ds)
     rss_b_ds = _rss_ds_full(f0_b_ds)
@@ -862,7 +868,9 @@ def tc_brightfit_v2(
 
     # Step 3: try adding a 3rd bleach exponential (early-window RSS).
     n_exp_next = n_exp_won + 1
-    new_exp = np.array([0.05 * params_ds[0], 50.0])
+    # Clamped as in `_init_sum_of_exps`: this bleach amplitude's bound is
+    # (0, amp_cap), so this warm-start guess must stay >= 0 too.
+    new_exp = np.array([max(0.05 * params_ds[0], 0.0), 50.0])
     x0_3 = (
         np.concatenate([params_ds[:-2], new_exp, params_ds[-2:]])
         if include_bright
