@@ -801,13 +801,17 @@ def tc_brightfit_v2(
     """
     # Drop (don't interpolate) non-finite samples -- see docstring.
     valid = np.isfinite(trace) & np.isfinite(timestamps)
+    # Checked independent of n_dropped below: an empty trace/timestamps
+    # has n_dropped == 0 (nothing to count as dropped) despite
+    # valid.any() being False, so nesting this under `if n_dropped:`
+    # would let it fall through to noise estimation instead of raising.
+    if not valid.any():
+        raise ValueError(
+            "tc_brightfit_v2: every sample is non-finite (trace or "
+            "timestamps) -- nothing to fit."
+        )
     n_dropped = int((~valid).sum())
     if n_dropped:
-        if not valid.any():
-            raise ValueError(
-                "tc_brightfit_v2: every sample is non-finite (trace or "
-                "timestamps) -- nothing to fit."
-            )
         warnings.warn(
             f"tc_brightfit_v2: dropping {n_dropped} non-finite sample(s) "
             "(trace or timestamps) before fitting.",
