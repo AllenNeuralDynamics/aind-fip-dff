@@ -1177,7 +1177,13 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
     """
     channels = list(stats_by_channel.keys())
     stages = sorted({stage for stats in stats_by_channel.values() for stage in stats})
-    fields = ["mean_dff", "mean_p", "slope", "slope_p", "intercept", "total_drift", "n_trials"]
+    # intercept is deliberately not serialized here -- it's only used to
+    # draw the regression line in the reference plot (see
+    # plot_pregocue_regression), not needed for the auto-status decision,
+    # and not recoverable from the other fields after the fact (it'd take
+    # mean(trial midpoint times) for this channel/stage's specific set of
+    # valid trials, which isn't otherwise stored).
+    fields = ["mean_dff", "mean_p", "slope", "slope_p", "total_drift", "n_trials"]
 
     metrics = []
     for stage in stages:
@@ -1224,9 +1230,9 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
                 value=value,
                 description=(
                     f"Per-channel pre-{event_label} dF/F mean and OLS "
-                    "slope (each with a p-value), intercept, implied "
-                    f"total drift, and trial count ({stage} stage) -- a "
-                    "within-session baseline-drift check. Pending below "
+                    "slope (each with a p-value), implied total drift, "
+                    f"and trial count ({stage} stage) -- a within-session "
+                    "baseline-drift check. Pending below "
                     f"{DRIFT_MIN_TRIALS} trials; else fails if |mean| or "
                     f"|total_drift| > {DRIFT_FAIL_THRESHOLD_PCT:g}%, "
                     f"passes if both < {DRIFT_PASS_THRESHOLD_PCT:g}%, "
