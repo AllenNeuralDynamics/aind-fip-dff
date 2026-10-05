@@ -1183,7 +1183,7 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
     """
     channels = list(stats_by_channel.keys())
     stages = sorted({stage for stats in stats_by_channel.values() for stage in stats})
-    fields = ["mean_dff", "slope", "total_drift", "n_trials"]
+    fields = ["mean_dff", "mean_p", "slope", "slope_p", "intercept", "total_drift", "n_trials"]
 
     metrics = []
     for stage in stages:
@@ -1223,11 +1223,12 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
                 status_history=_auto_status_history(status),
                 value=value,
                 description=(
-                    f"Per-channel pre-{event_label} dF/F mean, OLS trend, "
-                    "implied total drift over the session, and trial "
-                    f"count ({stage} stage) -- within-session "
-                    "baseline-drift diagnostic (aind-fip-dff#75). Per "
-                    "channel: Pending below "
+                    f"Per-channel pre-{event_label} dF/F mean (with its "
+                    "one-sample-test p-value), OLS slope/intercept (with "
+                    "the slope's p-value), implied total drift over the "
+                    f"session, and trial count ({stage} stage) -- "
+                    "within-session baseline-drift diagnostic "
+                    "(aind-fip-dff#75). Per channel: Pending below "
                     f"{DRIFT_MIN_TRIALS} trials; else fails if |mean| or "
                     f"|total_drift| > {DRIFT_FAIL_THRESHOLD_PCT:g}%, "
                     f"passes if both < {DRIFT_PASS_THRESHOLD_PCT:g}%, "
