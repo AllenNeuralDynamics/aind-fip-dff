@@ -1105,7 +1105,7 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
     for ratio in ratio_by_channel.values():
         if not np.isfinite(ratio):
             channel_statuses.append(Status.PENDING)
-        elif ratio <= CALIBRATION_FAIL_LOWER or ratio >= CALIBRATION_FAIL_UPPER:
+        elif ratio < CALIBRATION_FAIL_LOWER or ratio > CALIBRATION_FAIL_UPPER:
             channel_statuses.append(Status.FAIL)
         elif CALIBRATION_PASS_LOWER <= ratio < CALIBRATION_PASS_UPPER:
             channel_statuses.append(Status.PASS)
