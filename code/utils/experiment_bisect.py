@@ -31,6 +31,8 @@ below to measure the actual multiplier on real traces before assuming any
 particular speedup number.
 """
 
+import logging
+import time
 import warnings
 
 import numpy as np
@@ -165,18 +167,25 @@ def _full_resolution_refit(
 ) -> tuple[np.ndarray, np.ndarray, int, bool, str]:
     """`tc_brightfit_v2`'s Step 4 (+ its own snap-refit loop), copied so the
     bisection search below can call it once per candidate `c_pos` without
-    touching the already-reviewed `tc_brightfit_v2`."""
+    touching the already-reviewed `tc_brightfit_v2`.
+
+    Returns an extra `n_refit_calls` (vs. `tc_brightfit_v2`'s equivalent)
+    -- this loop is itself M-dependent and runs once per bisection
+    candidate, so a real trace needing several snap-refit rounds multiplies
+    bisection's total cost well beyond `n_iter + 1`; see
+    `tc_brightfit_v2_bisect`'s per-candidate logging."""
     kw_full = dict(model=sum_of_exps, M=M, maxiter=maxiter, sigma_anneal_steps=sigma_anneal_steps)
     if fixed_sigma is not None:
         kw_full["fixed_sigma"] = fixed_sigma
 
     if n_exp_won == 0 and not include_bright:
         f0 = np.full_like(trace_valid, params_ds[0])
-        return f0, params_ds, n_exp_won, include_bright, model_str
+        return f0, params_ds, n_exp_won, include_bright, model_str, 0
 
     _, bnd_full = _init_sum_of_exps(trace_valid, n_exp=n_exp_won, include_brightening=include_bright)
     f0, res_full = nonlinear_fit(trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full)
     params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
+    n_refit_calls = 1
 
     while True:
         params_full, n_exp_final, include_bright_final, snapped_final = _snap_degenerate_slow_terms(
@@ -188,12 +197,13 @@ def _full_resolution_refit(
         model_str += f" [snapped: {','.join(snapped_final)}]"
         if n_exp_won == 0 and not include_bright:
             f0 = np.full_like(trace_valid, params_full[0])
-            return f0, params_full, n_exp_won, include_bright, model_str
+            return f0, params_full, n_exp_won, include_bright, model_str, n_refit_calls
         _, bnd_full = _init_sum_of_exps(trace_valid, n_exp=n_exp_won, include_brightening=include_bright)
         f0, res_full = nonlinear_fit(trace_valid, ts_valid, x0=params_full, bounds=bnd_full, **kw_full)
         params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
+        n_refit_calls += 1
 
-    return f0, params_full, n_exp_won, include_bright, model_str
+    return f0, params_full, n_exp_won, include_bright, model_str, n_refit_calls
 
 
 def tc_brightfit_v2_bisect(
@@ -280,17 +290,27 @@ def tc_brightfit_v2_bisect(
         sigma_est = float(noise_std(trace_valid, method="welch"))
         fixed_sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
 
+    t_start = time.perf_counter()
+
     # Model selection: ONCE, M-independent (see module docstring).
+    t0 = time.perf_counter()
     params_ds, n_exp_won, include_bright, model_str = _decimated_model_selection(
         trace_valid, ts_valid, ds, rss_thresh, t_eval_exp3
     )
+    logging.info(
+        f"tc_brightfit_v2_bisect: model selection ({model_str}) took "
+        f"{time.perf_counter() - t0:.2f}s"
+    )
 
     n_full_refits = 0
+    n_candidates = 0
 
     def _fit_and_ratio(c_pos):
-        nonlocal n_full_refits
+        nonlocal n_full_refits, n_candidates
+        n_candidates += 1
+        t0 = time.perf_counter()
         M = NonlinearFitAsymmetricTukeyBiweight(c_pos=c_pos, c_neg=c_neg)
-        f0, params_full, n_exp_f, bright_f, mstr = _full_resolution_refit(
+        f0, params_full, n_exp_f, bright_f, mstr, n_refit_calls = _full_resolution_refit(
             trace_valid,
             ts_valid,
             params_ds,
@@ -302,8 +322,13 @@ def tc_brightfit_v2_bisect(
             sigma_anneal_steps,
             fixed_sigma,
         )
-        n_full_refits += 1
+        n_full_refits += n_refit_calls
         ratio, _ = _calibration_ratio(trace_valid, f0)
+        logging.info(
+            f"tc_brightfit_v2_bisect: candidate {n_candidates} (c_pos={c_pos:.3f}) "
+            f"took {time.perf_counter() - t0:.2f}s, {n_refit_calls} refit call(s) "
+            f"(snap-loop), ratio={ratio:.3f}"
+        )
         return f0, params_full, n_exp_f, bright_f, mstr, ratio
 
     # Evaluate the lower bound -- early exit if already at/above target
@@ -337,6 +362,11 @@ def tc_brightfit_v2_bisect(
                 hi = c_mid  # permissive enough -> tighten upper bound
 
     final_model_str = f"{best_mstr} [bisect c_pos={best_c:.3f}, {n_full_refits} full refit(s)]"
+    logging.info(
+        f"tc_brightfit_v2_bisect: done in {time.perf_counter() - t_start:.2f}s total, "
+        f"{n_candidates} candidate(s), {n_full_refits} full-resolution refit call(s), "
+        f"winning c_pos={best_c:.3f}"
+    )
 
     f0_out = best_f0
     if n_dropped:
