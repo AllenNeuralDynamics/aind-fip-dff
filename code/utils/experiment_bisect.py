@@ -36,6 +36,7 @@ import time
 import warnings
 
 import numpy as np
+import aind_ophys_utils.baseline_fitting as _baseline_fitting_module
 from aind_ophys_utils.baseline_fitting import (
     AsymmetricTukeyBiweight as NonlinearFitAsymmetricTukeyBiweight,
 )
@@ -49,6 +50,34 @@ from .preprocess import (
     _snap_degenerate_slow_terms,
     _sort_bleach_params,
 )
+
+#: DIAGNOSTIC (temporary): nonlinear_fit's own outer IRLS loop (`maxiter`,
+#: default 5) calls scipy.optimize.minimize once per outer iteration, but
+#: only returns the LAST call's OptimizeResult as `res` -- so logging
+#: res.nit (as this module already does after every nonlinear_fit call)
+#: only sees the final, often-already-converged inner solve. A real
+#: pathological asset showed e.g. a logged nit=1 with 64s elapsed since
+#: the previous log line -- the expensive part is in an earlier, unlogged
+#: outer IRLS iteration's inner call. Patching scipy.optimize.minimize
+#: itself (as imported into aind_ophys_utils.baseline_fitting's own
+#: namespace) logs every inner call, closing that blind spot. Remove once
+#: this question (is the maxiter cap, at whatever value, ever actually
+#: load-bearing?) is answered -- not meant to ship.
+_orig_scipy_minimize = _baseline_fitting_module.minimize
+
+
+def _logging_minimize(*args, **kwargs):
+    t0 = time.perf_counter()
+    res = _orig_scipy_minimize(*args, **kwargs)
+    logging.info(
+        f"tc_brightfit_v2_bisect: inner minimize() call took "
+        f"{time.perf_counter() - t0:.2f}s, nit={res.nit}, success={res.success}, "
+        f"message={getattr(res, 'message', None)!r}"
+    )
+    return res
+
+
+_baseline_fitting_module.minimize = _logging_minimize
 
 
 def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float]:
