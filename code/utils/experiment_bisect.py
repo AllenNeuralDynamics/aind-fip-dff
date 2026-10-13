@@ -94,7 +94,9 @@ def _decimated_model_selection(
     ts_ds = downsample_array(ts_valid, factors=ds, strategy="first")
     dt_ds = float(ts_ds[1] - ts_ds[0]) if len(ts_ds) > 1 else float(ds)
     n_eval_ds = min(len(tc_ds), round(t_eval_exp3 / dt_ds))
-    kw_ds = dict(model=sum_of_exps, M=None)
+    # Pinned explicitly (see SCIPY_LBFGSB_DEFAULTS) -- plain OLS (M=None),
+    # so scipy's own defaults are fine here; just not left implicit.
+    kw_ds = dict(model=sum_of_exps, M=None, optimizer_options=SCIPY_LBFGSB_DEFAULTS)
 
     def _rss_ds_full(f0):
         return float(np.sum((tc_ds - f0) ** 2))
@@ -161,11 +163,27 @@ def _decimated_model_selection(
 #: 20000-iteration budget trying to satisfy a gtol it may never actually
 #: reach, rather than failing outright. Confirmed in practice: one real
 #: candidate at c_pos=2.0 took 172.82s on its own (vs well under 1s on
-#: clean synthetic traces). Used only for intermediate bisection
-#: candidates below (SEARCH_OPTIMIZER_OPTIONS) -- the winning c_pos gets
-#: one final refit at nonlinear_fit's own (tight) defaults, so search-phase
-#: speed doesn't compromise the actual returned fit's precision.
+#: clean synthetic traces). Used for every bisection candidate below --
+#: no separate high-precision final refit: a 9-parameter L-BFGS-B problem
+#: that's well-posed converges in far fewer than 500 iterations anyway,
+#: and the pathological (locally-flat-loss) case this guards against
+#: wouldn't be meaningfully improved by more iterations either, since
+#: "flat" means many parameter values already give nearly the same loss.
+#: Also well within precedent: tc_brightfit (bright_legacy, already in
+#: production) uses maxiter=5 and a much looser relative-deviance
+#: tolerance (tol=1e-3) for its own IRLS convergence check -- these
+#: settings aren't a shortcut invented for this experiment.
 SEARCH_OPTIMIZER_OPTIONS = {"maxiter": 500, "ftol": 1e-9, "gtol": 1e-7}
+
+#: scipy.optimize.minimize's own L-BFGS-B defaults, pinned explicitly here
+#: rather than left to nonlinear_fit's current default ({"maxiter": 20000,
+#: "ftol": 1e-12, "gtol": 1e-10} -- far tighter than scipy's own, and the
+#: root cause investigated above) so this module's behavior doesn't
+#: silently change if/when that library default is updated. Used for the
+#: plain-OLS (M=None) model-selection calls below, where there's no
+#: redescending-M pathology to guard against -- scipy's own defaults are
+#: a reasonable, unremarkable choice there.
+SCIPY_LBFGSB_DEFAULTS = {"maxiter": 15000, "ftol": 2.220446049250313e-09, "gtol": 1e-5}
 
 
 def _full_resolution_refit(
@@ -192,9 +210,8 @@ def _full_resolution_refit(
     `tc_brightfit_v2_bisect`'s per-candidate logging.
 
     `optimizer_options` is passed straight through to `nonlinear_fit` --
-    `None` (default) uses its own tight defaults; pass
-    `SEARCH_OPTIMIZER_OPTIONS` to bound worst-case cost for a candidate
-    that's only used to decide where to bisect next, not the final answer."""
+    see `SEARCH_OPTIMIZER_OPTIONS` above for why this bounds worst-case
+    cost without meaningfully compromising fit quality."""
     kw_full = dict(model=sum_of_exps, M=M, maxiter=maxiter, sigma_anneal_steps=sigma_anneal_steps)
     if fixed_sigma is not None:
         kw_full["fixed_sigma"] = fixed_sigma
@@ -328,7 +345,7 @@ def tc_brightfit_v2_bisect(
     n_full_refits = 0
     n_candidates = 0
 
-    def _fit_and_ratio(c_pos, optimizer_options=SEARCH_OPTIMIZER_OPTIONS, label="candidate"):
+    def _fit_and_ratio(c_pos):
         nonlocal n_full_refits, n_candidates
         n_candidates += 1
         t0 = time.perf_counter()
@@ -344,12 +361,12 @@ def tc_brightfit_v2_bisect(
             maxiter,
             sigma_anneal_steps,
             fixed_sigma,
-            optimizer_options=optimizer_options,
+            optimizer_options=SEARCH_OPTIMIZER_OPTIONS,
         )
         n_full_refits += n_refit_calls
         ratio, _ = _calibration_ratio(trace_valid, f0)
         logging.info(
-            f"tc_brightfit_v2_bisect: {label} {n_candidates} (c_pos={c_pos:.3f}) "
+            f"tc_brightfit_v2_bisect: candidate {n_candidates} (c_pos={c_pos:.3f}) "
             f"took {time.perf_counter() - t0:.2f}s, {n_refit_calls} refit call(s) "
             f"(snap-loop), ratio={ratio:.3f}"
         )
@@ -384,15 +401,6 @@ def tc_brightfit_v2_bisect(
                 lo = c_mid  # still too aggressive -> raise lower bound
             else:
                 hi = c_mid  # permissive enough -> tighten upper bound
-
-    # Final refit at the winning c_pos, at nonlinear_fit's own (tight)
-    # defaults -- the search above used SEARCH_OPTIMIZER_OPTIONS to bound
-    # worst-case cost on candidates that only needed to be roughly right to
-    # decide which half of the bracket to search next; the actual returned
-    # fit shouldn't inherit that search-phase approximation.
-    best_f0, best_params, best_n_exp, best_bright, best_mstr, _ = _fit_and_ratio(
-        best_c, optimizer_options=None, label="final refit at winning c_pos"
-    )
 
     final_model_str = f"{best_mstr} [bisect c_pos={best_c:.3f}, {n_full_refits} full refit(s)]"
     logging.info(
