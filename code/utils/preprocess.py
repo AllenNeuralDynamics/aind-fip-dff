@@ -1025,8 +1025,16 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
         elif method == "bright":
             tc_fit, tc_coefs = tc_brightfit_v2(tc_filtered, ts)
+        elif method == "bisect":
+            # Local import: experiment_bisect imports from this module, so a
+            # top-level import here would be circular. Experimental only --
+            # see experiment_bisect.py's module docstring; not part of the
+            # reviewed bright/bright_legacy/poly/exp/tri-exp methods.
+            from .experiment_bisect import tc_brightfit_v2_bisect
 
-        if method in ("bright", "bright_legacy"):
+            tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect(tc_filtered, ts)
+
+        if method in ("bright", "bright_legacy", "bisect"):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -1043,7 +1051,14 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}[method]
+                {
+                    "poly": 5,
+                    "exp": 4,
+                    "tri-exp": 7,
+                    "bright": 9,
+                    "bright_legacy": 9,
+                    "bisect": 9,
+                }[method]
             )
         }
 

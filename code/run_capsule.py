@@ -1014,6 +1014,12 @@ def create_metric(fiber, method, reference, value, motion=False):
             "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
+        # Same model as "bright" -- bisect only changes the M-estimator, not
+        # the baseline shape. See experiment_bisect.py.
+        "bisect": (
+            "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
+            "b_{bright}\exp(-t/\\tau_{bright})$$"
+        ),
     }
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
@@ -1457,7 +1463,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect"]:
             continue
 
         if args.serial:
@@ -1586,7 +1592,14 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}
+    n_params = {
+        "poly": 5,
+        "exp": 4,
+        "tri-exp": 7,
+        "bright": 9,
+        "bright_legacy": 9,
+        "bisect": 9,
+    }
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
@@ -1607,6 +1620,20 @@ def _params_as_dict(fiber, method, df_pp_params):
             "t_bright",
         ],
         "bright": [
+            "b_inf",
+            "b1",
+            "tau1",
+            "b2",
+            "tau2",
+            "b3",
+            "tau3",
+            "b_bright",
+            "tau_bright",
+        ],
+        # Same model/parameter layout as "bright" -- bisect only changes
+        # which M-estimator fits the final full-resolution refit, not the
+        # sum-of-exponentials model itself. See experiment_bisect.py.
+        "bisect": [
             "b_inf",
             "b1",
             "tau1",
@@ -1822,7 +1849,11 @@ def main():
             "  'bright_legacy': The previous 'bright' implementation -- robust fit "
             "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
             "saturating exponential (brightening)] using iteratively reweighted "
-            "least squares (IRLS)"
+            "least squares (IRLS)\n"
+            "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
+            "'bright', but bisects the M-estimator's c_pos per trace toward a "
+            "target calibration ratio instead of using a single fixed M (see "
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
         ),
     )
     parser.add_argument(

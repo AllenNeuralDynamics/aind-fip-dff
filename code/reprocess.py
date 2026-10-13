@@ -207,7 +207,11 @@ if __name__ == "__main__":
             "  'bright_legacy': The previous 'bright' implementation -- robust fit "
             "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
             "saturating exponential (brightening)] using iteratively reweighted "
-            "least squares (IRLS)"
+            "least squares (IRLS)\n"
+            "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
+            "'bright', but bisects the M-estimator's c_pos per trace toward a "
+            "target calibration ratio instead of using a single fixed M (see "
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
         ),
     )
     parser.add_argument(
