@@ -107,6 +107,10 @@ def _decimated_model_selection(
     # Step 1: 2-exp OLS cold start on the decimated trace.
     x0, bnd = _init_sum_of_exps(tc_ds, n_exp=2, include_brightening=False)
     f0_ds, res_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0, bounds=bnd, **kw_ds)
+    logging.info(
+        f"tc_brightfit_v2_bisect: model selection step 1 (2-exp OLS) "
+        f"nit={res_ds.nit}, success={res_ds.success}, message={res_ds.message!r}"
+    )
     rss_ds = _rss_ds_full(f0_ds)
     f0_ds_best = f0_ds
     params_ds = _sort_bleach_params(res_ds.x, 2)
@@ -117,6 +121,10 @@ def _decimated_model_selection(
     x0_b = np.concatenate([params_ds, [min(-0.05 * params_ds[0], 0.0), 2000.0]])
     _, bnd_b = _init_sum_of_exps(tc_ds, n_exp=n_exp_won, include_brightening=True)
     f0_b_ds, res_b_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_b, bounds=bnd_b, **kw_ds)
+    logging.info(
+        f"tc_brightfit_v2_bisect: model selection step 2 (+bright OLS) "
+        f"nit={res_b_ds.nit}, success={res_b_ds.success}, message={res_b_ds.message!r}"
+    )
     rss_b_ds = _rss_ds_full(f0_b_ds)
     if rss_b_ds < rss_thresh[0] * rss_ds:
         rss_ds, f0_ds_best, params_ds, include_bright = (
@@ -136,6 +144,10 @@ def _decimated_model_selection(
     )
     _, bnd_3 = _init_sum_of_exps(tc_ds, n_exp=n_exp_next, include_brightening=include_bright)
     f0_3_ds, res_3_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_3, bounds=bnd_3, **kw_ds)
+    logging.info(
+        f"tc_brightfit_v2_bisect: model selection step 3 (3rd-exp OLS) "
+        f"nit={res_3_ds.nit}, success={res_3_ds.success}, message={res_3_ds.message!r}"
+    )
     p3_sorted = _sort_bleach_params(res_3_ds.x, n_exp_next, include_bright)
     tau_new = p3_sorted[2 + 2 * n_exp_won]
     if (
@@ -173,7 +185,16 @@ def _decimated_model_selection(
 #: production) uses maxiter=5 and a much looser relative-deviance
 #: tolerance (tol=1e-3) for its own IRLS convergence check -- these
 #: settings aren't a shortcut invented for this experiment.
-SEARCH_OPTIMIZER_OPTIONS = {"maxiter": 500, "ftol": 1e-9, "gtol": 1e-7}
+#:
+#: DIAGNOSTIC (temporary): maxiter bumped 500 -> 15000 to isolate whether
+#: the loosened ftol/gtol above are *already* what stops a pathological
+#: candidate early (via its own CONVERGENCE message, well under 500
+#: iterations), or whether 500 is actually the thing doing the truncating
+#: (message would show the iteration-limit was hit instead). The new
+#: nit/success/message logging in _full_resolution_refit will show which,
+#: on the next run against the known artifact-laden pathological asset.
+#: Revert to 500 once that's answered -- this value is not meant to ship.
+SEARCH_OPTIMIZER_OPTIONS = {"maxiter": 15000, "ftol": 1e-9, "gtol": 1e-7}
 
 #: scipy.optimize.minimize's own L-BFGS-B defaults, pinned explicitly here
 #: rather than left to nonlinear_fit's current default ({"maxiter": 20000,
@@ -224,6 +245,10 @@ def _full_resolution_refit(
 
     _, bnd_full = _init_sum_of_exps(trace_valid, n_exp=n_exp_won, include_brightening=include_bright)
     f0, res_full = nonlinear_fit(trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full)
+    logging.info(
+        f"tc_brightfit_v2_bisect: full-resolution refit (initial) "
+        f"nit={res_full.nit}, success={res_full.success}, message={res_full.message!r}"
+    )
     params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
     n_refit_calls = 1
 
@@ -240,6 +265,10 @@ def _full_resolution_refit(
             return f0, params_full, n_exp_won, include_bright, model_str, n_refit_calls
         _, bnd_full = _init_sum_of_exps(trace_valid, n_exp=n_exp_won, include_brightening=include_bright)
         f0, res_full = nonlinear_fit(trace_valid, ts_valid, x0=params_full, bounds=bnd_full, **kw_full)
+        logging.info(
+            f"tc_brightfit_v2_bisect: full-resolution refit (snap-loop) "
+            f"nit={res_full.nit}, success={res_full.success}, message={res_full.message!r}"
+        )
         params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
         n_refit_calls += 1
 
