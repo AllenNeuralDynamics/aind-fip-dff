@@ -153,6 +153,21 @@ def _decimated_model_selection(
     return params_ds, n_exp_won, include_bright, model_str
 
 
+#: nonlinear_fit's own default is {"maxiter": 20000, "ftol": 1e-12,
+#: "gtol": 1e-10} -- generous enough that an aggressive, redescending
+#: M (e.g. c_pos near the bottom of the bisection bracket) can make the
+#: robust loss landscape locally flat over large regions on a real,
+#: messy trace, and scipy's L-BFGS-B can burn through most of that
+#: 20000-iteration budget trying to satisfy a gtol it may never actually
+#: reach, rather than failing outright. Confirmed in practice: one real
+#: candidate at c_pos=2.0 took 172.82s on its own (vs well under 1s on
+#: clean synthetic traces). Used only for intermediate bisection
+#: candidates below (SEARCH_OPTIMIZER_OPTIONS) -- the winning c_pos gets
+#: one final refit at nonlinear_fit's own (tight) defaults, so search-phase
+#: speed doesn't compromise the actual returned fit's precision.
+SEARCH_OPTIMIZER_OPTIONS = {"maxiter": 500, "ftol": 1e-9, "gtol": 1e-7}
+
+
 def _full_resolution_refit(
     trace_valid: np.ndarray,
     ts_valid: np.ndarray,
@@ -164,6 +179,7 @@ def _full_resolution_refit(
     maxiter: int,
     sigma_anneal_steps: int,
     fixed_sigma,
+    optimizer_options: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int, bool, str]:
     """`tc_brightfit_v2`'s Step 4 (+ its own snap-refit loop), copied so the
     bisection search below can call it once per candidate `c_pos` without
@@ -173,10 +189,17 @@ def _full_resolution_refit(
     -- this loop is itself M-dependent and runs once per bisection
     candidate, so a real trace needing several snap-refit rounds multiplies
     bisection's total cost well beyond `n_iter + 1`; see
-    `tc_brightfit_v2_bisect`'s per-candidate logging."""
+    `tc_brightfit_v2_bisect`'s per-candidate logging.
+
+    `optimizer_options` is passed straight through to `nonlinear_fit` --
+    `None` (default) uses its own tight defaults; pass
+    `SEARCH_OPTIMIZER_OPTIONS` to bound worst-case cost for a candidate
+    that's only used to decide where to bisect next, not the final answer."""
     kw_full = dict(model=sum_of_exps, M=M, maxiter=maxiter, sigma_anneal_steps=sigma_anneal_steps)
     if fixed_sigma is not None:
         kw_full["fixed_sigma"] = fixed_sigma
+    if optimizer_options is not None:
+        kw_full["optimizer_options"] = optimizer_options
 
     if n_exp_won == 0 and not include_bright:
         f0 = np.full_like(trace_valid, params_ds[0])
@@ -305,7 +328,7 @@ def tc_brightfit_v2_bisect(
     n_full_refits = 0
     n_candidates = 0
 
-    def _fit_and_ratio(c_pos):
+    def _fit_and_ratio(c_pos, optimizer_options=SEARCH_OPTIMIZER_OPTIONS, label="candidate"):
         nonlocal n_full_refits, n_candidates
         n_candidates += 1
         t0 = time.perf_counter()
@@ -321,11 +344,12 @@ def tc_brightfit_v2_bisect(
             maxiter,
             sigma_anneal_steps,
             fixed_sigma,
+            optimizer_options=optimizer_options,
         )
         n_full_refits += n_refit_calls
         ratio, _ = _calibration_ratio(trace_valid, f0)
         logging.info(
-            f"tc_brightfit_v2_bisect: candidate {n_candidates} (c_pos={c_pos:.3f}) "
+            f"tc_brightfit_v2_bisect: {label} {n_candidates} (c_pos={c_pos:.3f}) "
             f"took {time.perf_counter() - t0:.2f}s, {n_refit_calls} refit call(s) "
             f"(snap-loop), ratio={ratio:.3f}"
         )
@@ -360,6 +384,15 @@ def tc_brightfit_v2_bisect(
                 lo = c_mid  # still too aggressive -> raise lower bound
             else:
                 hi = c_mid  # permissive enough -> tighten upper bound
+
+    # Final refit at the winning c_pos, at nonlinear_fit's own (tight)
+    # defaults -- the search above used SEARCH_OPTIMIZER_OPTIONS to bound
+    # worst-case cost on candidates that only needed to be roughly right to
+    # decide which half of the bracket to search next; the actual returned
+    # fit shouldn't inherit that search-phase approximation.
+    best_f0, best_params, best_n_exp, best_bright, best_mstr, _ = _fit_and_ratio(
+        best_c, optimizer_options=None, label="final refit at winning c_pos"
+    )
 
     final_model_str = f"{best_mstr} [bisect c_pos={best_c:.3f}, {n_full_refits} full refit(s)]"
     logging.info(
