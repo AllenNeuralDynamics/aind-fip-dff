@@ -1,3 +1,4 @@
+import utils.blas_threads  # noqa: F401 -- sets BLAS env vars, must precede numpy
 import argparse
 import glob
 import json
