@@ -951,6 +951,11 @@ def tc_brightfit_v2(
     return f0, _pad_sum_of_exps_params(params_ds, n_exp_won, include_bright)
 
 
+#: Experimental `--dff_methods` arms (see `experiment_variants.py`), all
+#: fitting the same 9-parameter model as "bright".
+VARIANT_METHODS = ("bright_a", "nosnap_scipy", "nosnap_ftol1e10")
+
+
 # dF/F total function
 def chunk_processing(
     tc: np.ndarray,
@@ -1033,8 +1038,14 @@ def chunk_processing(
             from .experiment_bisect import tc_brightfit_v2_bisect
 
             tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect(tc_filtered, ts)
+        elif method in VARIANT_METHODS:
+            # Experimental, same circular-import reason as "bisect" above;
+            # see experiment_variants.py.
+            from .experiment_variants import FITS
 
-        if method in ("bright", "bright_legacy", "bisect"):
+            tc_fit, tc_coefs = FITS[method](tc_filtered, ts)
+
+        if method in ("bright", "bright_legacy", "bisect", *VARIANT_METHODS):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -1058,6 +1069,7 @@ def chunk_processing(
                     "bright": 9,
                     "bright_legacy": 9,
                     "bisect": 9,
+                    **dict.fromkeys(VARIANT_METHODS, 9),
                 }[method]
             )
         }

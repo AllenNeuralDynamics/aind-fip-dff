@@ -45,7 +45,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, motion_correct
+from utils.preprocess import VARIANT_METHODS, chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -1021,6 +1021,12 @@ def create_metric(fiber, method, reference, value, motion=False):
             "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
+        # Same model as "bright". See experiment_variants.py.
+        **dict.fromkeys(
+            VARIANT_METHODS,
+            "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
+            "b_{bright}\exp(-t/\\tau_{bright})$$",
+        ),
     }
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
@@ -1464,7 +1470,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect", *VARIANT_METHODS]:
             continue
 
         if args.serial:
@@ -1600,6 +1606,7 @@ def _params_as_dict(fiber, method, df_pp_params):
         "bright": 9,
         "bright_legacy": 9,
         "bisect": 9,
+        **dict.fromkeys(VARIANT_METHODS, 9),
     }
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
@@ -1645,6 +1652,21 @@ def _params_as_dict(fiber, method, df_pp_params):
             "b_bright",
             "tau_bright",
         ],
+        # Same layout as "bright". See experiment_variants.py.
+        **dict.fromkeys(
+            VARIANT_METHODS,
+            [
+                "b_inf",
+                "b1",
+                "tau1",
+                "b2",
+                "tau2",
+                "b3",
+                "tau3",
+                "b_bright",
+                "tau_bright",
+            ],
+        ),
     }
     # "index" (not "channel") so the QC portal uses channel names as the
     # DataFrame's row index instead of a redundant data column -- same
@@ -1854,7 +1876,15 @@ def main():
             "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
             "'bright', but bisects the M-estimator's c_pos per trace toward a "
             "target calibration ratio instead of using a single fixed M (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)\n"
+            "  'bright_a': EXPERIMENTAL, not for production use. 'bright' with "
+            "scipy-default L-BFGS-B options pinned explicitly (see "
+            "utils.experiment_variants)\n"
+            "  'nosnap_scipy': EXPERIMENTAL, not for production use. 'bright' "
+            "without the degenerate-term snap, slow-tau upper bounds lifted, "
+            "scipy-default L-BFGS-B options\n"
+            "  'nosnap_ftol1e10': EXPERIMENTAL, not for production use. "
+            "'nosnap_scipy' with ftol=1e-10"
         ),
     )
     parser.add_argument(

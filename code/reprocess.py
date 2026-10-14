@@ -212,7 +212,15 @@ if __name__ == "__main__":
             "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
             "'bright', but bisects the M-estimator's c_pos per trace toward a "
             "target calibration ratio instead of using a single fixed M (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)\n"
+            "  'bright_a': EXPERIMENTAL, not for production use. 'bright' with "
+            "scipy-default L-BFGS-B options pinned explicitly (see "
+            "utils.experiment_variants)\n"
+            "  'nosnap_scipy': EXPERIMENTAL, not for production use. 'bright' "
+            "without the degenerate-term snap, slow-tau upper bounds lifted, "
+            "scipy-default L-BFGS-B options\n"
+            "  'nosnap_ftol1e10': EXPERIMENTAL, not for production use. "
+            "'nosnap_scipy' with ftol=1e-10"
         ),
     )
     parser.add_argument(
