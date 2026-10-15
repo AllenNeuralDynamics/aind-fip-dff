@@ -542,13 +542,19 @@ def tc_brightfit(
     return baseline(timestamps, *x), x
 
 
-#: tau1's and the brightening tau's upper bounds, shared between
-#: `_init_sum_of_exps` (which enforces them as fit bounds) and
-#: `_snap_degenerate_slow_terms` (which checks against them post-fit) --
-#: a single source of truth instead of two constants that must be kept
-#: in sync by hand.
-TAU1_CAP = 30000.0
-TAU_BRIGHT_CAP = 20000.0
+#: Upper bound on the slow bleach tau and the brightening tau [s]. Effectively
+#: unbounded: it only keeps `exp(-t/tau)` finite, and real slow terms land
+#: around 1e4-1e5 s on session-length traces. Do not lower it -- capping tau1
+#: at 3e4 s made a legitimate slow drift look degenerate and (via a post-fit
+#: "snap" that dropped such terms) replaced it with a flat baseline.
+TAU_MAX = 1e7
+
+#: L-BFGS-B options for every `nonlinear_fit` call in `tc_brightfit_v2`:
+#: scipy's own defaults, spelled out so the fit doesn't change with the
+#: installed aind-ophys-utils version (0.2.0's default is much tighter:
+#: ftol 1e-12, gtol 1e-10, maxiter 20000). Tighter tolerances cost 2-4x the
+#: time and moved the objective by <0.1% on clean traces.
+OPTIMIZER_OPTIONS = {"maxiter": 15000, "ftol": 2.220446049250313e-09, "gtol": 1e-5}
 
 
 def _init_sum_of_exps(
@@ -561,9 +567,7 @@ def _init_sum_of_exps(
     to zero. Bleach amplitudes are constrained >= 0; brightening (when
     included) is a dedicated negative-amplitude term rather than a negative
     bleach amplitude. tau1's and the brightening tau's upper bounds are
-    capped (not left unbounded) to avoid a b_inf/b1 identifiability
-    degeneracy as tau -> infinity; see `_snap_degenerate_slow_terms` for the
-    companion post-fit check.
+    `TAU_MAX` (effectively unbounded).
 
     Parameters
     ----------
@@ -596,9 +600,9 @@ def _init_sum_of_exps(
     tau_inits = {0: [], 1: [600.0], 2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
     tau_bounds = {
         0: [],
-        1: [(60, TAU1_CAP)],
-        2: [(300, TAU1_CAP), (1, 5000)],
-        3: [(300, TAU1_CAP), (1, 5000), (1, 180)],
+        1: [(60, TAU_MAX)],
+        2: [(300, TAU_MAX), (1, 5000)],
+        3: [(300, TAU_MAX), (1, 5000), (1, 180)],
     }[n_exp]
 
     x0 = [b_inf]
@@ -613,7 +617,7 @@ def _init_sum_of_exps(
     if include_brightening:
         # Same clamp, mirrored: brightening's amplitude is bounded <= 0.
         x0 += [min(-0.05 * b_inf, 0.0), 2000.0]
-        bounds += [(-amp_cap, 0), (60, TAU_BRIGHT_CAP)]
+        bounds += [(-amp_cap, 0), (60, TAU_MAX)]
 
     return np.array(x0), tuple(bounds)
 
@@ -630,61 +634,6 @@ def _sort_bleach_params(
         p[1 + 2 * new_i] = params[1 + 2 * old_i]
         p[2 + 2 * new_i] = params[2 + 2 * old_i]
     return p
-
-
-def _snap_degenerate_slow_terms(
-    params: np.ndarray,
-    n_exp: int,
-    include_bright: bool,
-    tc: np.ndarray,
-    ts: np.ndarray,
-    near_bound_frac: float = 0.95,
-) -> tuple[np.ndarray, int, bool, list[str]]:
-    """Drop the slowest bleach term and/or the brightening term if either
-    landed at (or near) its tau upper bound, and refit without it.
-
-    A term whose tau sits at its cap is not a real slow process -- it is
-    `_init_sum_of_exps`'s b_inf/tau1 (or b_inf/tau_bright) degeneracy, where
-    an arbitrary amount of b_inf gets misattributed to a physically
-    meaningless "slow exponential" instead of the bound preventing it
-    outright. Only the slowest bleach term is checked, since the other
-    bleach terms' tighter bounds reflect genuine fast timescales rather than
-    this degeneracy.
-
-    Returns
-    -------
-    params, n_exp, include_bright : the resulting (possibly reduced) model,
-        refit if anything was dropped; unchanged otherwise.
-    snapped : list of str
-        Which terms were dropped ("tau1", "bright"); empty if none.
-    """
-    snapped = []
-    # n_exp==0 (bleach-free) has no tau1 term -- params[2] would then be
-    # tau_bright instead, so this check must not fire for it.
-    if n_exp >= 1 and params[2] >= near_bound_frac * TAU1_CAP:
-        snapped.append("tau1")
-    if include_bright and params[-1] >= near_bound_frac * TAU_BRIGHT_CAP:
-        snapped.append("bright")
-    if not snapped:
-        return params, n_exp, include_bright, snapped
-
-    new_n_exp = n_exp - (1 if "tau1" in snapped else 0)
-    new_bright = include_bright and "bright" not in snapped
-    if new_n_exp < 1:
-        new_n_exp = 0
-        if not new_bright:
-            # Nothing valid left (no bleach term, no brightening) -- a flat
-            # constant is the only model left to fit.
-            return np.array([float(np.mean(tc))]), 0, False, snapped
-
-    x0, bnd = _init_sum_of_exps(tc, n_exp=new_n_exp, include_brightening=new_bright)
-    _, res = nonlinear_fit(tc, ts, model=sum_of_exps, x0=x0, bounds=bnd, M=None)
-    return (
-        _sort_bleach_params(res.x, new_n_exp, new_bright),
-        new_n_exp,
-        new_bright,
-        snapped,
-    )
 
 
 def _pad_sum_of_exps_params(
@@ -750,8 +699,9 @@ def tc_brightfit_v2(
     exponential (each kept only if it improves the RSS by `rss_thresh`), and
     finally refits the winning model on the full-resolution trace with
     robust IRLS (M-estimator `M`), warm-started from the decimated winner.
-    See `_snap_degenerate_slow_terms` for a post-fit check that drops any
-    term whose time constant landed at its upper bound.
+    Slow time constants are left effectively unbounded (`TAU_MAX`); a term
+    whose tau is poorly determined (flat b_inf/amplitude trade-off) is kept
+    as fitted rather than dropped.
 
     Any sample where `trace` or `timestamps` is non-finite is dropped (not
     interpolated) before fitting -- a single corrupted sample can otherwise
@@ -833,9 +783,13 @@ def tc_brightfit_v2(
     dt_ds = float(ts_ds[1] - ts_ds[0]) if len(ts_ds) > 1 else float(ds)
     n_eval_ds = min(len(tc_ds), round(t_eval_exp3 / dt_ds))
 
-    kw_ds = dict(model=sum_of_exps, M=None)
+    kw_ds = dict(model=sum_of_exps, M=None, optimizer_options=OPTIMIZER_OPTIONS)
     kw_full = dict(
-        model=sum_of_exps, M=M, maxiter=maxiter, sigma_anneal_steps=sigma_anneal_steps
+        model=sum_of_exps,
+        M=M,
+        maxiter=maxiter,
+        sigma_anneal_steps=sigma_anneal_steps,
+        optimizer_options=OPTIMIZER_OPTIONS,
     )
     if fixed_sigma is not None:
         kw_full["fixed_sigma"] = fixed_sigma
@@ -894,52 +848,14 @@ def tc_brightfit_v2(
         n_exp_won = n_exp_next
     model_str = f"{n_exp_won}-exp{'+bright' if include_bright else ''}"
 
-    # Drop any term whose time constant landed at its upper bound and refit.
-    params_ds, n_exp_won, include_bright, snapped = _snap_degenerate_slow_terms(
-        params_ds, n_exp_won, include_bright, tc_ds, ts_ds
-    )
-    if snapped:
-        model_str += f" [snapped: {','.join(snapped)}]"
-
     # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
-    if n_exp_won == 0 and not include_bright:
-        f0 = np.full_like(trace_valid, params_ds[0])
-    else:
-        _, bnd_full = _init_sum_of_exps(
-            trace_valid, n_exp=n_exp_won, include_brightening=include_bright
-        )
-        f0, res_full = nonlinear_fit(
-            trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
-        )
-        params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
-
-        # A reduced full-resolution refit can also move a remaining time
-        # constant to its cap, so keep reducing until the fitted model is stable.
-        while True:
-            params_full, n_exp_final, include_bright_final, snapped_final = (
-                _snap_degenerate_slow_terms(
-                    params_full, n_exp_won, include_bright, trace_valid, ts_valid
-                )
-            )
-            if not snapped_final:
-                break
-            n_exp_won, include_bright = n_exp_final, include_bright_final
-            model_str += f" [snapped: {','.join(snapped_final)}]"
-            if n_exp_won == 0 and not include_bright:
-                f0 = np.full_like(trace_valid, params_full[0])
-                break
-            _, bnd_full = _init_sum_of_exps(
-                trace_valid, n_exp=n_exp_won, include_brightening=include_bright
-            )
-            f0, res_full = nonlinear_fit(
-                trace_valid,
-                ts_valid,
-                x0=params_full,
-                bounds=bnd_full,
-                **kw_full,
-            )
-            params_full = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
-        params_ds = params_full
+    _, bnd_full = _init_sum_of_exps(
+        trace_valid, n_exp=n_exp_won, include_brightening=include_bright
+    )
+    f0, res_full = nonlinear_fit(
+        trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
+    )
+    params_ds = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
