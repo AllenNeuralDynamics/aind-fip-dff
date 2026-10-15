@@ -1,4 +1,4 @@
-# hash:sha256:17a391399f2ce0319072ea53256c5eacf8a17def6e54c270951c50d846b2357a
+# hash:sha256:c92ee8654315fc3d4ebb85b3d495cb441dd1761ed1eab91cab617d30b3b2b6bf
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -12,6 +12,7 @@ ENV PROCESS_NAME=aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
     aind-data-schema==1.4.0 \
+    aind-data-schema-models==0.8.0 \
     aind-metadata-upgrader==0.0.26 \
     aind-qcportal-schema==0.4.0 \
     hdmf-zarr==0.11.3 \
