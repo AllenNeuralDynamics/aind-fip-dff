@@ -574,8 +574,8 @@ def _init_sum_of_exps(
     trace : np.ndarray
         Fiber photometry signal (after cropping the initial transient).
     n_exp : int
-        Number of bleaching exponential terms. 0 (bleach-free, only valid
-        with `include_brightening=True`), 1, 2, or 3.
+        Number of bleaching exponential terms, 2 or 3 (model selection
+        starts at 2 and only ever adds a 3rd).
     include_brightening : bool
         Add a negative-amplitude exponential term for brightening.
 
@@ -590,17 +590,17 @@ def _init_sum_of_exps(
 
     if len(trace) == 0:
         raise ValueError("_init_sum_of_exps: trace must have at least 1 sample.")
+    if n_exp not in (2, 3):
+        raise ValueError(f"_init_sum_of_exps: n_exp must be 2 or 3, got {n_exp}.")
 
     b_inf = float(np.percentile(trace[-1000:], 10))
     b_inf_lo = float(trace[-1000:].mean() / 10)
     amp = float(trace[:500].mean() - b_inf)
     amp_cap = AMP_CAP_FACTOR * max(abs(amp), 1.0)
 
-    amp_fracs = {0: [], 1: [1.0], 2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
-    tau_inits = {0: [], 1: [600.0], 2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
+    amp_fracs = {2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
+    tau_inits = {2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
     tau_bounds = {
-        0: [],
-        1: [(60, TAU_MAX)],
         2: [(300, TAU_MAX), (1, 5000)],
         3: [(300, TAU_MAX), (1, 5000), (1, 180)],
     }[n_exp]
