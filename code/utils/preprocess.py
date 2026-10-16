@@ -949,8 +949,17 @@ def chunk_processing(
             from .experiment_bisect import tc_brightfit_v2_bisect
 
             tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect(tc_filtered, ts)
+        elif method == "bright_c25":
+            # Experimental, see experiment_bisect.py (same import caveat).
+            from .experiment_bisect import tc_brightfit_v2_c25
 
-        if method in ("bright", "bright_legacy", "bisect"):
+            tc_fit, tc_coefs = tc_brightfit_v2_c25(tc_filtered, ts)
+        elif method == "bisect_q05":
+            from .experiment_bisect import tc_brightfit_v2_bisect_q05
+
+            tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect_q05(tc_filtered, ts)
+
+        if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -974,6 +983,8 @@ def chunk_processing(
                     "bright": 9,
                     "bright_legacy": 9,
                     "bisect": 9,
+                    "bright_c25": 9,
+                    "bisect_q05": 9,
                 }[method]
             )
         }

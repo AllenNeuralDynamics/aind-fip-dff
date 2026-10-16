@@ -1031,6 +1031,8 @@ def create_metric(fiber, method, reference, value, motion=False):
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
     }
+    # Experimental variants share "bright"'s model (only the M-estimator differs).
+    baselines["bright_c25"] = baselines["bisect_q05"] = baselines["bisect"]
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -1091,6 +1093,24 @@ def _auto_status_history(status):
             status=status,
         )
     ]
+
+
+def _lower_tail_q05(signal: np.ndarray, f0: np.ndarray) -> float:
+    """5th percentile of `(signal - f0) / sigma`, `sigma` the Welch noise
+    estimate of `signal` -- the lower-tail diagnostic `bisect_q05` targets
+    (see utils/experiment_bisect.py). About -1.6 for Gaussian noise around a
+    correct baseline; much more negative if F0 sits too high (transients
+    pulling it up), near 0 or positive if F0 sits below the whole trace.
+    Written to dff_timing.csv (experiment branch only), not to the QC file.
+    NaN if there are no finite residuals or sigma is 0."""
+    resid = signal - f0
+    valid = np.isfinite(resid)
+    if not valid.any():
+        return np.nan
+    sigma = float(noise_std(signal[valid], method="welch"))
+    if not sigma > 0:
+        return np.nan
+    return float(np.percentile(resid[valid] / sigma, 5))
 
 
 def create_calibration_metric(fiber, method, ratio_by_channel):
@@ -1320,6 +1340,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
             "channel": channel,
             "fiber_number": fiber_number,
             "fit_time_s": fit_time_s,
+            "q05": _lower_tail_q05(NM_values, NM_fit),
         }
     )
     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
@@ -1473,7 +1494,9 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect"]:
+        if pp_name not in [
+            "poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"
+        ]:
             continue
 
         if args.serial:
@@ -1609,6 +1632,8 @@ def _params_as_dict(fiber, method, df_pp_params):
         "bright": 9,
         "bright_legacy": 9,
         "bisect": 9,
+        "bright_c25": 9,
+        "bisect_q05": 9,
     }
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
@@ -1655,6 +1680,7 @@ def _params_as_dict(fiber, method, df_pp_params):
             "tau_bright",
         ],
     }
+    param_names["bright_c25"] = param_names["bisect_q05"] = param_names["bisect"]
     # "index" (not "channel") so the QC portal uses channel names as the
     # DataFrame's row index instead of a redundant data column -- same
     # convention create_pregocue_metric uses for its field names.
@@ -1863,7 +1889,14 @@ def main():
             "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
             "'bright', but bisects the M-estimator's c_pos per trace toward a "
             "target calibration ratio instead of using a single fixed M (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)\n"
+            "  'bright_c25': EXPERIMENTAL. 'bright' with a fixed more asymmetric "
+            "M-estimator (c_pos=2.5, c_neg=4.0 instead of 3.5, 4.0); same cost as "
+            "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
+            "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit and "
+            "lowers c_pos within [2, 4] only as far as the lower tail of the "
+            "residuals requires (see utils.experiment_bisect."
+            "tc_brightfit_v2_bisect_q05)"
         ),
     )
     parser.add_argument(

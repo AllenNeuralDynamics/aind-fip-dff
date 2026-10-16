@@ -9,6 +9,10 @@ same idea `brightfit-comparison.ipynb`'s `nonlinear_fit_bisect` tested (and
 `tc_brightfit_v2`'s actual multi-stage architecture instead of a simplified
 single-stage fit.
 
+Also provides two further variants, wired as "bright_c25" (fixed c_pos=2.5,
+c_neg=4) and "bisect_q05" (symmetric start, c_pos lowered within [2, 4] only as
+far as the residuals' lower tail requires -- see `tc_brightfit_v2_bisect_q05`).
+
 Wired into `--dff_methods` as "bisect" on this experiment branch only (not
 part of aind-fip-dff PR #91) -- it exists purely to benchmark against the
 383-asset sweep and inform the bright_legacy-vs-bright M-estimator
@@ -47,6 +51,7 @@ from .preprocess import (
     _init_sum_of_exps,
     _pad_sum_of_exps_params,
     _sort_bleach_params,
+    tc_brightfit_v2,
 )
 
 
@@ -338,6 +343,129 @@ def tc_brightfit_v2_bisect(
         f0_out[valid] = best_f0
 
     return f0_out, _pad_sum_of_exps_params(best_params, best_n_exp, best_bright), best_c, final_model_str
+
+
+#: Fixed more-asymmetric M for `bright_c25`: on traces with frequent large
+#: transients, `M_DFF` (c_pos=3.5) puts F0 inside the dense lower part of the
+#: trace; c_pos=2.5 moves it to where the lower tail of the residuals looks
+#: like the trace's own noise (see `tc_brightfit_v2_bisect_q05`) at <0.5% F0
+#: change on clean / low-activity traces.
+M_C25 = NonlinearFitAsymmetricTukeyBiweight(c_pos=2.5, c_neg=4.0)
+
+
+def tc_brightfit_v2_c25(
+    trace: np.ndarray, timestamps: np.ndarray, **kwargs
+) -> tuple[np.ndarray, np.ndarray]:
+    """`tc_brightfit_v2` with the fixed M-estimator (c_pos=2.5, c_neg=4.0)
+    instead of `M_DFF` (3.5, 4.0). Same cost as `tc_brightfit_v2`."""
+    return tc_brightfit_v2(trace, timestamps, M=M_C25, **kwargs)
+
+
+def tc_brightfit_v2_bisect_q05(
+    trace: np.ndarray,
+    timestamps: np.ndarray,
+    c_neg: float = 4.0,
+    c_lo: float = 2.0,
+    c_hi: float = 4.0,
+    n_iter: int = 5,
+    q_target: float = -1.75,
+    rss_thresh: tuple[float, float] = (0.98, 0.97),
+    maxiter: int = 5,
+    ds: int = 10,
+    fixed_sigma: float | str | None = "auto",
+    sigma_anneal_steps: int = 4,
+    t_eval_exp3: float = 120.0,
+) -> tuple[np.ndarray, np.ndarray, float, str]:
+    """Capped per-trace choice of `c_pos` on the lower tail of the residuals.
+
+    Starts from the symmetric fit (`c_pos = c_hi = c_neg`). Its q05, the 5th
+    percentile of `(trace - f0) / sigma` (sigma: Welch noise estimate), is
+    about -1.6 on clean traces, as expected for Gaussian noise around a
+    correct baseline. If q05 is no more negative than `q_target` the symmetric
+    fit is kept. Otherwise `c_pos` is lowered (bisection on `[c_lo, c_hi]`;
+    q05 rises monotonically as `c_pos` falls) to the largest value whose q05
+    reaches `q_target`, i.e. only as far as needed to stop transients pulling
+    F0 up. Unlike `tc_brightfit_v2_bisect`, no calibration-ratio target is
+    used: on traces with dense transients a correctly placed baseline has a
+    ratio of 1.4-1.9, so a ratio target near 1 drives F0 too low.
+
+    Model selection runs once (M-independent, see this module's docstring);
+    only the full-resolution refit is repeated, at most `n_iter + 2` times.
+
+    Returns
+    -------
+    f0, params, c_pos_chosen, model_str : as `tc_brightfit_v2_bisect`.
+    """
+    valid = np.isfinite(trace) & np.isfinite(timestamps)
+    if not valid.any():
+        raise ValueError(
+            "tc_brightfit_v2_bisect_q05: every sample is non-finite (trace or "
+            "timestamps) -- nothing to fit."
+        )
+    n_dropped = int((~valid).sum())
+    if n_dropped:
+        warnings.warn(
+            f"tc_brightfit_v2_bisect_q05: dropping {n_dropped} non-finite "
+            "sample(s) (trace or timestamps) before fitting.",
+            stacklevel=2,
+        )
+    trace_valid, ts_valid = trace[valid], timestamps[valid]
+
+    sigma = fixed_sigma
+    if fixed_sigma == "auto":
+        sigma_est = float(noise_std(trace_valid, method="welch"))
+        fixed_sigma = sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
+
+    params_ds, n_exp_won, include_bright, model_str = _decimated_model_selection(
+        trace_valid, ts_valid, ds, rss_thresh, t_eval_exp3
+    )
+
+    cache: dict[float, tuple[np.ndarray, np.ndarray, float]] = {}
+
+    def _fit_and_q05(c_pos):
+        if c_pos not in cache:
+            M = NonlinearFitAsymmetricTukeyBiweight(c_pos=c_pos, c_neg=c_neg)
+            f0, params = _full_resolution_refit(
+                trace_valid, ts_valid, params_ds, n_exp_won, include_bright,
+                M, maxiter, sigma_anneal_steps, fixed_sigma,
+            )
+            q05 = (
+                float(np.percentile((trace_valid - f0) / sigma, 5))
+                if sigma
+                else np.nan
+            )
+            cache[c_pos] = (f0, params, q05)
+        return cache[c_pos]
+
+    best_c = c_hi
+    best_f0, best_params, q_hi = _fit_and_q05(c_hi)
+    # NaN q05 (no usable sigma) keeps the symmetric fit.
+    if np.isfinite(q_hi) and q_hi < q_target:
+        lo, hi = c_lo, c_hi
+        best_f0, best_params, _ = _fit_and_q05(lo)
+        best_c = lo
+        for _ in range(n_iter):
+            c_mid = (lo + hi) / 2
+            f0_mid, params_mid, q_mid = _fit_and_q05(c_mid)
+            if np.isfinite(q_mid) and q_mid >= q_target:
+                lo, best_f0, best_params, best_c = c_mid, f0_mid, params_mid, c_mid
+            else:
+                hi = c_mid
+
+    final_model_str = f"{model_str} [bisect_q05 c_pos={best_c:.3f}, {len(cache)} candidate(s)]"
+    logging.info(
+        f"tc_brightfit_v2_bisect_q05: {len(cache)} candidate(s), winning c_pos={best_c:.3f}"
+    )
+    f0_out = best_f0
+    if n_dropped:
+        f0_out = np.full(len(trace), np.nan)
+        f0_out[valid] = best_f0
+    return (
+        f0_out,
+        _pad_sum_of_exps_params(best_params, n_exp_won, include_bright),
+        best_c,
+        final_model_str,
+    )
 
 
 def benchmark_bisect_vs_default(

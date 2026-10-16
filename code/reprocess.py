@@ -107,8 +107,9 @@ def process1dataset(source_path, args, start_time):
         # Per-(method, fiber, channel) fit timing, not cumulative processing
         # time. Under `--parallel` (threading), `fit_time_s` can include
         # contention with sibling channels, so it's only precise for a
-        # serial (`--serial`, the default) run.
-        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+        # serial (`--serial`, the default) run. `q05` is the lower-tail
+        # diagnostic of run_capsule._lower_tail_q05 (experiment branch only).
+        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s", "q05"]].to_csv(
             destination_path / "dff_timing.csv", index=False
         )
 
@@ -212,7 +213,14 @@ if __name__ == "__main__":
             "  'bisect': EXPERIMENTAL, not for production use. Same model/fit as "
             "'bright', but bisects the M-estimator's c_pos per trace toward a "
             "target calibration ratio instead of using a single fixed M (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect)\n"
+            "  'bright_c25': EXPERIMENTAL. 'bright' with a fixed more asymmetric "
+            "M-estimator (c_pos=2.5, c_neg=4.0 instead of 3.5, 4.0); same cost as "
+            "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
+            "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit and "
+            "lowers c_pos within [2, 4] only as far as the lower tail of the "
+            "residuals requires (see utils.experiment_bisect."
+            "tc_brightfit_v2_bisect_q05)"
         ),
     )
     parser.add_argument(
