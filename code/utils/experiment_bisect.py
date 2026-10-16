@@ -353,6 +353,11 @@ def tc_brightfit_v2_bisect(
 #: change on clean / low-activity traces.
 M_C25 = NonlinearFitAsymmetricTukeyBiweight(c_pos=2.5, c_neg=4.0)
 
+#: `tc_brightfit_v2_bisect_q05` defaults; overridable at run time with
+#: `--bisect_q_trigger` / `--bisect_q_target` (run_capsule.py, reprocess.py).
+Q05_TRIGGER = -3.0
+Q05_TARGET = -1.75
+
 
 def tc_brightfit_v2_c25(
     trace: np.ndarray, timestamps: np.ndarray, **kwargs
@@ -369,8 +374,8 @@ def tc_brightfit_v2_bisect_q05(
     c_lo: float = 2.0,
     c_hi: float = 4.0,
     n_iter: int = 5,
-    q_target: float = -1.75,
-    q_trigger: float = -3.0,
+    q_target: float = Q05_TARGET,
+    q_trigger: float = Q05_TRIGGER,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
     maxiter: int = 5,
     ds: int = 10,

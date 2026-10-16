@@ -879,6 +879,8 @@ def chunk_processing(
     b_percentile: float | str = 0.7,
     robust: bool = True,
     trace_id: str = "",
+    q_trigger: float = -3.0,
+    q_target: float = -1.75,
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
 
@@ -909,6 +911,10 @@ def chunk_processing(
         'bright_legacy' method). Default is True.
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
+    q_trigger, q_target : float, optional
+        Only for the experimental 'bisect_q05' method: trigger and target of
+        its lower-tail cap (see experiment_bisect.tc_brightfit_v2_bisect_q05).
+        Defaults -3.0 and -1.75.
 
     Returns
     -------
@@ -958,7 +964,9 @@ def chunk_processing(
         elif method == "bisect_q05":
             from .experiment_bisect import tc_brightfit_v2_bisect_q05
 
-            tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(tc_filtered, ts)
+            tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(
+                tc_filtered, ts, q_target=q_target, q_trigger=q_trigger
+            )
 
         if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"):
             tc_dFoF = tc_filtered / tc_fit - 1

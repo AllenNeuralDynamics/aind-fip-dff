@@ -21,6 +21,8 @@ from run_capsule import (
     write_output_metadata,
     setup_logging_from_metadata,
     _b_percentile_type,
+    Q05_TARGET,
+    Q05_TRIGGER,
 )
 
 """
@@ -239,6 +241,27 @@ if __name__ == "__main__":
             "median of everything). 'mode': the half-sample mode of the "
             "whole ratio distribution instead. Default is 0.7 (median of "
             "the lowest 70%%), matching production."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_trigger",
+        type=float,
+        default=Q05_TRIGGER,
+        help=(
+            "Only for the experimental 'bisect_q05' method: its cap on c_pos fires "
+            "if the 5th percentile of (trace - F0)/sigma of the symmetric (4, 4) "
+            "fit is below this value. More negative fires less often. Default "
+            f"{Q05_TRIGGER}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_target",
+        type=float,
+        default=Q05_TARGET,
+        help=(
+            "Only for the experimental 'bisect_q05' method: once triggered, c_pos "
+            "is lowered (within [2, 4]) until that 5th percentile reaches this "
+            f"value. Default {Q05_TARGET}."
         ),
     )
     parser.add_argument(

@@ -45,6 +45,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
+from utils.experiment_bisect import Q05_TARGET, Q05_TRIGGER
 from utils.preprocess import chunk_processing, motion_correct
 
 """
@@ -1308,7 +1309,15 @@ def create_evaluation(method, metrics):
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
+def _process1channel(
+    channel,
+    df_fip,
+    fiber_number,
+    pp_name,
+    b_percentile=0.7,
+    q_trigger=Q05_TRIGGER,
+    q_target=Q05_TARGET,
+):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -1323,6 +1332,8 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
         method=pp_name,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
+        q_trigger=q_trigger,
+        q_target=q_target,
     )
     fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1356,6 +1367,8 @@ def _process1fiber(
     cutoff_freq_noise,
     serial,
     b_percentile=0.7,
+    q_trigger=Q05_TRIGGER,
+    q_target=Q05_TARGET,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1380,6 +1393,9 @@ def _process1fiber(
         'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
         0.7 (median of the lowest 70%), matching `chunk_processing`'s own
         default.
+    q_trigger, q_target : float, optional
+        Only for the experimental 'bisect_q05' method (see
+        `--bisect_q_trigger` / `--bisect_q_target`).
 
     Returns
     -------
@@ -1399,12 +1415,16 @@ def _process1fiber(
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile)
+            _process1channel(
+                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target
+            )
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, b_percentile)
+            delayed(_process1channel)(
+                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target
+            )
             for ch in channels
         )
 
@@ -1510,6 +1530,8 @@ def process_nwb_file(
                     args.cutoff_freq_noise,
                     args.serial,
                     args.b_percentile,
+                    args.bisect_q_trigger,
+                    args.bisect_q_target,
                 )
                 for fib in fiber_numbers
             ]
@@ -1524,6 +1546,8 @@ def process_nwb_file(
                     args.cutoff_freq_noise,
                     args.serial,
                     args.b_percentile,
+                    args.bisect_q_trigger,
+                    args.bisect_q_target,
                 )
                 for fib in fiber_numbers
             )
@@ -1912,6 +1936,27 @@ def main():
             "median of everything). 'mode': the half-sample mode of the "
             "whole ratio distribution instead. Default is 0.7 (median of "
             "the lowest 70%%), matching production."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_trigger",
+        type=float,
+        default=Q05_TRIGGER,
+        help=(
+            "Only for the experimental 'bisect_q05' method: its cap on c_pos fires "
+            "if the 5th percentile of (trace - F0)/sigma of the symmetric (4, 4) "
+            "fit is below this value. More negative fires less often. Default "
+            f"{Q05_TRIGGER}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_target",
+        type=float,
+        default=Q05_TARGET,
+        help=(
+            "Only for the experimental 'bisect_q05' method: once triggered, c_pos "
+            "is lowered (within [2, 4]) until that 5th percentile reaches this "
+            f"value. Default {Q05_TARGET}."
         ),
     )
     parser.add_argument(
