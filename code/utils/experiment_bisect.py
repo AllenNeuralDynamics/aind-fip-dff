@@ -390,7 +390,9 @@ def tc_brightfit_v2_bisect_q05(
     ratio of 1.4-1.9, so a ratio target near 1 drives F0 too low.
 
     Model selection runs once (M-independent, see this module's docstring);
-    only the full-resolution refit is repeated, at most `n_iter + 2` times.
+    only the full-resolution refit is repeated: once if the symmetric fit
+    already meets the cap, else `n_iter + 1` times (`n_iter + 2` if no
+    midpoint satisfies it and `c_lo` has to be fitted).
 
     Returns
     -------
@@ -441,16 +443,20 @@ def tc_brightfit_v2_bisect_q05(
     best_f0, best_params, q_hi = _fit_and_q05(c_hi)
     # NaN q05 (no usable sigma) keeps the symmetric fit.
     if np.isfinite(q_hi) and q_hi < q_target:
+        # `hi` is known to violate the cap; `lo` is only assumed to satisfy it,
+        # so it is fitted at the end, and only if no midpoint satisfied it.
         lo, hi = c_lo, c_hi
-        best_f0, best_params, _ = _fit_and_q05(lo)
-        best_c = lo
+        found = False
         for _ in range(n_iter):
             c_mid = (lo + hi) / 2
             f0_mid, params_mid, q_mid = _fit_and_q05(c_mid)
             if np.isfinite(q_mid) and q_mid >= q_target:
-                lo, best_f0, best_params, best_c = c_mid, f0_mid, params_mid, c_mid
+                lo, best_f0, best_params, best_c, found = c_mid, f0_mid, params_mid, c_mid, True
             else:
                 hi = c_mid
+        if not found:
+            best_f0, best_params, _ = _fit_and_q05(c_lo)
+            best_c = c_lo
 
     final_model_str = f"{model_str} [bisect_q05 c_pos={best_c:.3f}, {len(cache)} candidate(s)]"
     logging.info(
