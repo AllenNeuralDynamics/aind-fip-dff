@@ -10,8 +10,9 @@ same idea `brightfit-comparison.ipynb`'s `nonlinear_fit_bisect` tested (and
 single-stage fit.
 
 Also provides two further variants, wired as "bright_c25" (fixed c_pos=2.5,
-c_neg=4) and "bisect_q05" (symmetric start, c_pos lowered within [2, 4] only as
-far as the residuals' lower tail requires -- see `tc_brightfit_v2_bisect_q05`).
+c_neg=4) and "bisect_q05" (symmetric start; c_pos lowered within [2, 4] only on
+clear cases, q05 < -3, and only until q05 >= -1.75 -- see
+`tc_brightfit_v2_bisect_q05`).
 
 Wired into `--dff_methods` as "bisect" on this experiment branch only (not
 part of aind-fip-dff PR #91) -- it exists purely to benchmark against the
@@ -369,6 +370,7 @@ def tc_brightfit_v2_bisect_q05(
     c_hi: float = 4.0,
     n_iter: int = 5,
     q_target: float = -1.75,
+    q_trigger: float = -3.0,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
     maxiter: int = 5,
     ds: int = 10,
@@ -381,13 +383,20 @@ def tc_brightfit_v2_bisect_q05(
     Starts from the symmetric fit (`c_pos = c_hi = c_neg`). Its q05, the 5th
     percentile of `(trace - f0) / sigma` (sigma: Welch noise estimate), is
     about -1.6 on clean traces, as expected for Gaussian noise around a
-    correct baseline. If q05 is no more negative than `q_target` the symmetric
-    fit is kept. Otherwise `c_pos` is lowered (bisection on `[c_lo, c_hi]`;
-    q05 rises monotonically as `c_pos` falls) to the largest value whose q05
-    reaches `q_target`, i.e. only as far as needed to stop transients pulling
-    F0 up. Unlike `tc_brightfit_v2_bisect`, no calibration-ratio target is
-    used: on traces with dense transients a correctly placed baseline has a
-    ratio of 1.4-1.9, so a ratio target near 1 drives F0 too low.
+    correct baseline. Only if q05 is more negative than `q_trigger` (default
+    -3.0: clear cases, where transients pull F0 well above the baseline) is
+    `c_pos` lowered (bisection on `[c_lo, c_hi]`; q05 rises monotonically as
+    `c_pos` falls) to the largest value whose q05 reaches `q_target`. Otherwise
+    the symmetric fit is kept.
+
+    Trigger and target are separate on purpose. The Welch sigma underestimates
+    the baseline spread of Iso and R traces, whose correctly placed F0 shows
+    q05 of -1.8 to -2.2; a single threshold at `q_target` fired on 54-66% of
+    traces (mostly Iso/R) and lowered their F0 by ~0.2%. At -3.0 the cap fires
+    on dense-transient fibers and gross misfits only. Unlike
+    `tc_brightfit_v2_bisect`, no calibration-ratio target is used: on traces
+    with dense transients a correctly placed baseline has a ratio of 1.4-1.9,
+    so a ratio target near 1 drives F0 too low.
 
     Model selection runs once (M-independent, see this module's docstring);
     only the full-resolution refit is repeated: once if the symmetric fit
@@ -442,7 +451,7 @@ def tc_brightfit_v2_bisect_q05(
     best_c = c_hi
     best_f0, best_params, q_hi = _fit_and_q05(c_hi)
     # NaN q05 (no usable sigma) keeps the symmetric fit.
-    if np.isfinite(q_hi) and q_hi < q_target:
+    if np.isfinite(q_hi) and q_hi < q_trigger:
         # `hi` is known to violate the cap; `lo` is only assumed to satisfy it,
         # so it is fitted at the end, and only if no midpoint satisfied it.
         lo, hi = c_lo, c_hi
