@@ -923,6 +923,7 @@ def chunk_processing(
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
+    c_pos_chosen = None
     try:
         if method == "poly":
             tc_fit, tc_coefs = tc_polyfit(tc_filtered, ts, degree)
@@ -948,7 +949,7 @@ def chunk_processing(
             # reviewed bright/bright_legacy/poly/exp/tri-exp methods.
             from .experiment_bisect import tc_brightfit_v2_bisect
 
-            tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect(tc_filtered, ts)
+            tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect(tc_filtered, ts)
         elif method == "bright_c25":
             # Experimental, see experiment_bisect.py (same import caveat).
             from .experiment_bisect import tc_brightfit_v2_c25
@@ -957,7 +958,7 @@ def chunk_processing(
         elif method == "bisect_q05":
             from .experiment_bisect import tc_brightfit_v2_bisect_q05
 
-            tc_fit, tc_coefs, _, _ = tc_brightfit_v2_bisect_q05(tc_filtered, ts)
+            tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(tc_filtered, ts)
 
         if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"):
             tc_dFoF = tc_filtered / tc_fit - 1
@@ -967,6 +968,11 @@ def chunk_processing(
             tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
         tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
+        if c_pos_chosen is not None:
+            # Experiment branch: the bisect variants' chosen c_pos goes to
+            # dff_timing.csv (an extra, non-integer key, ignored by the QC
+            # parameter tables).
+            tc_params["c_pos"] = c_pos_chosen
     except Exception as e:
         logging.warning(
             f"Processing {trace_id} with method {method} failed with Error {e}. Setting dF/F to nans."

@@ -109,7 +109,10 @@ def process1dataset(source_path, args, start_time):
         # contention with sibling channels, so it's only precise for a
         # serial (`--serial`, the default) run. `q05` is the lower-tail
         # diagnostic of run_capsule._lower_tail_q05 (experiment branch only).
-        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s", "q05"]].to_csv(
+        timing_cols = ["preprocess", "channel", "fiber_number", "fit_time_s", "q05"]
+        if "c_pos" in df_pp_params:  # chosen c_pos of the bisect variants, NaN otherwise
+            timing_cols.append("c_pos")
+        df_pp_params[timing_cols].to_csv(
             destination_path / "dff_timing.csv", index=False
         )
 
