@@ -142,20 +142,29 @@ def write_output_metadata(
 
     dd_file = Path(json_dir) / "data_description.json"
     if dd_file.exists():
-        with open(dd_file, "r") as f:
-            dd_data = json.load(f)
-        dd_data["modality"] = [
-            m
-            for m in dd_data.get("modality", [])
-            if isinstance(m, dict)
-            and m.get("abbreviation") in ("behavior", "fib")
-        ]
-        dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
-        new_dd = dd_upgrader.upgrade()
-        derived_dd = DerivedDataDescription.from_data_description(
-            data_description=new_dd, process_name="processed"
-        )
-        derived_dd.write_standard_file(output_directory=Path(output_fp))
+        try:
+            with open(dd_file, "r") as f:
+                dd_data = json.load(f)
+            dd_data["modality"] = [
+                m
+                for m in dd_data.get("modality", [])
+                if isinstance(m, dict)
+                and m.get("abbreviation") in ("behavior", "fib")
+            ]
+            dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
+            new_dd = dd_upgrader.upgrade()
+            derived_dd = DerivedDataDescription.from_data_description(
+                data_description=new_dd, process_name="processed"
+            )
+            derived_dd.write_standard_file(output_directory=Path(output_fp))
+        except Exception:
+            # The upgrader rejects metadata it does not understand (e.g. a
+            # funding_source entry with an `investigators` field). That must not
+            # discard the NWB, QC and processing outputs already written for
+            # this asset (reprocess.py deletes the whole destination on error).
+            logging.exception(
+                f"Could not upgrade {dd_file}; no derived data_description.json written"
+            )
     else:
         logging.error("no input data description")
 
