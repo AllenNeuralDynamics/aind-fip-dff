@@ -11,7 +11,7 @@ single-stage fit.
 
 Also provides two further variants, wired as "bright_c25" (fixed c_pos=2.5,
 c_neg=4) and "bisect_q05" (symmetric start; c_pos lowered within [2, 4] only on
-clear cases, q05 < -3, and only until q05 >= -1.75 -- see
+clear cases, q05 < -2.5, and only until q05 >= -1.75 -- see
 `tc_brightfit_v2_bisect_q05`).
 
 Wired into `--dff_methods` as "bisect" on this experiment branch only (not
@@ -355,7 +355,7 @@ M_C25 = NonlinearFitAsymmetricTukeyBiweight(c_pos=2.5, c_neg=4.0)
 
 #: `tc_brightfit_v2_bisect_q05` defaults; overridable at run time with
 #: `--bisect_q_trigger` / `--bisect_q_target` (run_capsule.py, reprocess.py).
-Q05_TRIGGER = -3.0
+Q05_TRIGGER = -2.5
 Q05_TARGET = -1.75
 
 
@@ -389,7 +389,7 @@ def tc_brightfit_v2_bisect_q05(
     percentile of `(trace - f0) / sigma` (sigma: Welch noise estimate), is
     about -1.6 on clean traces, as expected for Gaussian noise around a
     correct baseline. Only if q05 is more negative than `q_trigger` (default
-    -3.0: clear cases, where transients pull F0 well above the baseline) is
+    -2.5: clear cases, where transients pull F0 well above the baseline) is
     `c_pos` lowered (bisection on `[c_lo, c_hi]`; q05 rises monotonically as
     `c_pos` falls) to the largest value whose q05 reaches `q_target`. Otherwise
     the symmetric fit is kept.
@@ -397,8 +397,9 @@ def tc_brightfit_v2_bisect_q05(
     Trigger and target are separate on purpose. The Welch sigma underestimates
     the baseline spread of Iso and R traces, whose correctly placed F0 shows
     q05 of -1.8 to -2.2; a single threshold at `q_target` fired on 54-66% of
-    traces (mostly Iso/R) and lowered their F0 by ~0.2%. At -3.0 the cap fires
-    on dense-transient fibers and gross misfits only. Unlike
+    traces (mostly Iso/R) and lowered their F0 by ~0.2%. At -2.5, the knee of a
+    trigger sweep (-3.0 ... -2.0) on two animals, the cap fires on
+    dense-transient fibers and gross misfits only. Unlike
     `tc_brightfit_v2_bisect`, no calibration-ratio target is used: on traces
     with dense transients a correctly placed baseline has a ratio of 1.4-1.9,
     so a ratio target near 1 drives F0 too low.

@@ -879,7 +879,7 @@ def chunk_processing(
     b_percentile: float | str = 0.7,
     robust: bool = True,
     trace_id: str = "",
-    q_trigger: float = -3.0,
+    q_trigger: float = -2.5,
     q_target: float = -1.75,
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
@@ -914,7 +914,7 @@ def chunk_processing(
     q_trigger, q_target : float, optional
         Only for the experimental 'bisect_q05' method: trigger and target of
         its lower-tail cap (see experiment_bisect.tc_brightfit_v2_bisect_q05).
-        Defaults -3.0 and -1.75.
+        Defaults -2.5 and -1.75.
 
     Returns
     -------

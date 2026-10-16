@@ -223,7 +223,7 @@ if __name__ == "__main__":
             "M-estimator (c_pos=2.5, c_neg=4.0 instead of 3.5, 4.0); same cost as "
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
-            "if the lower tail of the residuals shows a clear misfit (q05 < -3) "
+            "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
             "does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
