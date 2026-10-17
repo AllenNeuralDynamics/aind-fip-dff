@@ -370,6 +370,12 @@ Q05_TARGET = -1.75
 #: lowering c_pos only drags F0 under the data. `None` disables the gate.
 SKEW_GATE = 1.5
 SKEW_CHUNK = 1200
+#: ... or the symmetric fit's q05 is below this (`--bisect_q_gross`): a gross misfit.
+#: On very active fibers whose signal swings continuously (no quiet baseline cloud)
+#: the residuals of a misplaced F0 are NOT one-sided (skew 0.05-0.4) although q05
+#: is -7 to -17; a q05 of -5 or below is far outside what wander of Iso/R produces
+#: (those fits stay above about -4.5). `None` disables this alternative.
+Q05_GROSS = -5.0
 
 
 def chunked_skew(resid: np.ndarray, chunk: int = SKEW_CHUNK) -> float:
@@ -401,6 +407,7 @@ def tc_brightfit_v2_bisect_q05(
     q_target: float = Q05_TARGET,
     q_trigger: float = Q05_TRIGGER,
     skew_gate: float | None = SKEW_GATE,
+    q_gross: float | None = Q05_GROSS,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
     maxiter: int = 5,
     ds: int = 10,
@@ -419,8 +426,9 @@ def tc_brightfit_v2_bisect_q05(
     `c_pos` falls) to the largest value whose q05 reaches `q_target`. Otherwise
     the symmetric fit is kept. The cap additionally requires the chunked
     residual skewness of the symmetric fit to exceed `skew_gate` (see
-    `SKEW_GATE`; `None` = no gate): a q05 excess without one-sided
-    residuals is not a baseline pulled up by transients.
+    `SKEW_GATE`; `None` = no gate) or its q05 to be below `q_gross` (see
+    `Q05_GROSS`): a q05 excess without one-sided residuals is not a baseline
+    pulled up by transients, unless the misfit is gross.
 
     Trigger and target are separate on purpose. The Welch sigma underestimates
     the baseline spread of Iso and R traces, whose correctly placed F0 shows
@@ -487,7 +495,8 @@ def tc_brightfit_v2_bisect_q05(
     # NaN q05 (no usable sigma) keeps the symmetric fit.
     gated_out = False
     if np.isfinite(q_hi) and q_hi < q_trigger and skew_gate is not None:
-        gated_out = not (chunked_skew(trace_valid - best_f0) > skew_gate)
+        gross = q_gross is not None and q_hi < q_gross
+        gated_out = not (gross or chunked_skew(trace_valid - best_f0) > skew_gate)
     if np.isfinite(q_hi) and q_hi < q_trigger and not gated_out:
         # `hi` is known to violate the cap; `lo` is only assumed to satisfy it,
         # so it is fitted at the end, and only if no midpoint satisfied it.

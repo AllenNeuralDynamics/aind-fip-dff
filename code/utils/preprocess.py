@@ -888,6 +888,7 @@ def chunk_processing(
     q_trigger: float = -2.5,
     q_target: float = -1.75,
     skew_gate: float | None = 1.5,
+    q_gross: float | None = -5.0,
 ) -> tuple[np.ndarray, dict, np.ndarray]:
     """Calculate dF/F of the fiber photometry signal.
 
@@ -924,7 +925,8 @@ def chunk_processing(
         Defaults -2.5 and -1.75.
     skew_gate : float or None, optional
         Only for 'bisect_q05': the cap needs a chunked residual skewness above
-        this value (None disables the gate). Default 1.5.
+        this value (None disables the gate), unless q05 is below `q_gross`
+        (default -5.0, None disables that alternative). Default 1.5.
 
     Returns
     -------
@@ -976,7 +978,7 @@ def chunk_processing(
 
             tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(
                 tc_filtered, ts, q_target=q_target, q_trigger=q_trigger,
-                skew_gate=skew_gate,
+                skew_gate=skew_gate, q_gross=q_gross,
             )
 
         if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"):

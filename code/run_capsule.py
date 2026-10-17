@@ -45,7 +45,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.experiment_bisect import Q05_TARGET, Q05_TRIGGER, SKEW_GATE, chunked_skew
+from utils.experiment_bisect import Q05_GROSS, Q05_TARGET, Q05_TRIGGER, SKEW_GATE, chunked_skew
 from utils.preprocess import chunk_processing, motion_correct
 
 """
@@ -1326,6 +1326,7 @@ def _process1channel(
     q_trigger=Q05_TRIGGER,
     q_target=Q05_TARGET,
     skew_gate=SKEW_GATE,
+    q_gross=Q05_GROSS,
 ):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
@@ -1344,6 +1345,7 @@ def _process1channel(
         q_trigger=q_trigger,
         q_target=q_target,
         skew_gate=skew_gate,
+        q_gross=q_gross,
     )
     fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1381,6 +1383,7 @@ def _process1fiber(
     q_trigger=Q05_TRIGGER,
     q_target=Q05_TARGET,
     skew_gate=SKEW_GATE,
+    q_gross=Q05_GROSS,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1405,7 +1408,7 @@ def _process1fiber(
         'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
         0.7 (median of the lowest 70%), matching `chunk_processing`'s own
         default.
-    q_trigger, q_target, skew_gate : float, optional
+    q_trigger, q_target, skew_gate, q_gross : float, optional
         Only for the experimental 'bisect_q05' method (see
         `--bisect_q_trigger` / `--bisect_q_target` / `--bisect_skew_gate`).
 
@@ -1430,6 +1433,7 @@ def _process1fiber(
             _process1channel(
                 ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target,
                 skew_gate,
+                q_gross,
             )
             for ch in channels
         ]
@@ -1438,6 +1442,7 @@ def _process1fiber(
             delayed(_process1channel)(
                 ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target,
                 skew_gate,
+                q_gross,
             )
             for ch in channels
         )
@@ -1547,6 +1552,7 @@ def process_nwb_file(
                     args.bisect_q_trigger,
                     args.bisect_q_target,
                     args.bisect_skew_gate,
+                    args.bisect_q_gross,
                 )
                 for fib in fiber_numbers
             ]
@@ -1564,6 +1570,7 @@ def process_nwb_file(
                     args.bisect_q_trigger,
                     args.bisect_q_target,
                     args.bisect_skew_gate,
+                    args.bisect_q_gross,
                 )
                 for fib in fiber_numbers
             )
@@ -1935,7 +1942,7 @@ def main():
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
-            "and one-sided residuals does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
+            "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
@@ -1984,6 +1991,16 @@ def main():
             "only if the mean skewness of the symmetric fit's residuals over "
             "60 s windows exceeds this value (dense transients make the residuals "
             f"one-sided; slow wander does not). Default {SKEW_GATE}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_gross",
+        type=float,
+        default=Q05_GROSS,
+        help=(
+            "Only for the experimental 'bisect_q05' method: the cap acts regardless of "
+            "the skew gate if q05 of the symmetric fit is below this value (a gross "
+            f"misfit). Very negative values disable it. Default {Q05_GROSS}."
         ),
     )
     parser.add_argument(

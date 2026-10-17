@@ -24,6 +24,7 @@ from run_capsule import (
     Q05_TARGET,
     Q05_TRIGGER,
     SKEW_GATE,
+    Q05_GROSS,
 )
 
 """
@@ -225,7 +226,7 @@ if __name__ == "__main__":
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
-            "and one-sided residuals does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
+            "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
@@ -274,6 +275,16 @@ if __name__ == "__main__":
             "only if the mean skewness of the symmetric fit's residuals over "
             "60 s windows exceeds this value (dense transients make the residuals "
             f"one-sided; slow wander does not). Default {SKEW_GATE}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_q_gross",
+        type=float,
+        default=Q05_GROSS,
+        help=(
+            "Only for the experimental 'bisect_q05' method: the cap acts regardless of "
+            "the skew gate if q05 of the symmetric fit is below this value (a gross "
+            f"misfit). Very negative values disable it. Default {Q05_GROSS}."
         ),
     )
     parser.add_argument(
