@@ -11,7 +11,8 @@ single-stage fit.
 
 Also provides two further variants, wired as "bright_c25" (fixed c_pos=2.5,
 c_neg=4) and "bisect_q05" (symmetric start; c_pos lowered within [2, 4] only on
-clear cases, q05 < -2.5, and only until q05 >= -1.75 -- see
+clear cases (q05 < -2.5 and positively skewed residuals, see `SKEW_GATE`),
+and only until q05 >= -1.75 -- see
 `tc_brightfit_v2_bisect_q05`).
 
 Wired into `--dff_methods` as "bisect" on this experiment branch only (not
@@ -46,6 +47,7 @@ from aind_ophys_utils.baseline_fitting import (
 from aind_ophys_utils.baseline_fitting import nonlinear_fit, sum_of_exps
 from aind_ophys_utils.array_utils import downsample_array
 from aind_ophys_utils.signal_utils import noise_std
+from scipy.stats import skew
 
 from .preprocess import (
     OPTIMIZER_OPTIONS,
@@ -358,6 +360,28 @@ M_C25 = NonlinearFitAsymmetricTukeyBiweight(c_pos=2.5, c_neg=4.0)
 Q05_TRIGGER = -2.5
 Q05_TARGET = -1.75
 
+#: Gate on the residual skewness of the symmetric fit (`--bisect_skew_gate`):
+#: the cap only acts if the mean skewness of the residuals over 60 s windows
+#: (`SKEW_CHUNK` samples, as in `bright_legacy`'s skewness correction) exceeds
+#: this. Dense transients make the residuals strongly one-sided (skew 2.2-5.3
+#: on 72 such traces), while a q05 excess from slow wander, two-level traces
+#: or a Welch sigma that underestimates the spread of Iso/R is not (skew
+#: < 0.8 on the other 49 traces whose q05 passed the trigger), and there
+#: lowering c_pos only drags F0 under the data. `None` disables the gate.
+SKEW_GATE = 1.5
+SKEW_CHUNK = 1200
+
+
+def chunked_skew(resid: np.ndarray, chunk: int = SKEW_CHUNK) -> float:
+    """Mean skewness of `resid` over consecutive windows of `chunk` samples
+    (a trailing window shorter than `chunk / 2` is dropped), as
+    `bright_legacy` computes it. Unlike the skewness of the whole trace it
+    is not inflated by slow level changes or a few large artifacts. Falls
+    back to the whole-trace skewness for traces shorter than `chunk / 2`."""
+    starts = range(0, len(resid) - chunk // 2 + 1, chunk)
+    vals = [skew(resid[t0 : t0 + chunk]) for t0 in starts]
+    return float(np.mean(vals)) if vals else float(skew(resid))
+
 
 def tc_brightfit_v2_c25(
     trace: np.ndarray, timestamps: np.ndarray, **kwargs
@@ -376,6 +400,7 @@ def tc_brightfit_v2_bisect_q05(
     n_iter: int = 5,
     q_target: float = Q05_TARGET,
     q_trigger: float = Q05_TRIGGER,
+    skew_gate: float | None = SKEW_GATE,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
     maxiter: int = 5,
     ds: int = 10,
@@ -392,7 +417,10 @@ def tc_brightfit_v2_bisect_q05(
     -2.5: clear cases, where transients pull F0 well above the baseline) is
     `c_pos` lowered (bisection on `[c_lo, c_hi]`; q05 rises monotonically as
     `c_pos` falls) to the largest value whose q05 reaches `q_target`. Otherwise
-    the symmetric fit is kept.
+    the symmetric fit is kept. The cap additionally requires the chunked
+    residual skewness of the symmetric fit to exceed `skew_gate` (see
+    `SKEW_GATE`; `None` = no gate): a q05 excess without one-sided
+    residuals is not a baseline pulled up by transients.
 
     Trigger and target are separate on purpose. The Welch sigma underestimates
     the baseline spread of Iso and R traces, whose correctly placed F0 shows
@@ -457,7 +485,10 @@ def tc_brightfit_v2_bisect_q05(
     best_c = c_hi
     best_f0, best_params, q_hi = _fit_and_q05(c_hi)
     # NaN q05 (no usable sigma) keeps the symmetric fit.
-    if np.isfinite(q_hi) and q_hi < q_trigger:
+    gated_out = False
+    if np.isfinite(q_hi) and q_hi < q_trigger and skew_gate is not None:
+        gated_out = not (chunked_skew(trace_valid - best_f0) > skew_gate)
+    if np.isfinite(q_hi) and q_hi < q_trigger and not gated_out:
         # `hi` is known to violate the cap; `lo` is only assumed to satisfy it,
         # so it is fitted at the end, and only if no midpoint satisfied it.
         lo, hi = c_lo, c_hi
@@ -473,7 +504,10 @@ def tc_brightfit_v2_bisect_q05(
             best_f0, best_params, _ = _fit_and_q05(c_lo)
             best_c = c_lo
 
-    final_model_str = f"{model_str} [bisect_q05 c_pos={best_c:.3f}, {len(cache)} candidate(s)]"
+    final_model_str = (
+        f"{model_str} [bisect_q05 c_pos={best_c:.3f}, {len(cache)} candidate(s)"
+        f"{', skew gate' if gated_out else ''}]"
+    )
     logging.info(
         f"tc_brightfit_v2_bisect_q05: {len(cache)} candidate(s), winning c_pos={best_c:.3f}"
     )

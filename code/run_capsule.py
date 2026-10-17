@@ -45,7 +45,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.experiment_bisect import Q05_TARGET, Q05_TRIGGER
+from utils.experiment_bisect import Q05_TARGET, Q05_TRIGGER, SKEW_GATE, chunked_skew
 from utils.preprocess import chunk_processing, motion_correct
 
 """
@@ -1114,6 +1114,14 @@ def _lower_tail_q05(signal: np.ndarray, f0: np.ndarray) -> float:
     return float(np.percentile(resid[valid] / sigma, 5))
 
 
+def _residual_skew(signal: np.ndarray, f0: np.ndarray) -> float:
+    """Chunked residual skewness (see `experiment_bisect.chunked_skew`) of
+    `signal - f0`; the quantity `bisect_q05`'s skew gate looks at. Written to
+    dff_timing.csv (experiment branch only). NaN if there are no finite residuals."""
+    resid = (signal - f0)[np.isfinite(signal - f0)]
+    return chunked_skew(resid) if len(resid) else np.nan
+
+
 def create_calibration_metric(fiber, method, ratio_by_channel):
     """Create a QC metric for the per-channel negative-residual calibration ratio.
 
@@ -1317,6 +1325,7 @@ def _process1channel(
     b_percentile=0.7,
     q_trigger=Q05_TRIGGER,
     q_target=Q05_TARGET,
+    skew_gate=SKEW_GATE,
 ):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
@@ -1334,6 +1343,7 @@ def _process1channel(
         trace_id=f"{channel}_{fiber_number}",
         q_trigger=q_trigger,
         q_target=q_target,
+        skew_gate=skew_gate,
     )
     fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
@@ -1352,6 +1362,7 @@ def _process1channel(
             "fiber_number": fiber_number,
             "fit_time_s": fit_time_s,
             "q05": _lower_tail_q05(NM_values, NM_fit),
+            "skew": _residual_skew(NM_values, NM_fit),
         }
     )
     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
@@ -1369,6 +1380,7 @@ def _process1fiber(
     b_percentile=0.7,
     q_trigger=Q05_TRIGGER,
     q_target=Q05_TARGET,
+    skew_gate=SKEW_GATE,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1393,9 +1405,9 @@ def _process1fiber(
         'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
         0.7 (median of the lowest 70%), matching `chunk_processing`'s own
         default.
-    q_trigger, q_target : float, optional
+    q_trigger, q_target, skew_gate : float, optional
         Only for the experimental 'bisect_q05' method (see
-        `--bisect_q_trigger` / `--bisect_q_target`).
+        `--bisect_q_trigger` / `--bisect_q_target` / `--bisect_skew_gate`).
 
     Returns
     -------
@@ -1416,14 +1428,16 @@ def _process1fiber(
     if serial:
         res = [
             _process1channel(
-                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target
+                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target,
+                skew_gate,
             )
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
             delayed(_process1channel)(
-                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target
+                ch, df_fip, fiber_number, pp_name, b_percentile, q_trigger, q_target,
+                skew_gate,
             )
             for ch in channels
         )
@@ -1532,6 +1546,7 @@ def process_nwb_file(
                     args.b_percentile,
                     args.bisect_q_trigger,
                     args.bisect_q_target,
+                    args.bisect_skew_gate,
                 )
                 for fib in fiber_numbers
             ]
@@ -1548,6 +1563,7 @@ def process_nwb_file(
                     args.b_percentile,
                     args.bisect_q_trigger,
                     args.bisect_q_target,
+                    args.bisect_skew_gate,
                 )
                 for fib in fiber_numbers
             )
@@ -1919,7 +1935,7 @@ def main():
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
-            "does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
+            "and one-sided residuals does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
@@ -1957,6 +1973,17 @@ def main():
             "Only for the experimental 'bisect_q05' method: once triggered, c_pos "
             "is lowered (within [2, 4]) until that 5th percentile reaches this "
             f"value. Default {Q05_TARGET}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_skew_gate",
+        type=float,
+        default=SKEW_GATE,
+        help=(
+            "Only for the experimental 'bisect_q05' method: its cap on c_pos acts "
+            "only if the mean skewness of the symmetric fit's residuals over "
+            "60 s windows exceeds this value (dense transients make the residuals "
+            f"one-sided; slow wander does not). Default {SKEW_GATE}."
         ),
     )
     parser.add_argument(

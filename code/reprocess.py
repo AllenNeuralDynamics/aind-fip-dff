@@ -23,6 +23,7 @@ from run_capsule import (
     _b_percentile_type,
     Q05_TARGET,
     Q05_TRIGGER,
+    SKEW_GATE,
 )
 
 """
@@ -111,7 +112,7 @@ def process1dataset(source_path, args, start_time):
         # contention with sibling channels, so it's only precise for a
         # serial (`--serial`, the default) run. `q05` is the lower-tail
         # diagnostic of run_capsule._lower_tail_q05 (experiment branch only).
-        timing_cols = ["preprocess", "channel", "fiber_number", "fit_time_s", "q05"]
+        timing_cols = ["preprocess", "channel", "fiber_number", "fit_time_s", "q05", "skew"]
         if "c_pos" in df_pp_params:  # chosen c_pos of the bisect variants, NaN otherwise
             timing_cols.append("c_pos")
         df_pp_params[timing_cols].to_csv(
@@ -224,7 +225,7 @@ if __name__ == "__main__":
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
-            "does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
+            "and one-sided residuals does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
@@ -262,6 +263,17 @@ if __name__ == "__main__":
             "Only for the experimental 'bisect_q05' method: once triggered, c_pos "
             "is lowered (within [2, 4]) until that 5th percentile reaches this "
             f"value. Default {Q05_TARGET}."
+        ),
+    )
+    parser.add_argument(
+        "--bisect_skew_gate",
+        type=float,
+        default=SKEW_GATE,
+        help=(
+            "Only for the experimental 'bisect_q05' method: its cap on c_pos acts "
+            "only if the mean skewness of the symmetric fit's residuals over "
+            "60 s windows exceeds this value (dense transients make the residuals "
+            f"one-sided; slow wander does not). Default {SKEW_GATE}."
         ),
     )
     parser.add_argument(
