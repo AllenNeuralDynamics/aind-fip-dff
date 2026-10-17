@@ -567,7 +567,12 @@ def _init_sum_of_exps(
     to zero. Bleach amplitudes are constrained >= 0; brightening (when
     included) is a dedicated negative-amplitude term rather than a negative
     bleach amplitude. tau1's and the brightening tau's upper bounds are
-    `TAU_MAX` (effectively unbounded).
+    `TAU_MAX` (effectively unbounded). Amplitudes are capped at the larger of
+    10x the start-to-asymptote difference and half of b_inf: the first alone
+    collapses to ~10-20 (a.u.) on traces whose start and end levels agree, and
+    then a slow decay and a slow brightening term, which nearly cancel, cannot
+    form the mid-session hump legacy's multiplicative baseline fits (the fit
+    ended at 2-3x the RSS of legacy on such traces).
 
     Parameters
     ----------
@@ -587,6 +592,7 @@ def _init_sum_of_exps(
         Bounds for each parameter in `x0`, for `nonlinear_fit`.
     """
     AMP_CAP_FACTOR = 10.0
+    AMP_CAP_REL = 0.5  # of b_inf
 
     if len(trace) == 0:
         raise ValueError("_init_sum_of_exps: trace must have at least 1 sample.")
@@ -596,7 +602,7 @@ def _init_sum_of_exps(
     b_inf = float(np.percentile(trace[-1000:], 10))
     b_inf_lo = float(trace[-1000:].mean() / 10)
     amp = float(trace[:500].mean() - b_inf)
-    amp_cap = AMP_CAP_FACTOR * max(abs(amp), 1.0)
+    amp_cap = max(AMP_CAP_FACTOR * max(abs(amp), 1.0), AMP_CAP_REL * b_inf)
 
     amp_fracs = {2: [0.7, 0.3], 3: [0.65, 0.30, 0.05]}[n_exp]
     tau_inits = {2: [3600.0, 600.0], 3: [3600.0, 600.0, 30.0]}[n_exp]
