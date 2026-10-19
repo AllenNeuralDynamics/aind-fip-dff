@@ -1317,11 +1317,13 @@ def create_evaluation(method, metrics):
     )
 
 
-#: Channels where 'bisect_q05' keeps the symmetric (4, 4) fit. Iso has no neural activity,
-#: so its true pre-event dF/F is ~0: on all 16 sweep traces where the cap fired and a
-#: pre-event value exists, it left a larger offset than 'bright' (0.03-0.26% vs ~0.00-0.02%),
-#: even where it brought q05 to -1.6 (the Welch sigma is unreliable on Iso).
-BISECT_Q05_NO_CAP_CHANNELS = ("Iso",)
+#: Channels where 'bisect_q05' keeps the symmetric (4, 4) fit; only G is capped.
+#: Iso has no neural activity, so its true pre-event dF/F is ~0: on all 16 sweep traces
+#: where the cap fired and a pre-event value exists, it left a larger offset than 'bright'
+#: (0.03-0.26% vs ~0.00-0.02%), even where it brought q05 to -1.6 (the Welch sigma is
+#: unreliable on Iso). R: on 21 of 23 capped traces it put F0 below bright_legacy's (median
+#: pre-event offset 0.04% vs 0.003%), the opposite of what the cap is for.
+BISECT_Q05_NO_CAP_CHANNELS = ("Iso", "R")
 
 
 def _process1channel(
@@ -1952,7 +1954,7 @@ def main():
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
             "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75; "
-            "never on the Iso channel, which keeps the symmetric fit (see "
+            "only on the G channel, Iso and R keep the symmetric fit (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
