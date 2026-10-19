@@ -228,7 +228,9 @@ if __name__ == "__main__":
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
             "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75; "
             "only on the G channel, Iso and R keep the symmetric fit (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)\n"
+            "  'bisect_q05_t200', 'bisect_q05_t225': EXPERIMENTAL, temporary. 'bisect_q05' with "
+            "trigger = target = -2.0 / -2.25, so both settings run in one computation"
         ),
     )
     parser.add_argument(

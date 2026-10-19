@@ -874,6 +874,12 @@ def tc_brightfit_v2(
 
 
 # dF/F total function
+#: Temporary experiment methods: 'bisect_q05' with trigger == target fixed to the given q05, so
+#: that several settings run in one computation (the flags are global). Iso/R still pass
+#: q_trigger=-inf (no cap), which is kept.
+BISECT_Q05_VARIANTS = {"bisect_q05_t200": -2.0, "bisect_q05_t225": -2.25}
+
+
 def chunk_processing(
     tc: np.ndarray,
     timestamps: np.ndarray,
@@ -973,15 +979,20 @@ def chunk_processing(
             from .experiment_bisect import tc_brightfit_v2_c25
 
             tc_fit, tc_coefs = tc_brightfit_v2_c25(tc_filtered, ts)
-        elif method == "bisect_q05":
+        elif method == "bisect_q05" or method in BISECT_Q05_VARIANTS:
             from .experiment_bisect import tc_brightfit_v2_bisect_q05
+
+            if method in BISECT_Q05_VARIANTS:
+                q_target = BISECT_Q05_VARIANTS[method]
+                if np.isfinite(q_trigger):
+                    q_trigger = q_target
 
             tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(
                 tc_filtered, ts, q_target=q_target, q_trigger=q_trigger,
                 skew_gate=skew_gate, q_gross=q_gross,
             )
 
-        if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"):
+        if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05", *BISECT_Q05_VARIANTS):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -1012,6 +1023,7 @@ def chunk_processing(
                     "bisect": 9,
                     "bright_c25": 9,
                     "bisect_q05": 9,
+                    **{v: 9 for v in BISECT_Q05_VARIANTS},
                 }[method]
             )
         }

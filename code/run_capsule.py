@@ -46,7 +46,7 @@ from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.experiment_bisect import Q05_GROSS, Q05_TARGET, Q05_TRIGGER, SKEW_GATE, chunked_skew
-from utils.preprocess import chunk_processing, motion_correct
+from utils.preprocess import BISECT_Q05_VARIANTS, chunk_processing, motion_correct
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -1033,7 +1033,8 @@ def create_metric(fiber, method, reference, value, motion=False):
         ),
     }
     # Experimental variants share "bright"'s model (only the M-estimator differs).
-    baselines["bright_c25"] = baselines["bisect_q05"] = baselines["bisect"]
+    for _m in ("bright_c25", "bisect_q05", *BISECT_Q05_VARIANTS):
+        baselines[_m] = baselines["bisect"]
     return QCMetric(
         name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -1344,7 +1345,7 @@ def _process1channel(
 
     NM_values = df_fip_iter["signal"].values
     timestamps = df_fip_iter["time_fip"].values
-    if pp_name == "bisect_q05" and channel in BISECT_Q05_NO_CAP_CHANNELS:
+    if pp_name in ("bisect_q05", *BISECT_Q05_VARIANTS) and channel in BISECT_Q05_NO_CAP_CHANNELS:
         q_trigger = -np.inf  # cap never fires: symmetric (4, 4) fit
     _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
@@ -1545,7 +1546,8 @@ def process_nwb_file(
 
     for pp_name in args.dff_methods:
         if pp_name not in [
-            "poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05"
+            "poly", "exp", "tri-exp", "bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05",
+            *BISECT_Q05_VARIANTS,
         ]:
             continue
 
@@ -1692,6 +1694,7 @@ def _params_as_dict(fiber, method, df_pp_params):
         "bisect": 9,
         "bright_c25": 9,
         "bisect_q05": 9,
+        **{v: 9 for v in BISECT_Q05_VARIANTS},
     }
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
@@ -1738,7 +1741,8 @@ def _params_as_dict(fiber, method, df_pp_params):
             "tau_bright",
         ],
     }
-    param_names["bright_c25"] = param_names["bisect_q05"] = param_names["bisect"]
+    for _m in ("bright_c25", "bisect_q05", *BISECT_Q05_VARIANTS):
+        param_names[_m] = param_names["bisect"]
     # "index" (not "channel") so the QC portal uses channel names as the
     # DataFrame's row index instead of a redundant data column -- same
     # convention create_pregocue_metric uses for its field names.
@@ -1955,7 +1959,9 @@ def main():
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
             "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75; "
             "only on the G channel, Iso and R keep the symmetric fit (see "
-            "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
+            "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)\n"
+            "  'bisect_q05_t200', 'bisect_q05_t225': EXPERIMENTAL, temporary. 'bisect_q05' with "
+            "trigger = target = -2.0 / -2.25, so both settings run in one computation"
         ),
     )
     parser.add_argument(
