@@ -376,6 +376,11 @@ SKEW_CHUNK = 1200
 #: is -7 to -17; a q05 of -5 or below is far outside what wander of Iso/R produces
 #: (those fits stay above about -4.5). `None` disables this alternative.
 Q05_GROSS = -5.0
+#: A capped fit whose q05 ends above this overshot the target: q05(c_pos) jumps where the
+#: fit switches basin, and F0 lands at or below the trace's lower edge (q05 > 0 is
+#: impossible for a correct baseline under noise, about -1.6). The candidate closest to
+#: the target is kept instead.
+Q05_OVERSHOOT = -0.5
 
 
 def chunked_skew(resid: np.ndarray, chunk: int = SKEW_CHUNK) -> float:
@@ -408,6 +413,7 @@ def tc_brightfit_v2_bisect_q05(
     q_trigger: float = Q05_TRIGGER,
     skew_gate: float | None = SKEW_GATE,
     q_gross: float | None = Q05_GROSS,
+    q_overshoot: float = Q05_OVERSHOOT,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
     maxiter: int = 5,
     ds: int = 10,
@@ -422,9 +428,11 @@ def tc_brightfit_v2_bisect_q05(
     about -1.6 on clean traces, as expected for Gaussian noise around a
     correct baseline. Only if q05 is more negative than `q_trigger` (default
     -2.5: clear cases, where transients pull F0 well above the baseline) is
-    `c_pos` lowered (bisection on `[c_lo, c_hi]`; q05 rises monotonically as
-    `c_pos` falls) to the largest value whose q05 reaches `q_target`. Otherwise
-    the symmetric fit is kept. The cap additionally requires the chunked
+    `c_pos` lowered (bisection on `[c_lo, c_hi]`; q05 rises as `c_pos` falls)
+    to the largest value whose q05 reaches `q_target`. If that candidate
+    overshoots (q05 > `q_overshoot`, see `Q05_OVERSHOOT`; q05 can jump as
+    `c_pos` changes), the fitted candidate closest to `q_target` is kept
+    instead. Otherwise the symmetric fit is kept. The cap additionally requires the chunked
     residual skewness of the symmetric fit to exceed `skew_gate` (see
     `SKEW_GATE`; `None` = no gate) or its q05 to be below `q_gross` (see
     `Q05_GROSS`): a q05 excess without one-sided residuals is not a baseline
@@ -512,6 +520,14 @@ def tc_brightfit_v2_bisect_q05(
         if not found:
             best_f0, best_params, _ = _fit_and_q05(c_lo)
             best_c = c_lo
+        # q05(c_pos) can jump (the fit switches basin), so the first candidate
+        # to reach the target may overshoot it far (q05 > `q_overshoot`: F0 at
+        # or below the trace's lower edge). Then keep the fitted candidate
+        # whose q05 is closest to the target instead.
+        if cache[best_c][2] > q_overshoot:
+            scored = {c: v for c, v in cache.items() if np.isfinite(v[2])}
+            best_c = min(scored, key=lambda c: (abs(scored[c][2] - q_target), -c))
+            best_f0, best_params, _ = cache[best_c]
 
     final_model_str = (
         f"{model_str} [bisect_q05 c_pos={best_c:.3f}, {len(cache)} candidate(s)"
