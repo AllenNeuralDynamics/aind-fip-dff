@@ -1317,6 +1317,13 @@ def create_evaluation(method, metrics):
     )
 
 
+#: Channels where 'bisect_q05' keeps the symmetric (4, 4) fit. Iso has no neural activity,
+#: so its true pre-event dF/F is ~0: on all 16 sweep traces where the cap fired and a
+#: pre-event value exists, it left a larger offset than 'bright' (0.03-0.26% vs ~0.00-0.02%),
+#: even where it brought q05 to -1.6 (the Welch sigma is unreliable on Iso).
+BISECT_Q05_NO_CAP_CHANNELS = ("Iso",)
+
+
 def _process1channel(
     channel,
     df_fip,
@@ -1335,6 +1342,8 @@ def _process1channel(
 
     NM_values = df_fip_iter["signal"].values
     timestamps = df_fip_iter["time_fip"].values
+    if pp_name == "bisect_q05" and channel in BISECT_Q05_NO_CAP_CHANNELS:
+        q_trigger = -np.inf  # cap never fires: symmetric (4, 4) fit
     _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
@@ -1942,7 +1951,8 @@ def main():
             "'bright' (see utils.experiment_bisect.tc_brightfit_v2_c25)\n"
             "  'bisect_q05': EXPERIMENTAL. Starts from the symmetric (4, 4) fit; only "
             "if the lower tail of the residuals shows a clear misfit (q05 < -2.5) "
-            "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75 (see "
+            "and one-sided residuals (or q05 < -5) does it lower c_pos, within [2, 4], until q05 >= -1.75; "
+            "never on the Iso channel, which keeps the symmetric fit (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)"
         ),
     )
