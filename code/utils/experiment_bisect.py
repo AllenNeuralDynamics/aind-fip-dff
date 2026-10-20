@@ -420,6 +420,7 @@ def tc_brightfit_v2_bisect_q05(
     fixed_sigma: float | str | None = "auto",
     sigma_anneal_steps: int = 4,
     t_eval_exp3: float = 120.0,
+    noise_method: str = "welch",
 ) -> tuple[np.ndarray, np.ndarray, float, str]:
     """Capped per-trace choice of `c_pos` on the lower tail of the residuals.
 
@@ -453,6 +454,13 @@ def tc_brightfit_v2_bisect_q05(
     already meets the cap, else `n_iter + 1` times (`n_iter + 2` if no
     midpoint satisfies it and `c_lo` has to be fitted).
 
+    `noise_method` (`"welch"` or `"mad"`, as in `noise_std`) selects the noise
+    estimate used for both the fixed sigma of the fits and the q05
+    normalisation (when `fixed_sigma="auto"`). On dense or very active traces
+    Welch can be ~2x smaller than MAD, which changes how often the cap fires
+    and how wide the Tukey weights are, so q_trigger / q_target are only
+    comparable within one `noise_method`.
+
     Returns
     -------
     f0, params, c_pos_chosen, model_str : as `tc_brightfit_v2_bisect`.
@@ -474,7 +482,7 @@ def tc_brightfit_v2_bisect_q05(
 
     sigma = fixed_sigma
     if fixed_sigma == "auto":
-        sigma_est = float(noise_std(trace_valid, method="welch"))
+        sigma_est = float(noise_std(trace_valid, method=noise_method))
         fixed_sigma = sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
 
     params_ds, n_exp_won, include_bright, model_str = _decimated_model_selection(

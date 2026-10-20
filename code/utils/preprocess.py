@@ -874,10 +874,20 @@ def tc_brightfit_v2(
 
 
 # dF/F total function
-#: Temporary experiment methods: 'bisect_q05' with trigger == target fixed to the given q05, so
-#: that several settings run in one computation (the flags are global). Iso/R still pass
-#: q_trigger=-inf (no cap), which is kept.
-BISECT_Q05_VARIANTS = {"bisect_q05_t200": -2.0, "bisect_q05_t225": -2.25}
+#: Temporary experiment methods built on 'bisect_q05', so that several settings run in one
+#: computation (the CLI flags are global). Keys per variant (all optional):
+#:   q_target:    trigger == target, replacing --bisect_q_target / --bisect_q_trigger
+#:   cap:         False -> never cap (symmetric fit, q_trigger=-inf)
+#:   noise_method: "welch" (default) or "mad": estimate for the fit sigma and q05
+#:   drop_gross:  True -> no q_gross rule
+#: Iso/R still pass q_trigger=-inf (no cap), which is kept.
+BISECT_Q05_VARIANTS = {
+    "bisect_q05_t200": {"q_target": -2.0},
+    "bisect_q05_t225": {"q_target": -2.25},
+    "fixed44_welch": {"cap": False, "drop_gross": True},
+    "fixed44_mad": {"cap": False, "drop_gross": True, "noise_method": "mad"},
+    "cap175_mad": {"q_target": -1.75, "drop_gross": True, "noise_method": "mad"},
+}
 
 
 def chunk_processing(
@@ -982,14 +992,22 @@ def chunk_processing(
         elif method == "bisect_q05" or method in BISECT_Q05_VARIANTS:
             from .experiment_bisect import tc_brightfit_v2_bisect_q05
 
+            noise_method = "welch"
             if method in BISECT_Q05_VARIANTS:
-                q_target = BISECT_Q05_VARIANTS[method]
-                if np.isfinite(q_trigger):
-                    q_trigger = q_target
+                variant = BISECT_Q05_VARIANTS[method]
+                noise_method = variant.get("noise_method", "welch")
+                if "q_target" in variant:
+                    q_target = variant["q_target"]
+                    if np.isfinite(q_trigger):
+                        q_trigger = q_target
+                if variant.get("cap") is False:
+                    q_trigger = -np.inf
+                if variant.get("drop_gross"):
+                    q_gross = None
 
             tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(
                 tc_filtered, ts, q_target=q_target, q_trigger=q_trigger,
-                skew_gate=skew_gate, q_gross=q_gross,
+                skew_gate=skew_gate, q_gross=q_gross, noise_method=noise_method,
             )
 
         if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05", *BISECT_Q05_VARIANTS):

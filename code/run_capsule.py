@@ -1961,7 +1961,11 @@ def main():
             "only on the G channel, Iso and R keep the symmetric fit (see "
             "utils.experiment_bisect.tc_brightfit_v2_bisect_q05)\n"
             "  'bisect_q05_t200', 'bisect_q05_t225': EXPERIMENTAL, temporary. 'bisect_q05' with "
-            "trigger = target = -2.0 / -2.25, so both settings run in one computation"
+            "trigger = target = -2.0 / -2.25, so both settings run in one computation\n"
+            "  'fixed44_welch', 'fixed44_mad': EXPERIMENTAL, temporary. Symmetric (4, 4) fit, never "
+            "capped, noise sigma from Welch / MAD (no q_gross rule)\n"
+            "  'cap175_mad': EXPERIMENTAL, temporary. 'bisect_q05' with trigger = target = -1.75, noise "
+            "sigma from MAD (G channel only; no q_gross rule)"
         ),
     )
     parser.add_argument(
