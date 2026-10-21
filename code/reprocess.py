@@ -205,7 +205,7 @@ if __name__ == "__main__":
             "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay "
             "(bleaching)] x [Increasing saturating exponential (brightening)] using "
             "iteratively reweighted least squares (IRLS)\n"
-            "  'bright_v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "  'bright-v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
             "optionally with a brightening term) selected and fit via "
             "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2); "
             "much faster than 'bright'"
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         default=0.7,
         help=(
             "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
-            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_v2'. "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright-v2'. "
             "A fraction in (0, 1]: the plain median of the lowest "
             "`b_percentile` fraction of the whole ratio distribution is "
             "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "

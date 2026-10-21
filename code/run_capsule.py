@@ -880,6 +880,16 @@ def _pregocue_drift_stats(
     )
 
 
+def _pregocue_plot_name(fiber, method: str, stage: str) -> str:
+    """File name of the pre-event regression plot, shared by the figure and its QC reference.
+
+    Follows the other plots' pattern: ``ROI{fiber}_dff-{method}`` plus the plot type, then
+    ``_mc-iso-IRLS`` for the motion-corrected stage (no suffix for the dF/F stage).
+    """
+    suffix = {"dff": "", "motion_corrected": "_mc-iso-IRLS"}[stage]
+    return f"ROI{fiber}_dff-{method}_pregocue-regression{suffix}.png"
+
+
 def plot_pregocue_regression(
     df_fip_pp: pd.DataFrame,
     fiber: str,
@@ -975,7 +985,7 @@ def plot_pregocue_regression(
         )
         plt.tight_layout()
 
-        fig_file = fig_path / f"ROI{fiber}_dff-{method}_pregocue-regression-{stage}.png"
+        fig_file = fig_path / _pregocue_plot_name(fiber, method, stage)
         plt.savefig(fig_file, dpi=200, bbox_inches="tight", pad_inches=0.02)
         plt.close()
 
@@ -1011,7 +1021,7 @@ def create_metric(fiber, method, reference, value, motion=False):
             "$$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
         ),
-        "bright_v2": (
+        "bright-v2": (
             "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
@@ -1041,7 +1051,7 @@ def create_metric(fiber, method, reference, value, motion=False):
 #: long heavy tail above -- transient contamination pushes F0 up, not
 #: down; see create_calibration_metric's docstring), so bounds are on
 #: `ratio` itself, not a symmetric `|ratio - 1|` band. Grounded in the
-#: real 383-asset sweep (dff stage, demean run, bright_v2 method):
+#: real 383-asset sweep (dff stage, demean run, bright-v2 method):
 #:  - PASS_UPPER=1.5 ~ each channel's own p75; FAIL_UPPER=3.0 ~ p95-p99
 #:    (switching M to (3,4) for flagged traces was checked directly and
 #:    found to make 75-95% of them worse, so flagging is the right call).
@@ -1224,9 +1234,7 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
                     f"Pre-{event_label} dF/F drift of ROI {fiber} using "
                     f"method '{method}' ({stage})"
                 ),
-                reference=(
-                    f"dff-qc/ROI{fiber}_dff-{method}_pregocue-regression-{stage}.png"
-                ),
+                reference=f"dff-qc/{_pregocue_plot_name(fiber, method, stage)}",
                 status_history=_auto_status_history(status),
                 value=value,
                 description=(
@@ -1341,7 +1349,7 @@ def _process1fiber(
         Whether to process channels serially.
     b_percentile : float, optional
         Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
-        'tri-exp' only, no effect on 'bright'/'bright_v2'. Default is
+        'tri-exp' only, no effect on 'bright'/'bright-v2'. Default is
         0.7 (median of the lowest 70%), matching `chunk_processing`'s own
         default.
 
@@ -1458,7 +1466,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_v2"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2"]:
             continue
 
         if args.serial:
@@ -1587,7 +1595,7 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_v2": 9}
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
@@ -1607,7 +1615,7 @@ def _params_as_dict(fiber, method, df_pp_params):
             "t_rapid",
             "t_bright",
         ],
-        "bright_v2": [
+        "bright-v2": [
             "b_inf",
             "b1",
             "tau1",
@@ -1820,7 +1828,7 @@ def main():
             "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay "
             "(bleaching)] x [Increasing saturating exponential (brightening)] using "
             "iteratively reweighted least squares (IRLS)\n"
-            "  'bright_v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "  'bright-v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
             "optionally with a brightening term) selected and fit via "
             "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2); "
             "much faster than 'bright'"
@@ -1832,7 +1840,7 @@ def main():
         default=0.7,
         help=(
             "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
-            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_v2'. "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright-v2'. "
             "A fraction in (0, 1]: the plain median of the lowest "
             "`b_percentile` fraction of the whole ratio distribution is "
             "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
