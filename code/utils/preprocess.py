@@ -880,13 +880,20 @@ def tc_brightfit_v2(
 #:   cap:         False -> never cap (symmetric fit, q_trigger=-inf)
 #:   noise_method: "welch" (default) or "mad": estimate for the fit sigma and q05
 #:   drop_gross:  True -> no q_gross rule
+#:   sigma_anneal_steps, maxiter: IRLS schedule (defaults: 4 and 5, as for 'bright')
 #: Iso/R still pass q_trigger=-inf (no cap), which is kept.
 BISECT_Q05_VARIANTS = {
     "bisect_q05_t200": {"q_target": -2.0},
     "bisect_q05_t225": {"q_target": -2.25},
-    "fixed44_welch": {"cap": False, "drop_gross": True},
-    "fixed44_mad": {"cap": False, "drop_gross": True, "noise_method": "mad"},
-    "cap175_mad": {"q_target": -1.75, "drop_gross": True, "noise_method": "mad"},
+    # 6 anneal steps, maxiter 8: converged to the 12-step ramp on all but a few traces
+    # (4 steps left 1-6% differences on some)
+    "fixed44_welch": {"cap": False, "drop_gross": True, "sigma_anneal_steps": 6, "maxiter": 8},
+    "fixed44_mad": {
+        "cap": False, "drop_gross": True, "noise_method": "mad", "sigma_anneal_steps": 6, "maxiter": 8,
+    },
+    "cap175_mad": {
+        "q_target": -1.75, "drop_gross": True, "noise_method": "mad", "sigma_anneal_steps": 6, "maxiter": 8,
+    },
 }
 
 
@@ -993,9 +1000,11 @@ def chunk_processing(
             from .experiment_bisect import tc_brightfit_v2_bisect_q05
 
             noise_method = "welch"
+            schedule = {}
             if method in BISECT_Q05_VARIANTS:
                 variant = BISECT_Q05_VARIANTS[method]
                 noise_method = variant.get("noise_method", "welch")
+                schedule = {k: variant[k] for k in ("sigma_anneal_steps", "maxiter") if k in variant}
                 if "q_target" in variant:
                     q_target = variant["q_target"]
                     if np.isfinite(q_trigger):
@@ -1007,7 +1016,7 @@ def chunk_processing(
 
             tc_fit, tc_coefs, c_pos_chosen, _ = tc_brightfit_v2_bisect_q05(
                 tc_filtered, ts, q_target=q_target, q_trigger=q_trigger,
-                skew_gate=skew_gate, q_gross=q_gross, noise_method=noise_method,
+                skew_gate=skew_gate, q_gross=q_gross, noise_method=noise_method, **schedule,
             )
 
         if method in ("bright", "bright_legacy", "bisect", "bright_c25", "bisect_q05", *BISECT_Q05_VARIANTS):

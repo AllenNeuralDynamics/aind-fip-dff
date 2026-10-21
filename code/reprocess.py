@@ -234,7 +234,9 @@ if __name__ == "__main__":
             "  'fixed44_welch', 'fixed44_mad': EXPERIMENTAL, temporary. Symmetric (4, 4) fit, never "
             "capped, noise sigma from Welch / MAD (no q_gross rule)\n"
             "  'cap175_mad': EXPERIMENTAL, temporary. 'bisect_q05' with trigger = target = -1.75, noise "
-            "sigma from MAD (G channel only; no q_gross rule)"
+            "sigma from MAD (G channel only; no q_gross rule)\n"
+            "  The three 'fixed44_*' / 'cap175_*' methods use a 6-step sigma anneal with maxiter 8 "
+            "(other methods: 4 steps, maxiter 5)"
         ),
     )
     parser.add_argument(
