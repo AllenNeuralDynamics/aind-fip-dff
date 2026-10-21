@@ -896,7 +896,7 @@ def chunk_processing(
         Fiber photometry timestamps.
     method : str, optional
         Method to preprocess the data. Options: poly, exp, tri-exp, bright,
-        bright_legacy. Default is "poly".
+        bright_v2. Default is "poly".
     n_frame_to_cut : int, optional
         Number of frames to crop from the beginning of the signal.
         Default is 100.
@@ -912,7 +912,7 @@ def chunk_processing(
         semantics. Default is 0.7.
     robust : bool, optional
         Whether to fit baseline using IRLS (robust regression, only
-        'bright_legacy' method). Default is True.
+        'bright' method). Default is True.
     trace_id : str, optional
         Trace identifier for logging purposes, e.g. 'G_0', default is ''.
 
@@ -943,12 +943,12 @@ def chunk_processing(
                 tc_fit, tc_coefs = tc_triexpfit(
                     tc_filtered, ts, sampling_rate, xtol=1e-4
                 )
-        elif method == "bright_legacy":
-            tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
         elif method == "bright":
+            tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
+        elif method == "bright_v2":
             tc_fit, tc_coefs = tc_brightfit_v2(tc_filtered, ts)
 
-        if method in ("bright", "bright_legacy"):
+        if method in ("bright", "bright_v2"):
             tc_dFoF = tc_filtered / tc_fit - 1
         else:
             tc_estim = tc_filtered - tc_fit
@@ -965,7 +965,7 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}[method]
+                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_v2": 9}[method]
             )
         }
 

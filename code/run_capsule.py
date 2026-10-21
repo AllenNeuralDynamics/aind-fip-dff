@@ -1007,11 +1007,11 @@ def create_metric(fiber, method, reference, value, motion=False):
         "poly": "$$a t^4 + b t^3 + c t^2 + d t + e$$",
         "exp": "$$a \exp(-b t) + c \exp(-d t)$$",
         "tri-exp": "$$a \exp(-b t) + c \exp(-d t) + e \exp(-f t) + g$$",
-        "bright_legacy": (
+        "bright": (
             "$$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
         ),
-        "bright": (
+        "bright_v2": (
             "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
@@ -1041,7 +1041,7 @@ def create_metric(fiber, method, reference, value, motion=False):
 #: long heavy tail above -- transient contamination pushes F0 up, not
 #: down; see create_calibration_metric's docstring), so bounds are on
 #: `ratio` itself, not a symmetric `|ratio - 1|` band. Grounded in the
-#: real 383-asset sweep (dff stage, demean run, bright method):
+#: real 383-asset sweep (dff stage, demean run, bright_v2 method):
 #:  - PASS_UPPER=1.5 ~ each channel's own p75; FAIL_UPPER=3.0 ~ p95-p99
 #:    (switching M to (3,4) for flagged traces was checked directly and
 #:    found to make 75-95% of them worse, so flagging is the right call).
@@ -1341,7 +1341,7 @@ def _process1fiber(
         Whether to process channels serially.
     b_percentile : float, optional
         Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
-        'tri-exp' only, no effect on 'bright'/'bright_legacy'. Default is
+        'tri-exp' only, no effect on 'bright'/'bright_v2'. Default is
         0.7 (median of the lowest 70%), matching `chunk_processing`'s own
         default.
 
@@ -1458,7 +1458,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_legacy"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright_v2"]:
             continue
 
         if args.serial:
@@ -1587,7 +1587,7 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_legacy": 9}
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright_v2": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
@@ -1596,7 +1596,7 @@ def _params_as_dict(fiber, method, df_pp_params):
         "poly": [*"abcde"],
         "exp": [*"abcd"],
         "tri-exp": [*"abcdefg"],
-        "bright_legacy": [
+        "bright": [
             "b_inf",
             "b_slow",
             "b_fast",
@@ -1607,7 +1607,7 @@ def _params_as_dict(fiber, method, df_pp_params):
             "t_rapid",
             "t_bright",
         ],
-        "bright": [
+        "bright_v2": [
             "b_inf",
             "b1",
             "tau1",
@@ -1817,13 +1817,13 @@ def main():
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
             "  'tri-exp': Fit with triphasic exponential using OLS\n"
-            "  'bright': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay "
+            "(bleaching)] x [Increasing saturating exponential (brightening)] using "
+            "iteratively reweighted least squares (IRLS)\n"
+            "  'bright_v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
             "optionally with a brightening term) selected and fit via "
-            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2)\n"
-            "  'bright_legacy': The previous 'bright' implementation -- robust fit "
-            "with [Bi- or Tri-phasic exponential decay (bleaching)] x [Increasing "
-            "saturating exponential (brightening)] using iteratively reweighted "
-            "least squares (IRLS)"
+            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2); "
+            "much faster than 'bright'"
         ),
     )
     parser.add_argument(
@@ -1832,7 +1832,7 @@ def main():
         default=0.7,
         help=(
             "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
-            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_legacy'. "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright_v2'. "
             "A fraction in (0, 1]: the plain median of the lowest "
             "`b_percentile` fraction of the whole ratio distribution is "
             "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
