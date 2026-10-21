@@ -662,7 +662,7 @@ def _pad_sum_of_exps_params(
 #: Default M-estimator for `tc_brightfit_v2`'s dF/F fit. Kept as a distinct
 #: name (not just "M") from `motion_correct`'s M_MOTION_CORRECTION default,
 #: since the two tune unrelated fits and are easy to conflate.
-M_DFF = NonlinearFitAsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)
+M_DFF = NonlinearFitAsymmetricTukeyBiweight(c_pos=4.0, c_neg=4.0)
 
 
 def _half_sample_mode(r: np.ndarray) -> float:
@@ -690,11 +690,12 @@ def tc_brightfit_v2(
     timestamps: np.ndarray,
     M: RobustNorm | None = M_DFF,
     rss_thresh: tuple[float, float] = (0.98, 0.97),
-    maxiter: int = 5,
+    maxiter: int = 8,
     ds: int = 10,
     fixed_sigma: float | str | None = "auto",
-    sigma_anneal_steps: int = 4,
+    sigma_anneal_steps: int = 6,
     t_eval_exp3: float = 120.0,
+    noise_method: str = "mad",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -721,31 +722,36 @@ def tc_brightfit_v2(
         Fiber photometry signal and its timestamps.
     M : statsmodels.robust.norms.RobustNorm or None, optional
         Robust criterion for the final IRLS fit. Default `M_DFF`
-        (AsymmetricTukeyBiweight(c_pos=3.5, c_neg=4.0)).
+        (Tukey biweight with c_pos = c_neg = 4.0).
     rss_thresh : tuple of float, optional
         RSS-ratio thresholds (brightening, 3rd exponential) for accepting
         each more complex candidate model. Default (0.98, 0.97).
     maxiter : int, optional
-        Maximum IRLS iterations for the final fit. Default 5.
+        Maximum IRLS iterations for the final fit. Default 8.
     ds : int, optional
         Decimation factor for model-selection candidates; the final fit
         always runs at full resolution. Default 10.
     fixed_sigma : float or "auto" or None, optional
         IRLS noise scale for the final fit. "auto" (default) estimates it
-        via `noise_std(trace, method="welch")` (a high-frequency-band
-        estimate, unbiased by calcium transients unlike a MAD-based one),
-        falling back to `None` if that estimate is non-finite or <= 0 (a
+        via `noise_std(trace, method=noise_method)`, falling back to `None`
+        if that estimate is non-finite or <= 0 (a
         constant/noiseless trace) -- dividing the robust loss by a zero
         scale would otherwise make it non-finite everywhere; a float uses
         that value directly; `None` uses `nonlinear_fit`'s own
         adaptive-scale IRLS instead.
     sigma_anneal_steps : int, optional
         Geometric IRLS-sigma annealing steps passed to `nonlinear_fit`.
-        Default 4.
+        Default 6 (4 steps left 1-6% differences from a 12-step ramp on a
+        few traces, a different local minimum of the non-convex loss).
     t_eval_exp3 : float, optional
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
         compared on the full trace. Default 120.0.
+    noise_method : str, optional
+        `noise_std` method behind `fixed_sigma="auto"`: "mad" (default, MAD of
+        the residual from a median filter) or "welch" (high-frequency
+        band). On dense-transient traces Welch can sit up to ~5x below the
+        MAD estimate, so the Tukey cutoffs c * sigma fall inside the noise.
 
     Returns
     -------
@@ -780,7 +786,7 @@ def tc_brightfit_v2(
         ts_valid = timestamps
 
     if fixed_sigma == "auto":
-        sigma_est = float(noise_std(trace_valid, method="welch"))
+        sigma_est = float(noise_std(trace_valid, method=noise_method))
         fixed_sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
 
     tc_ds = downsample_array(trace_valid, factors=ds, strategy="first")
