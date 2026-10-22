@@ -714,10 +714,13 @@ def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float
     """Negative-residual calibration ratio for a fitted baseline: median
     absolute negative residual (signal - f0), compared to what pure
     Gaussian noise at the trace's own estimated std would produce
-    (0.6745 * sigma) -- the same diagnostic `aind_ophys_dff_library.triexp_dff`
-    uses during model selection. A ratio far from 1 suggests the fit is
-    systematically biased or the robust fit is over/under-aggressive (not
-    necessarily exactly 1 on real, transient-containing data).
+    (0.6745 * sigma), as in `aind_ophys_dff_library.triexp_dff`'s model
+    selection. Sigma is the MAD estimate (`noise_std(..., method="mad")`),
+    not Welch: on dense-transient traces the Welch estimate can fall well
+    below the true noise, which inflates the ratio. A ratio far from 1
+    suggests the fit is systematically biased or the robust fit is
+    over/under-aggressive (not necessarily exactly 1 on real,
+    transient-containing data).
 
     `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
     check the baseline fit, or an already-centered trace with `f0=0` to
@@ -727,13 +730,13 @@ def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float
     -------
     ratio, sigma : float
         `ratio` is NaN if 10 or fewer residuals are negative, or sigma
-        (`noise_std(signal, method="welch")`) is 0.
+        (`noise_std(signal, method="mad")`) is 0.
     """
     resid = signal - f0
     valid = np.isfinite(resid)
     if not valid.any():
         return np.nan, np.nan
-    sigma = float(noise_std(signal[valid], method="welch"))
+    sigma = float(noise_std(signal[valid], method="mad"))
     deep = resid[valid & (resid < 0)]
     if len(deep) <= 10 or sigma == 0:
         return np.nan, sigma
@@ -1121,8 +1124,8 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
         status_history=_auto_status_history(status),
         value={"index": list(ratio_by_channel), "ratio": list(ratio_by_channel.values())},
         description=(
-            "Per-channel calibration ratio (dF/F stage only). Expected "
-            "near 1. Pending if NaN; else fails if ratio outside "
+            "Per-channel calibration ratio (dF/F stage only, noise from the "
+            "MAD estimate). Expected near 1. Pending if NaN; else fails if ratio outside "
             f"[{CALIBRATION_FAIL_LOWER:g}, {CALIBRATION_FAIL_UPPER:g}], "
             f"passes if in [{CALIBRATION_PASS_LOWER:g}, "
             f"{CALIBRATION_PASS_UPPER:g}), else Pending. Worst channel "
