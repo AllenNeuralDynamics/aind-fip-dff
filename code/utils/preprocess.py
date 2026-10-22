@@ -1117,8 +1117,9 @@ class OneSidedTukeyBiweight(AsymmetricTukeyBiweight):
 
 #: Default M-estimator for `motion_correct`'s regression. Kept as a distinct
 #: name (not just "M") from `tc_brightfit_v2`'s M_DFF default, since the two
-#: tune unrelated fits and are easy to conflate.
-M_MOTION_CORRECTION = AsymmetricTukeyBiweight(c_pos=3, c_neg=4.0)
+#: tune unrelated fits and are easy to conflate. Unchanged from `main`
+#: (c_pos=2, c_neg=4.685), so default motion correction is not affected.
+M_MOTION_CORRECTION = AsymmetricTukeyBiweight(2)
 
 
 def motion_correct(
@@ -1152,7 +1153,7 @@ def motion_correct(
         Default is 3.
     M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
-        Default is M_MOTION_CORRECTION (AsymmetricTukeyBiweight(c_pos=3, c_neg=4.0)).
+        Default is M_MOTION_CORRECTION (AsymmetricTukeyBiweight(2), i.e. c_pos=2, c_neg=4.685).
 
     Returns
     -------

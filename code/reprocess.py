@@ -18,6 +18,7 @@ from joblib import Parallel, delayed
 from run_capsule import (
     generate_qc_plots,
     process_nwb_file,
+    write_fit_timing,
     write_output_metadata,
     setup_logging_from_metadata,
     _b_percentile_type,
@@ -104,13 +105,7 @@ def process1dataset(source_path, args, start_time):
             event_label,
         ) = process_nwb_file(nwb_file_path, args)
 
-        # Per-(method, fiber, channel) fit timing, not cumulative processing
-        # time. Under `--parallel` (threading), `fit_time_s` can include
-        # contention with sibling channels, so it's only precise for a
-        # serial (`--serial`, the default) run.
-        df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
-            destination_path / "dff_timing.csv", index=False
-        )
+        write_fit_timing(df_pp_params, destination_path)
 
         # Generate QC plots if requested
         if not args.no_qc:
@@ -281,7 +276,9 @@ if __name__ == "__main__":
         )
         failures = [path for path in failures if path is not None]
         if failures:
-            # Logged, not raised -- one bad dataset shouldn't fail the batch.
+            # Every worker has finished (completed outputs are kept); exit
+            # nonzero so orchestration can tell an incomplete batch from success.
             logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
+            sys.exit(1)
     else:
         process1dataset(source_paths[0], args, start_time)

@@ -1406,6 +1406,18 @@ def _process1fiber(
     return df_1fiber, df_pp_params, coeff, intercept, weight
 
 
+def write_fit_timing(df_pp_params: pd.DataFrame, output_dir: Path) -> None:
+    """Write per-(method, fiber, channel) fit timing to `dff_timing.csv`.
+
+    This is the time of each fit, not cumulative processing time. Under
+    `--parallel` (threading), `fit_time_s` can include contention with sibling
+    channels, so it is only precise for a serial (`--serial`, the default) run.
+    """
+    df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+        Path(output_dir) / "dff_timing.csv", index=False
+    )
+
+
 def process_nwb_file(
     nwb_file_path: Path,
     args,
@@ -1938,6 +1950,8 @@ def main():
                 pregocue_ends,
                 event_label,
             ) = process_nwb_file(destination_path, args)
+
+            write_fit_timing(df_pp_params, output_dir)
 
             # Generate QC plots if requested
             if not args.no_qc:
