@@ -543,17 +543,13 @@ def tc_brightfit(
 
 
 #: Upper bound on the slow bleach tau and the brightening tau [s]. Effectively
-#: unbounded: it only keeps `exp(-t/tau)` finite, and real slow terms land
-#: around 1e4-1e5 s on session-length traces. Do not lower it -- capping tau1
-#: at 3e4 s made a legitimate slow drift look degenerate and (via a post-fit
-#: "snap" that dropped such terms) replaced it with a flat baseline.
+#: unbounded: it only keeps `exp(-t/tau)` finite (real slow terms land around
+#: 1e4-1e5 s on session-length traces).
 TAU_MAX = 1e7
 
 #: L-BFGS-B options for every `nonlinear_fit` call in `tc_brightfit_v2`:
 #: scipy's own defaults, spelled out so the fit doesn't change with the
-#: installed aind-ophys-utils version (0.2.0's default is much tighter:
-#: ftol 1e-12, gtol 1e-10, maxiter 20000). Tighter tolerances cost 2-4x the
-#: time and moved the objective by <0.1% on clean traces.
+#: installed aind-ophys-utils version (0.2.0's default is much tighter).
 OPTIMIZER_OPTIONS = {"maxiter": 15000, "ftol": 2.220446049250313e-09, "gtol": 1e-5}
 
 
@@ -571,8 +567,7 @@ def _init_sum_of_exps(
     10x the start-to-asymptote difference and half of b_inf: the first alone
     collapses to ~10-20 (a.u.) on traces whose start and end levels agree, and
     then a slow decay and a slow brightening term, which nearly cancel, cannot
-    form the mid-session hump legacy's multiplicative baseline fits (the fit
-    ended at 2-3x the RSS of legacy on such traces).
+    form a mid-session hump.
 
     Parameters
     ----------

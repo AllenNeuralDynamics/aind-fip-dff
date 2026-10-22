@@ -903,7 +903,7 @@ def plot_pregocue_regression(
     """Plot per-trial pre-event dF/F against each trial's own window
     midpoint time (session seconds, zero-based), with an OLS trend line,
     for each channel -- a QC check for within-session baseline drift
-    (see aind-fip-dff#75). One figure per stage (not one combined figure):
+    One figure per stage (not one combined figure):
     dF/F before motion correction ("dff", isolates the baseline-fit
     method) and after ("motion_corrected", the actual production output)
     -- matching create_pregocue_metric's own per-stage metric split, so
@@ -1047,18 +1047,9 @@ def create_metric(fiber, method, reference, value, motion=False):
     )
 
 
-#: Ratio's distribution is asymmetric around 1 (tightly bounded below 1,
-#: long heavy tail above -- transient contamination pushes F0 up, not
-#: down; see create_calibration_metric's docstring), so bounds are on
-#: `ratio` itself, not a symmetric `|ratio - 1|` band. Grounded in the
-#: real 383-asset sweep (dff stage, demean run, bright-v2 method):
-#:  - PASS_UPPER=1.5 ~ each channel's own p75; FAIL_UPPER=3.0 ~ p95-p99
-#:    (switching M to (3,4) for flagged traces was checked directly and
-#:    found to make 75-95% of them worse, so flagging is the right call).
-#:  - PASS_LOWER=0.85: below 1 the real spread is tighter (p90 only
-#:    ~0.10-0.12 below 1); FAIL_LOWER=0.5 is a separate, rarely-triggered
-#:    sanity floor (p1 stays above ~0.75).
-#: Net split: ~75-88% PASS, ~10-20% Pending, ~2-5% FAIL per channel.
+#: The ratio is asymmetric around 1 (transient contamination pushes F0 up, so
+#: the upper tail is long), so the bounds apply to `ratio` itself, not to a
+#: symmetric `|ratio - 1|` band. FAIL_LOWER is only a sanity floor.
 CALIBRATION_PASS_LOWER = 0.85
 CALIBRATION_PASS_UPPER = 1.5
 CALIBRATION_FAIL_UPPER = 3.0
@@ -1100,8 +1091,7 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
     Deliberately NOT computed on the motion-corrected trace:
     `_calibration_ratio`'s sigma assumes high-frequency noise that
     `motion_correct`'s own final filter suppresses, inflating the ratio
-    by its attenuation factor (10-40x observed) rather than reflecting
-    fit quality -- see the drift-stats metric for a motion-corrected-stage
+    by its attenuation factor rather than reflecting fit quality -- see the drift-stats metric for a motion-corrected-stage
     signal instead.
 
     Per channel: a NaN ratio (too few negative residuals, or zero noise
@@ -1141,17 +1131,12 @@ def create_calibration_metric(fiber, method, ratio_by_channel):
     )
 
 
-#: |mean dF/F| / |total_drift| [%] bounds for auto-fail/pass, grounded in
-#: the real 383-asset sweep (dff stage, G channel, heaviest-tailed).
-#: FAIL sits just below p95 (~4-5%), well below p99 (~10-15%) -- extreme
-#: outliers only (median is ~0.1-0.3%). `total_drift` predates the
-#: trial-index->event-time regression change, but slope*span is
-#: affine-invariant, so the old sweep's `slope * (n_trials - 1)` is a
-#: valid proxy. Net: ~81-96% auto-PASS, ~1-6% auto-FAIL, rest Pending.
+#: |mean dF/F| and |total_drift| [%] bounds for auto-pass/fail; values in
+#: between stay Pending.
 DRIFT_FAIL_THRESHOLD_PCT = 5.0
 DRIFT_PASS_THRESHOLD_PCT = 1.0
-#: Trials needed to trust mean_dff/total_drift -- matches the n_trials<20
-#: "likely non-GoCue session" cutoff already used by aggregate_bright_v2_qc.py.
+#: Trials needed to trust mean_dff/total_drift; fewer is Pending (typically a
+#: session without a GoCue-based Delay period).
 DRIFT_MIN_TRIALS = 20
 
 
