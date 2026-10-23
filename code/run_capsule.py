@@ -1354,7 +1354,7 @@ def create_motion_noise_metric(fiber, method, stats_by_channel):
         value=value,
         description=(
             "Per-channel Iso regression coefficient and the factor by which "
-            "the Iso subtraction raises the high-frequency noise of the "
+            "the Iso subtraction raises the MAD noise estimate of the "
             "channel (1 = none). Pending if NaN; else fails if > "
             f"{NOISE_INFLATION_FAIL:g}, passes if < {NOISE_INFLATION_PASS:g}, "
             "else Pending. Worst channel status wins."
