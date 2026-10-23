@@ -1,11 +1,13 @@
 """Statistics behind the baseline-level and motion-correction-noise QC metrics.
 
-Only numpy/scipy, so they can be tested without the capsule's NWB stack.
+Only numpy/scipy and `aind_ophys_utils`, so they can be tested without the
+capsule's NWB stack.
 """
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, median_filter
 from scipy.signal import butter, sosfiltfilt
+from aind_ophys_utils.signal_utils import noise_std
 
 #: Length of the start/middle/end windows of `baseline_levels` [s], capped at
 #: a sixth of the recording.
@@ -67,24 +69,20 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
     }
 
 
-def high_freq_noise(x: np.ndarray) -> float:
-    """Noise std from the MAD of the first differences (insensitive to slow signal)."""
-    return float(1.4826 * np.median(np.abs(np.diff(x))) / np.sqrt(2))
-
-
 def noise_inflation(dff: np.ndarray, motion_corrected: np.ndarray, fs: float, cutoff_freq_noise: float | None) -> float:
     """Factor by which the Iso subtraction raises the high-frequency noise of a channel.
 
     `motion_correct` fits its coefficient on a 0.05 Hz low-passed signal but
     subtracts `coef * Iso` at all frequencies, which adds Iso noise to the
-    channel where the two are not coupled. The ratio compares the corrected
-    trace with `dff` low-passed at `cutoff_freq_noise` only, so the final
-    low-pass of `motion_correct` cancels. 1 = no noise added.
+    channel where the two are not coupled. The ratio of the MAD noise
+    estimates (`noise_std(method="mad")`, as for the calibration ratio) compares
+    the corrected trace with `dff` low-passed at `cutoff_freq_noise` only, so
+    the final low-pass of `motion_correct` cancels. 1 = no noise added.
     """
     ref = dff
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         ref = sosfiltfilt(butter(2, cutoff_freq_noise, fs=fs, output="sos"), dff)
-    noise_ref = high_freq_noise(ref)
+    noise_ref = float(noise_std(ref, method="mad"))
     if not noise_ref > 0 or not np.isfinite(motion_corrected).all():
         return float("nan")
-    return high_freq_noise(motion_corrected) / noise_ref
+    return float(noise_std(motion_corrected, method="mad")) / noise_ref
