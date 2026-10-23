@@ -1052,11 +1052,12 @@ def create_metric(fiber, method, reference, value, motion=False):
 
 #: The ratio is asymmetric around 1 (transient contamination pushes F0 up, so
 #: the upper tail is long), so the bounds apply to `ratio` itself, not to a
-#: symmetric `|ratio - 1|` band. FAIL_LOWER is only a sanity floor.
-CALIBRATION_PASS_LOWER = 0.85
-CALIBRATION_PASS_UPPER = 1.5
-CALIBRATION_FAIL_UPPER = 3.0
-CALIBRATION_FAIL_LOWER = 0.5
+#: symmetric `|ratio - 1|` band. Set for the MAD noise estimate, whose ratio is
+#: rarely below 1.
+CALIBRATION_PASS_LOWER = 0.9
+CALIBRATION_PASS_UPPER = 1.4
+CALIBRATION_FAIL_UPPER = 2.5
+CALIBRATION_FAIL_LOWER = 0.8
 
 
 def _worst_status(statuses):
