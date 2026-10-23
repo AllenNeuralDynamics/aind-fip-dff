@@ -996,6 +996,11 @@ def plot_pregocue_regression(
     return stats
 
 
+#: A motion-correction coefficient above this FAILs (about the 99th percentile
+#: of G and R on the sweep); below it the status stays Pending.
+MOTION_COEFFICIENT_FAIL = 4
+
+
 def create_metric(fiber, method, reference, value, motion=False):
     """Create a QC metric for baseline or motion correction.
 
@@ -1036,15 +1041,15 @@ def create_metric(fiber, method, reference, value, motion=False):
         status_history=[
             QCStatus(
                 evaluator=(
-                    "Automatic" if (motion and value > 10) else "Pending review"
+                    "Automatic" if (motion and value > MOTION_COEFFICIENT_FAIL) else "Pending review"
                 ),
                 timestamp=dt.now(),
-                status=Status.FAIL if (motion and value > 10) else Status.PENDING,
+                status=Status.FAIL if (motion and value > MOTION_COEFFICIENT_FAIL) else Status.PENDING,
             )
         ],
         value=value,
         description=(
-            "Maximum regression coefficient"
+            f"Maximum regression coefficient; fails if > {MOTION_COEFFICIENT_FAIL}"
             if motion
             else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
         ),
