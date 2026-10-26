@@ -19,7 +19,8 @@ BASELINE_MIN_DURATION_S = 1000
 def _mode(x: np.ndarray, scale: float) -> float:
     """Peak of the histogram of `x` (bin width `scale`/4), smoothed with a 2-bin Gaussian."""
     lo, hi = np.percentile(x, [1, 99])
-    n_bins = max(int((hi - lo) / (scale / 4)), 20)
+    # capped at the sample count: a nearly flat trace with a step has a tiny scale and a large range
+    n_bins = min(max(int((hi - lo) / (scale / 4)), 20), len(x))
     counts, edges = np.histogram(x, bins=n_bins, range=(lo, hi))
     i = int(np.argmax(gaussian_filter1d(counts.astype(float), 2)))
     return float(0.5 * (edges[i] + edges[i + 1]))

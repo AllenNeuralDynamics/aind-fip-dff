@@ -51,3 +51,21 @@ def test_noise_inflation():
     # subtracting 2 x an independent Iso of equal noise: sqrt(1 + 2^2)
     assert abs(noise_inflation(g, sosfiltfilt(sos, g - 2 * iso), FS, 3) - np.sqrt(5)) < 0.1
     assert np.isnan(noise_inflation(g, np.full(n, np.nan), FS, 3))
+
+
+def test_baseline_levels_flat_trace_with_step_is_bounded():
+    x = np.zeros(30 * 60 * FS)
+    x[len(x) // 2 :] = 1.0
+    x += 1e-12 * np.random.default_rng(0).standard_normal(len(x))
+    lv = baseline_levels(x, FS)  # must not allocate a histogram of ~1e12 bins
+    assert lv is None or np.isfinite([lv["start"], lv["mid"], lv["end"]]).all()
+
+
+def test_noise_inflation_uses_the_given_rate():
+    rng = np.random.default_rng(2)
+    n = 30 * 60 * 25
+    g = rng.standard_normal(n)
+    # a 25 Hz recording corrected with the 20 Hz filters motion_correct always uses
+    mc = sosfiltfilt(butter(2, 3, fs=20, output="sos"), g)
+    assert abs(noise_inflation(g, mc, 20, 3) - 1) < 1e-6
+    assert abs(noise_inflation(g, mc, 25, 3) - 1) > 0.01  # mismatched reference rate

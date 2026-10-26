@@ -1,6 +1,7 @@
 import utils.blas_threads  # noqa: F401 -- sets BLAS env vars, must precede numpy
 import argparse
 import glob
+import inspect
 import itertools
 import json
 import logging
@@ -47,6 +48,9 @@ from scipy.signal import butter, sosfiltfilt, welch
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
 from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+
+#: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
+MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -1888,7 +1892,7 @@ def generate_qc_plots(
                         noise_inflation(
                             df.dFF.values,
                             df.motion_corrected.values,
-                            fs,
+                            MOTION_CORRECT_FS,
                             args.cutoff_freq_noise,
                         ),
                     )
