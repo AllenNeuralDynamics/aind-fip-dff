@@ -1309,7 +1309,8 @@ def create_baseline_level_metric(fiber, method, stats_by_channel):
         value=value,
         description=(
             "Per-channel dF/F baseline level [%] in the first, middle and "
-            f"last {BASELINE_WINDOW_S // 60} min (mode of the 1 Hz low-passed "
+            f"last {BASELINE_WINDOW_S // 60} min (a sixth of the recording if "
+            f"shorter than {6 * BASELINE_WINDOW_S // 60} min; mode of the 1 Hz low-passed "
             "trace); 0 if F0 tracks the baseline, negative if F0 is too high. "
             f"Pending below {BASELINE_LEVEL_MIN_FRACTION:g} baseline fraction "
             "(transient-dominated) or if too short; else fails if the worst "

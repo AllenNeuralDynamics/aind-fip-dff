@@ -10,7 +10,7 @@ from scipy.signal import butter, sosfiltfilt
 from aind_ophys_utils.signal_utils import noise_std
 
 #: Length of the start/middle/end windows of `baseline_levels` [s], capped at
-#: a sixth of the recording.
+#: a sixth of the recording (so recordings shorter than 6 windows use shorter ones).
 BASELINE_WINDOW_S = 300
 #: Recordings shorter than this [s] get no baseline levels.
 BASELINE_MIN_DURATION_S = 1000
@@ -19,6 +19,8 @@ BASELINE_MIN_DURATION_S = 1000
 def _mode(x: np.ndarray, scale: float) -> float:
     """Peak of the histogram of `x` (bin width `scale`/4), smoothed with a 2-bin Gaussian."""
     lo, hi = np.percentile(x, [1, 99])
+    if hi <= lo:  # constant window: np.histogram would widen an empty range by +-0.5
+        return float(lo)
     # capped at the sample count: a nearly flat trace with a step has a tiny scale and a large range
     n_bins = min(max(int((hi - lo) / (scale / 4)), 20), len(x))
     counts, edges = np.histogram(x, bins=n_bins, range=(lo, hi))
