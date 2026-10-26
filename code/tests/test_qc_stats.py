@@ -69,3 +69,10 @@ def test_noise_inflation_uses_the_given_rate():
     mc = sosfiltfilt(butter(2, 3, fs=20, output="sos"), g)
     assert abs(noise_inflation(g, mc, 20, 3) - 1) < 1e-6
     assert abs(noise_inflation(g, mc, 25, 3) - 1) > 0.01  # mismatched reference rate
+
+
+def test_baseline_levels_constant_window_has_no_spurious_offset():
+    x = _trace(minutes=30)
+    x[: 5 * 60 * FS] = 0.0  # a dropout: exactly constant first window
+    lv = baseline_levels(x, FS)
+    assert abs(lv["start"]) < 1e-3
