@@ -1009,13 +1009,8 @@ def plot_pregocue_regression(
     return stats
 
 
-#: A motion-correction coefficient above this FAILs (about the 99th percentile
-#: of G and R on the sweep); below it the status stays Pending.
-MOTION_COEFFICIENT_FAIL = 4
-
-
-def create_metric(fiber, method, reference, value, motion=False):
-    """Create a QC metric for baseline or motion correction.
+def create_metric(fiber, method, reference, value):
+    """Create the QC metric for the baseline fit.
 
     Parameters
     ----------
@@ -1025,10 +1020,8 @@ def create_metric(fiber, method, reference, value, motion=False):
         The preprocessing method used.
     reference : str
         Path to the reference image for this metric.
-    value : float | dict
+    value : dict
         Metric value.
-    motion : bool, optional
-        Whether this is a motion correction metric. Defaults to False.
 
     Returns
     -------
@@ -1049,23 +1042,17 @@ def create_metric(fiber, method, reference, value, motion=False):
         ),
     }
     return QCMetric(
-        name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
+        name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator=(
-                    "Automatic" if (motion and value > MOTION_COEFFICIENT_FAIL) else "Pending review"
-                ),
+                evaluator="Pending review",
                 timestamp=dt.now(),
-                status=Status.FAIL if (motion and value > MOTION_COEFFICIENT_FAIL) else Status.PENDING,
+                status=Status.PENDING,
             )
         ],
         value=value,
-        description=(
-            f"Maximum regression coefficient; fails if > {MOTION_COEFFICIENT_FAIL}"
-            if motion
-            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
-        ),
+        description="Baseline $$F_0(t)$$ fit with  " + baselines[method],
     )
 
 
@@ -1866,15 +1853,6 @@ def generate_qc_plots(
                     method,
                     f"dff-qc/ROI{fiber}_dff-{method}.png",
                     _params_as_dict(fiber, method, df_pp_params),
-                )
-            )
-            metrics.append(
-                create_metric(
-                    fiber,
-                    method,
-                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                    max(v for k, v in coeffs[method][int(fiber)].items() if k != "Iso"),
-                    True,
                 )
             )
 
