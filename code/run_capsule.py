@@ -1901,11 +1901,11 @@ def generate_qc_plots(
                     }
             metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
             metrics.append(create_baseline_level_metric(fiber, method, level_by_channel))
-            metrics.append(create_motion_noise_metric(fiber, method, noise_by_channel))
             if pregocue_starts is not None:
                 metrics.extend(
                     create_pregocue_metric(fiber, method, event_label, drift_by_channel)
                 )
+            metrics.append(create_motion_noise_metric(fiber, method, noise_by_channel))
         evaluations.append(create_evaluation(method, metrics))
 
     # Create QC object and save
