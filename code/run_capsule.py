@@ -1258,30 +1258,23 @@ BASELINE_LEVEL_MIN_FRACTION = 0.9
 
 
 def create_baseline_level_metric(fiber, method, stats_by_channel):
-    """Create the baseline-level QC metric: dF/F baseline at start, middle and end.
+    """Create the baseline-level QC metric from `{channel: baseline_levels(...)}`.
 
-    `stats_by_channel` is `{channel: baseline_levels(...)}` (None where the
-    recording is too short); levels are fractions. Unlike the pre-event drift
-    metric this needs no trial structure, and it sees an offset or step in F0
-    anywhere in the recording.
-
-    Per channel: Pending if no levels or the baseline fraction is below
-    `BASELINE_LEVEL_MIN_FRACTION`; otherwise FAILs if the worst |level| exceeds
-    `BASELINE_LEVEL_FAIL_PCT`, PASSes if below `BASELINE_LEVEL_PASS_PCT`, else
-    Pending. Overall status is the worst across channels.
+    Levels are fractions (None where the recording is too short) and are
+    reported in percent. Per-channel status as in the metric description.
     """
     channels = list(stats_by_channel)
-    value = {"index": channels}
-    for key in ("start", "mid", "end"):
-        value[f"{key}_pct"] = [
-            stats_by_channel[ch][key] * 100 if stats_by_channel[ch] else np.nan
+    keys = ("start", "mid", "end")
+    levels = np.array(
+        [
+            [stats_by_channel[ch][k] * 100 if stats_by_channel[ch] else np.nan for k in keys]
             for ch in channels
         ]
-    worst = [
-        float(np.max(np.abs([value[f"{k}_pct"][i] for k in ("start", "mid", "end")])))
-        for i in range(len(channels))
-    ]
-    value["worst_pct"] = worst
+    ).reshape(len(channels), len(keys))
+    worst = np.abs(levels).max(axis=1)
+    value = {"index": channels}
+    value.update({f"{k}_pct": levels[:, i].tolist() for i, k in enumerate(keys)})
+    value["worst_pct"] = worst.tolist()
     value["frac_baseline"] = [
         stats_by_channel[ch]["frac_baseline"] if stats_by_channel[ch] else np.nan
         for ch in channels
@@ -1323,18 +1316,9 @@ NOISE_INFLATION_FAIL = 2.0
 
 
 def create_motion_noise_metric(fiber, method, stats_by_channel):
-    """Create the motion-correction noise QC metric.
+    """Create the motion-correction QC metric from `{channel: (coefficient, noise_inflation)}`.
 
-    `stats_by_channel` is `{channel: (coefficient, noise_inflation)}` for the
-    non-Iso channels. The coefficient is fit on the 0.05 Hz band but
-    subtracted at all frequencies, so a large coefficient adds Iso noise to a
-    channel it is not coupled to; the inflation factor measures that directly
-    (it also depends on the Iso-to-channel noise ratio, which the coefficient
-    alone does not).
-
-    Per channel: a NaN inflation stays Pending; otherwise FAILs above
-    `NOISE_INFLATION_FAIL`, PASSes below `NOISE_INFLATION_PASS`, else Pending.
-    Overall status is the worst across channels.
+    Covers the non-Iso channels. Per-channel status as in the metric description.
     """
     channels = list(stats_by_channel)
     value = {
