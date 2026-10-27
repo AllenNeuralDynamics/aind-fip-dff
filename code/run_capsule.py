@@ -1354,7 +1354,7 @@ def create_motion_noise_metric(fiber, method, stats_by_channel):
             channel_statuses.append(Status.PENDING)
 
     return QCMetric(
-        name=f"Motion-correction noise of ROI {fiber} using method '{method}'",
+        name=f"Motion correction of ROI {fiber} using method '{method}'",
         reference=f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
         status_history=_auto_status_history(_worst_status(channel_statuses)),
         value=value,
