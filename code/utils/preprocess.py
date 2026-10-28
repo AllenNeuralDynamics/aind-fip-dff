@@ -666,16 +666,16 @@ def _half_sample_mode(r: np.ndarray) -> float:
     point is 50% contamination.
     """
     x = np.sort(r[np.isfinite(r)])
-    if len(x) == 3:
-        widths = np.diff(x)
-        if widths[0] == widths[1]:
-            return float(x[1])
-        return float(np.mean(x[:2] if widths[0] < widths[1] else x[1:]))
     while len(x) > 3:
         half = (len(x) + 1) // 2
         widths = x[half - 1:] - x[:len(x) - half + 1]
         j = np.argmin(widths)
         x = x[j:j + half]
+    if len(x) == 3:  # also reached from longer inputs: keep the closer pair
+        widths = np.diff(x)
+        if widths[0] == widths[1]:
+            return float(x[1])
+        return float(np.mean(x[:2] if widths[0] < widths[1] else x[1:]))
     return float(x.mean())
 
 
