@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sys
+from collections import Counter
 from datetime import datetime as dt
 from pathlib import Path
 
@@ -256,6 +257,14 @@ if __name__ == "__main__":
 
     if len(source_paths) == 0:
         logging.error(f"No files found matching pattern: {args.source_pattern}")
+        sys.exit(1)
+
+    # Each input writes to <output_dir>/<dataset dir name>; two inputs in one dataset
+    # would write (and, on failure, clean up) the same directory concurrently.
+    destinations = Counter(Path(p).parent.parent.name for p in source_paths)
+    shared = sorted(name for name, n in destinations.items() if n > 1)
+    if shared:
+        logging.error(f"Several inputs map to the same output directory: {', '.join(shared)}")
         sys.exit(1)
 
     if len(source_paths) > 1:
