@@ -558,16 +558,15 @@ def _init_sum_of_exps(
 ) -> tuple[np.ndarray, tuple[tuple[float, float], ...]]:
     """Build an initial guess and bounds for fitting `trace` with `sum_of_exps`.
 
-    b_inf is initialized from the 10th percentile of the last 1000 frames and
+    b_inf starts at the 10th percentile of the last 1000 frames and is
     bounded below by a tenth of their mean, so the asymptote can't collapse
-    to zero. Bleach amplitudes are constrained >= 0; brightening (when
-    included) is a dedicated negative-amplitude term rather than a negative
-    bleach amplitude. tau1's and the brightening tau's upper bounds are
-    `TAU_MAX` (effectively unbounded). Amplitudes are capped at the larger of
-    10x the start-to-asymptote difference and half of b_inf: the first alone
-    collapses to ~10-20 (a.u.) on traces whose start and end levels agree, and
-    then a slow decay and a slow brightening term, which nearly cancel, cannot
-    form a mid-session hump.
+    to zero. Bleach amplitudes are >= 0; brightening is a dedicated
+    negative-amplitude term. tau1's and the brightening tau's upper bounds
+    are `TAU_MAX` (effectively unbounded). Amplitudes are capped at the larger
+    of 10x the start-to-asymptote difference and half of b_inf: the first
+    alone collapses on traces whose start and end levels agree, and then a
+    slow decay and a slow brightening term, which nearly cancel, cannot form
+    a mid-session hump.
 
     Parameters
     ----------
@@ -702,14 +701,13 @@ def tc_brightfit_v2(
     finally refits the winning model on the full-resolution trace with
     robust IRLS (M-estimator `M`), warm-started from the decimated winner.
     Slow time constants are left effectively unbounded (`TAU_MAX`); a term
-    whose tau is poorly determined (flat b_inf/amplitude trade-off) is kept
-    as fitted rather than dropped.
+    whose tau is poorly determined is kept as fitted rather than dropped.
 
-    Any sample where `trace` or `timestamps` is non-finite is dropped (not
-    interpolated) before fitting -- a single corrupted sample can otherwise
-    poison the IRLS loss to NaN everywhere. The returned baseline is NaN at
-    those positions and finite elsewhere; a `UserWarning` reports how many
-    samples were dropped, and a `ValueError` is raised if none are usable.
+    Samples where `trace` or `timestamps` is non-finite are dropped (not
+    interpolated) before fitting, since one corrupted sample can poison the
+    IRLS loss everywhere. The baseline is NaN at those positions, a
+    `UserWarning` reports how many were dropped, and a `ValueError` is raised
+    if none are usable.
 
     Parameters
     ----------
@@ -728,25 +726,20 @@ def tc_brightfit_v2(
         always runs at full resolution. Default 10.
     fixed_sigma : float or "auto" or None, optional
         IRLS noise scale for the final fit. "auto" (default) estimates it
-        via `noise_std(trace, method=noise_method)`, falling back to `None`
-        if that estimate is non-finite or <= 0 (a
-        constant/noiseless trace) -- dividing the robust loss by a zero
-        scale would otherwise make it non-finite everywhere; a float uses
-        that value directly; `None` uses `nonlinear_fit`'s own
-        adaptive-scale IRLS instead.
+        via `noise_std(trace, method=noise_method)`, or uses `None` if that
+        is non-finite or <= 0 (a constant trace); a float is used directly;
+        `None` uses `nonlinear_fit`'s own adaptive-scale IRLS.
     sigma_anneal_steps : int, optional
         Geometric IRLS-sigma annealing steps passed to `nonlinear_fit`.
-        Default 6 (4 steps left 1-6% differences from a 12-step ramp on a
-        few traces, a different local minimum of the non-convex loss).
+        Default 6.
     t_eval_exp3 : float, optional
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
         compared on the full trace. Default 120.0.
     noise_method : str, optional
-        `noise_std` method behind `fixed_sigma="auto"`: "mad" (default, MAD of
-        the residual from a median filter) or "welch" (high-frequency
-        band). On dense-transient traces Welch can sit up to ~5x below the
-        MAD estimate, so the Tukey cutoffs c * sigma fall inside the noise.
+        `noise_std` method behind `fixed_sigma="auto"`: "mad" (default) or
+        "welch". Welch can sit far below the MAD estimate on dense-transient
+        traces, which puts the Tukey cutoffs c * sigma inside the noise.
 
     Returns
     -------
@@ -758,10 +751,7 @@ def tc_brightfit_v2(
     """
     # Drop (don't interpolate) non-finite samples -- see docstring.
     valid = np.isfinite(trace) & np.isfinite(timestamps)
-    # Checked independent of n_dropped below: an empty trace/timestamps
-    # has n_dropped == 0 (nothing to count as dropped) despite
-    # valid.any() being False, so nesting this under `if n_dropped:`
-    # would let it fall through to noise estimation instead of raising.
+    # Checked regardless of n_dropped: an empty input has n_dropped == 0.
     if not valid.any():
         raise ValueError(
             "tc_brightfit_v2: every sample is non-finite (trace or "
