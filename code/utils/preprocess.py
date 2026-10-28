@@ -735,7 +735,8 @@ def tc_brightfit_v2(
     t_eval_exp3 : float, optional
         Length (seconds) of the early window used to compare the 3rd
         exponential candidate against the current winner; brightening is
-        compared on the full trace. Default 120.0.
+        compared on the full trace. Default 120.0. Assumes regular sampling:
+        gaps from dropped non-finite samples lengthen the window.
     noise_method : str, optional
         `noise_std` method behind `fixed_sigma="auto"`: "mad" (default) or
         "welch". Welch can sit far below the MAD estimate on dense-transient
