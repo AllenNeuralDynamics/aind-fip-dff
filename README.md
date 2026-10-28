@@ -25,7 +25,7 @@ Motion correction is carried out in three to four steps:
 All parameters are passed to `run_capule.py` using `python run_capule.py [parameters]`.
 Parameters are defined in `__main__` using argparse.  
 Key parameters include:  
-- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F. Default: `["poly", "exp", "bright"]`
+- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F. Default: `["poly", "exp", "bright-v2"]`
 - '--cutoff_freq_motion': Cutoff frequency of the lowpass Butterworth filter that's only applied for estimating the regression coefficient, in Hz. Default: `0.05`
 - '--cutoff_freq_noise': Cutoff frequency of the lowpass Butterworth filter that's applied to filter out noise, in Hz. If `None` or greater than the Nyquist frequency (`10` for `20`Hz sampling rate) no noise filtering is performed. Default: `3`
 

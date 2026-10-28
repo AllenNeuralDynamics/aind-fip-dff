@@ -191,7 +191,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dff_methods",
         nargs="+",
-        default=["poly", "exp", "bright"],
+        default=["poly", "exp", "bright-v2"],
         help=(
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
