@@ -725,26 +725,23 @@ def plot_motion_correction(
 
 
 def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float]:
-    """Negative-residual calibration ratio for a fitted baseline: median
-    absolute negative residual (signal - f0), compared to what pure
-    Gaussian noise at the trace's own estimated std would produce
-    (0.6745 * sigma), as in `aind_ophys_dff_library.triexp_dff`'s model
-    selection. Sigma is the MAD estimate (`noise_std(..., method="mad")`),
-    not Welch: on dense-transient traces the Welch estimate can fall well
-    below the true noise, which inflates the ratio. A ratio far from 1
-    suggests the fit is systematically biased or the robust fit is
-    over/under-aggressive (not necessarily exactly 1 on real,
-    transient-containing data).
+    """Negative-residual calibration ratio of a fitted baseline.
 
-    `signal`/`f0` are generic: pass raw fluorescence and its fitted F0 to
-    check the baseline fit, or an already-centered trace with `f0=0` to
-    check its own residual-to-noise consistency directly.
+    The median absolute negative residual (`signal - f0`) over what Gaussian
+    noise at the trace's own std would give (0.6745 * sigma), as in
+    `aind_ophys_dff_library.triexp_dff`'s model selection. Sigma is the MAD
+    estimate (`noise_std(..., method="mad")`): Welch can fall well below the
+    true noise on dense-transient traces and inflate the ratio. A ratio far
+    from 1 suggests a biased fit or an over- or under-aggressive robust fit
+    (it is not exactly 1 on real data with transients).
+
+    With `f0=0` an already-centered trace is checked for its own
+    residual-to-noise consistency.
 
     Returns
     -------
     ratio, sigma : float
-        `ratio` is NaN if 10 or fewer residuals are negative, or sigma
-        (`noise_std(signal, method="mad")`) is 0.
+        `ratio` is NaN if 10 or fewer residuals are negative, or sigma is 0.
     """
     resid = signal - f0
     valid = np.isfinite(resid)
@@ -767,11 +764,9 @@ def _get_pregocue_windows(
 ) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None], Union[str, None]]:
     """Per-trial windows to align the pre-event dF/F regression to.
 
-    Prefers each trial's own Delay period, [delay_start_time,
-    goCue_start_time): guaranteed by task design to never overlap the
-    previous trial's ITI, unlike a fixed duration before GoCue. Falls back
-    to a fixed window before reward time for sessions without a
-    GoCue-based Delay period.
+    Each trial's Delay period [delay_start_time, goCue_start_time), which by
+    task design never overlaps the previous ITI; else a fixed window before
+    reward time.
 
     Returns
     -------
@@ -823,22 +818,17 @@ def _pregocue_drift_stats(
     Returns
     -------
     dict
-        slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs. each
-            trial's own window midpoint time in seconds, relative to `t`'s
-            first sample (matching the other QC plots' time axis) (drift
-            ACROSS the session), and the slope's p-value.
-        total_drift : `slope` times the session span actually fit (last
-            minus first included trial's midpoint time) -- the cumulative
-            drift implied over the session, in the same (fractional, not
-            percent) units as `mean_dff`. A rate like `slope` [%/s] is
-            awkward to threshold directly (tiny even for a real effect,
-            since it's spread over a session lasting thousands of
-            seconds); this is the comparable, interpretable quantity.
+        slope, intercept, slope_p : OLS fit of per-trial mean dF/F vs. window
+            midpoint time [s from `t`'s first sample] (drift across the
+            session), and the slope's p-value.
+        total_drift : `slope` times the fitted span (last minus first
+            included midpoint), in the units of `mean_dff` (a fraction);
+            easier to threshold than the rate `slope`.
         mean_dff, mean_p : mean pre-event dF/F across trials, and the
             p-value of a one-sample t-test against 0.
         n_trials : number of trials with a finite pre-event mean.
-        per_trial_mean : np.ndarray, one pre-event mean per trial in
-            `starts`/`ends` (including NaNs), for plotting.
+        per_trial_mean : np.ndarray, one mean per trial in `starts`/`ends`
+            (NaN where undefined), for plotting.
     """
     dff, t = np.asarray(dff), np.asarray(t)
     starts, ends = np.asarray(starts), np.asarray(ends)
@@ -917,14 +907,13 @@ def plot_pregocue_regression(
     ends: np.ndarray,
     event_label: str,
 ) -> dict:
-    """Plot per-trial pre-event dF/F against each trial's own window
-    midpoint time (session seconds, zero-based), with an OLS trend line,
-    for each channel -- a QC check for within-session baseline drift
-    One figure per stage (not one combined figure):
-    dF/F before motion correction ("dff", isolates the baseline-fit
-    method) and after ("motion_corrected", the actual production output)
-    -- matching create_pregocue_metric's own per-stage metric split, so
-    each metric references only its own stage's plot.
+    """Plot per-trial pre-event dF/F against window midpoint time (session
+    seconds, zero-based) with an OLS trend line, per channel -- a QC check
+    for within-session baseline drift.
+
+    One figure per stage: dF/F before motion correction ("dff", isolates the
+    baseline fit) and after ("motion_corrected", the production output),
+    matching the per-stage metrics of `create_pregocue_metric`.
 
     Parameters
     ----------
@@ -1067,10 +1056,8 @@ CALIBRATION_FAIL_LOWER = 0.8
 
 
 def _worst_status(statuses):
-    """Aggregate per-channel statuses: FAIL > Pending > PASS -- the
-    convention already documented for `aind_qcportal_schema.CheckboxMetric`,
-    used identically by both `create_calibration_metric` and
-    `create_pregocue_metric`."""
+    """Worst per-channel status: FAIL > Pending > PASS (the
+    `aind_qcportal_schema.CheckboxMetric` convention)."""
     if Status.FAIL in statuses:
         return Status.FAIL
     if not statuses or Status.PENDING in statuses:
@@ -1090,27 +1077,16 @@ def _auto_status_history(status):
 
 
 def create_calibration_metric(fiber, method, ratio_by_channel):
-    """Create a QC metric for the per-channel negative-residual calibration ratio.
+    """Create the calibration-ratio QC metric from `{channel: ratio}`.
 
-    `ratio_by_channel` is `{channel: ratio}` -- dF/F stage only (before
-    motion correction); see `_calibration_ratio` for the definition.
-    Serialized transposed, as `{"index": [channel, ...], "ratio": [ratio,
-    ...]}`, so the QC portal renders a channel-indexed table (and, unlike
-    a one-row table, doesn't leak a stray "index" row-index label).
+    dF/F stage only (see `_calibration_ratio`): after motion correction its
+    sigma assumes high-frequency noise that `motion_correct`'s final filter
+    suppresses, which would inflate the ratio by the attenuation.
 
-    Deliberately NOT computed on the motion-corrected trace:
-    `_calibration_ratio`'s sigma assumes high-frequency noise that
-    `motion_correct`'s own final filter suppresses, inflating the ratio
-    by its attenuation factor rather than reflecting fit quality -- see the drift-stats metric for a motion-corrected-stage
-    signal instead.
-
-    Per channel: a NaN ratio (too few negative residuals, or zero noise
-    estimate -- see `_calibration_ratio`) always stays Pending; otherwise
-    FAILs if `ratio` is outside `[CALIBRATION_FAIL_LOWER,
-    CALIBRATION_FAIL_UPPER]`, PASSes if within `[CALIBRATION_PASS_LOWER,
-    CALIBRATION_PASS_UPPER)`, else Pending -- see the constants' own
-    comment for why these are asymmetric around 1. Overall status is the
-    worst across channels, via `_worst_status`.
+    Per channel, a NaN ratio stays Pending; otherwise FAIL outside
+    `[CALIBRATION_FAIL_LOWER, CALIBRATION_FAIL_UPPER]`, PASS in
+    `[CALIBRATION_PASS_LOWER, CALIBRATION_PASS_UPPER)`, else Pending. The
+    overall status is the worst across channels.
     """
     channel_statuses = []
     for ratio in ratio_by_channel.values():
@@ -1153,28 +1129,17 @@ DRIFT_MIN_TRIALS = 20
 def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
     """Create one QC metric per stage for pre-event dF/F drift across trials.
 
-    `stats_by_channel` is `{channel: {stage: stats}}`, where `stage` is
-    "dff" (before motion correction) or "motion_corrected" (after) -- see
-    `_pregocue_drift_stats` for the definition; relates to aind-fip-dff#75
-    (baseline drift within a session).
+    `stats_by_channel` is `{channel: {stage: stats}}`, with `stage` "dff"
+    (before motion correction) or "motion_corrected" (after); see
+    `_pregocue_drift_stats` and aind-fip-dff#75. Values are channel-indexed
+    so the QC portal renders a table.
 
-    Split into one metric per stage (mirroring `create_metric`'s existing
-    baseline/motion split) rather than one combined metric: each stage
-    gets its own automatic status, and each metric's value is
-    channel-indexed (`{"index": [channel, ...], field: [value, ...]}`,
-    matching `create_metric`/`create_calibration_metric`'s own
-    orientation) so the QC portal renders it as a table instead of
-    falling back to its generic JSON-editor widget.
-
-    Per channel (motion_corrected's Iso excluded -- it's trivially 0 by
-    construction, being the motion-correction reference channel, not a
-    real signal), with fewer than `DRIFT_MIN_TRIALS` trials always stays
-    Pending; otherwise FAILs if `|mean_dff|` or `|total_drift|` exceeds
-    `DRIFT_FAIL_THRESHOLD_PCT`, PASSes if both are under
-    `DRIFT_PASS_THRESHOLD_PCT`, else Pending -- checking both catches a
-    session that drifts a lot but happens to start and end near 0 (small
-    mean, large drift), not just a uniformly-offset one. Overall status
-    is the worst across evaluated channels, via `_worst_status`.
+    Per channel (Iso excluded after motion correction, where it is 0 by
+    construction): Pending below `DRIFT_MIN_TRIALS` trials; otherwise FAIL if
+    `|mean_dff|` or `|total_drift|` exceeds `DRIFT_FAIL_THRESHOLD_PCT`, PASS
+    if both are under `DRIFT_PASS_THRESHOLD_PCT`, else Pending. Both are
+    checked so a session that drifts but starts and ends near 0 is caught.
+    The overall status is the worst across channels.
 
     Returns
     -------
@@ -1183,21 +1148,13 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
     """
     channels = list(stats_by_channel.keys())
     stages = sorted({stage for stats in stats_by_channel.values() for stage in stats})
-    # intercept is deliberately not serialized here -- it's only used to
-    # draw the regression line in the reference plot (see
-    # plot_pregocue_regression), not needed for the auto-status decision,
-    # and not recoverable from the other fields after the fact (it'd take
-    # mean(trial midpoint times) for this channel/stage's specific set of
-    # valid trials, which isn't otherwise stored).
+    # `intercept` is left out: it only draws the regression line in the plot.
     fields = ["mean_dff", "mean_p", "slope", "slope_p", "total_drift", "n_trials"]
 
     metrics = []
     for stage in stages:
-        # Channel-indexed (not field-indexed): keeps each column's dtype
-        # homogeneous (e.g. n_trials stays a plain int column instead of
-        # being upcast to float and shown in scientific notation
-        # alongside p-values as small as ~1e-300), and matches
-        # create_metric/create_calibration_metric's own orientation.
+        # Channel-indexed so each column keeps one dtype (`n_trials` stays an
+        # int next to tiny p-values).
         present = [ch for ch in channels if stats_by_channel[ch].get(stage) is not None]
         value = {"index": present}
         for f in fields:
