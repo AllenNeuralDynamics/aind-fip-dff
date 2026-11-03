@@ -152,7 +152,7 @@ def process1dataset(source_path, args, start_time):
         json_dir=fiber_path,
         process_name=process_name,
         input_fp=source_path,
-        output_fp=destination_path / "nwb",
+        output_fp=destination_path,
         start_date_time=start_time,
     )
 
