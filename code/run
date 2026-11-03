@@ -5,19 +5,16 @@ set -euo pipefail
 # reprocess.py for a one-off batch run over many attached assets.
 entrypoint=run_capsule.py
 
-# Master script for the capsule. App Panel parameters arrive positionally, in
-# the order they are defined in the panel:
-#   $1 dF/F methods (space-separated)   $4 noise cutoff frequency [Hz]
-#   $2 baseline percentile              $5 run serially (true/false)
-#   $3 motion cutoff frequency [Hz]     $6 skip QC plots (true/false)
-# Paths keep run_capsule.py's defaults and are deliberately not exposed.
+# App Panel parameters arrive as named flags (--name=value), so order in the
+# panel does not matter. Most are forwarded to the Python CLI untouched; only
+# the two that argparse cannot take in --flag=value form are translated:
+#   --dff_methods : one quoted string -> separate tokens for nargs="+"
+#   --serial, --no_qc : true/false    -> a bare store_true flag, or nothing
+# Paths keep the Python defaults and are deliberately not exposed in the panel.
 
-dff_methods="${1:-poly exp bright-v2}"
-b_percentile="${2:-0.7}"
-cutoff_freq_motion="${3:-0.05}"
-cutoff_freq_noise="${4:-3}"
-serial="${5:-false}"
-no_qc="${6:-false}"
+args=()
+serial=false
+no_qc=false
 
 is_true() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
@@ -26,17 +23,20 @@ is_true() {
   esac
 }
 
-args=(
-  --b_percentile "$b_percentile"
-  --cutoff_freq_motion "$cutoff_freq_motion"
-  --cutoff_freq_noise "$cutoff_freq_noise"
-)
-
-# space-separated list -> argparse nargs="+"
-read -r -a methods <<< "$dff_methods"
-if [[ ${#methods[@]} -gt 0 ]]; then
-  args+=(--dff_methods "${methods[@]}")
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dff_methods=*)
+      read -r -a methods <<< "${1#*=}"
+      if [[ ${#methods[@]} -gt 0 ]]; then
+        args+=(--dff_methods "${methods[@]}")
+      fi
+      ;;
+    --serial=*) serial="${1#*=}" ;;
+    --no_qc=*) no_qc="${1#*=}" ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
 
 # --serial is a run_capsule.py flag; reprocess.py parallelizes across assets itself
 # and must not get --parallel (nested oversubscription), so it gets neither.
@@ -49,4 +49,4 @@ if is_true "$no_qc"; then
 fi
 
 echo "entrypoint: $entrypoint"
-python -u "$entrypoint" "${args[@]}"
+python -u "$entrypoint" "${args[@]+${args[@]}}"
