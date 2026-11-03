@@ -168,12 +168,10 @@ def write_output_metadata(
             derived_dd.write_standard_file(output_directory=Path(output_fp))
         except Exception:
             # The upgrader rejects metadata it does not understand (e.g. a
-            # funding_source entry with an `investigators` field). That must not
-            # discard the NWB, QC and processing outputs already written for
-            # this asset (reprocess.py deletes the whole destination on error).
-            logging.exception(
-                f"Could not upgrade {dd_file}; no derived data_description.json written"
-            )
+            # funding_source entry with an `investigators` field). The metadata
+            # has to be fixed, so fail and name the file.
+            logging.exception(f"Could not upgrade {dd_file}")
+            raise
     else:
         logging.error("no input data description")
 
