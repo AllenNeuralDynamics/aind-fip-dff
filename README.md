@@ -10,6 +10,7 @@ Three baseline estimation methods are implemented:
 - "tri-exp": Fits a triphasic exponential using OLS: $a\cdot e^{-b\cdot t} + c\cdot e^{-d\cdot t} + e\cdot e^{-f\cdot t} + g$
 - "bright": Robust fit with  [Bi- or Tri-phasic exponential decay (bleaching)]  x  [Increasing saturating exponential (brightening)] using Iteratively Reweighted Least Squares (IRLS):  $b_{\infty} \cdot (1 + b_{slow} e^{-t/\tau_{slow}} + b_{fast} e^{-t/\tau_{fast}} + b_{rapid} e^{-t/\tau_{rapid}}) \cdot (1-b_{bright} e^{-t/\tau_{bright}}))$  
   Fitting starts with a biphasic exponential, and the brightening and/or 3rd exponential are only included if they substantially improve the fit.
+- "bright-v2": Robust fit with a sum of exponentials, $b_{\infty} + \sum_{i=1}^{3} b_i e^{-t/\tau_i} + b_{bright} e^{-t/\tau_{bright}}$ (bleaching terms with an optional negative-amplitude brightening term), selected on a decimated trace and refit at full resolution with an asymmetric Tukey biweight M-estimator ($c_{pos}=c_{neg}=4$) via `aind_ophys_utils.nonlinear_fit`. The scale of the weights is a MAD-based noise estimate (`noise_std(method="mad")`), annealed in from the OLS residuals over 6 steps. About 30-100x faster than "bright".
 
 ### Motion Correction
 Motion correction is carried out in three to four steps:
@@ -24,7 +25,7 @@ Motion correction is carried out in three to four steps:
 All parameters are passed to `run_capule.py` using `python run_capule.py [parameters]`.
 Parameters are defined in `__main__` using argparse.  
 Key parameters include:  
-- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F. Default: `["poly", "exp", "bright"]`
+- '--dff_methods': Defines the method(s) to be used for calculating ΔF/F. Default: `["poly", "exp", "bright-v2"]`
 - '--cutoff_freq_motion': Cutoff frequency of the lowpass Butterworth filter that's only applied for estimating the regression coefficient, in Hz. Default: `0.05`
 - '--cutoff_freq_noise': Cutoff frequency of the lowpass Butterworth filter that's applied to filter out noise, in Hz. If `None` or greater than the Nyquist frequency (`10` for `20`Hz sampling rate) no noise filtering is performed. Default: `3`
 
