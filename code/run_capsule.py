@@ -1,6 +1,7 @@
 import utils.blas_threads  # noqa: F401 -- sets BLAS env vars, must precede numpy
 import argparse
 import glob
+import inspect
 import itertools
 import json
 import logging
@@ -46,6 +47,10 @@ from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
+from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+
+#: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
+MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -993,8 +998,8 @@ def plot_pregocue_regression(
     return stats
 
 
-def create_metric(fiber, method, reference, value, motion=False):
-    """Create a QC metric for baseline or motion correction.
+def create_metric(fiber, method, reference, value):
+    """Create the QC metric for the baseline fit.
 
     Parameters
     ----------
@@ -1004,10 +1009,8 @@ def create_metric(fiber, method, reference, value, motion=False):
         The preprocessing method used.
     reference : str
         Path to the reference image for this metric.
-    value : float | dict
+    value : dict
         Metric value.
-    motion : bool, optional
-        Whether this is a motion correction metric. Defaults to False.
 
     Returns
     -------
@@ -1028,23 +1031,17 @@ def create_metric(fiber, method, reference, value, motion=False):
         ),
     }
     return QCMetric(
-        name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
+        name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator=(
-                    "Automatic" if (motion and value > 10) else "Pending review"
-                ),
+                evaluator="Pending review",
                 timestamp=dt.now(),
-                status=Status.FAIL if (motion and value > 10) else Status.PENDING,
+                status=Status.PENDING,
             )
         ],
         value=value,
-        description=(
-            "Maximum regression coefficient"
-            if motion
-            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
-        ),
+        description="Baseline $$F_0(t)$$ fit with  " + baselines[method],
     )
 
 
@@ -1205,6 +1202,111 @@ def create_pregocue_metric(fiber, method, event_label, stats_by_channel):
             )
         )
     return metrics
+
+
+#: Worst |baseline level| [%] over the start/middle/end windows for
+#: auto-pass/fail; values in between stay Pending.
+BASELINE_LEVEL_PASS_PCT = 1.0
+BASELINE_LEVEL_FAIL_PCT = 5.0
+#: Below this fraction of baseline samples the trace is dominated by
+#: transients, the histogram mode is not the baseline, and the channel stays
+#: Pending.
+BASELINE_LEVEL_MIN_FRACTION = 0.9
+
+
+def create_baseline_level_metric(fiber, method, stats_by_channel):
+    """Create the baseline-level QC metric from `{channel: baseline_levels(...)}`.
+
+    Levels are fractions (None where the recording is too short) and are
+    reported in percent. Per-channel status as in the metric description.
+    """
+    channels = list(stats_by_channel)
+    keys = ("start", "mid", "end")
+    levels = np.array(
+        [
+            [stats_by_channel[ch][k] * 100 if stats_by_channel[ch] else np.nan for k in keys]
+            for ch in channels
+        ]
+    ).reshape(len(channels), len(keys))
+    worst = np.abs(levels).max(axis=1)
+    value = {"index": channels}
+    value.update({f"{k}_pct": levels[:, i].tolist() for i, k in enumerate(keys)})
+    value["worst_pct"] = worst.tolist()
+    value["frac_baseline"] = [
+        stats_by_channel[ch]["frac_baseline"] if stats_by_channel[ch] else np.nan
+        for ch in channels
+    ]
+
+    channel_statuses = []
+    for w, frac in zip(worst, value["frac_baseline"]):
+        if not np.isfinite(w) or frac < BASELINE_LEVEL_MIN_FRACTION:
+            channel_statuses.append(Status.PENDING)
+        elif w > BASELINE_LEVEL_FAIL_PCT:
+            channel_statuses.append(Status.FAIL)
+        elif w < BASELINE_LEVEL_PASS_PCT:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    return QCMetric(
+        name=f"Baseline level at start, middle and end of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}.png",
+        status_history=_auto_status_history(_worst_status(channel_statuses)),
+        value=value,
+        description=(
+            "Per-channel dF/F baseline level [%] in the first, middle and "
+            f"last {BASELINE_WINDOW_S // 60} min (a sixth of the recording if "
+            f"shorter than {6 * BASELINE_WINDOW_S // 60} min; mode of the 1 Hz low-passed "
+            "trace); 0 if F0 tracks the baseline, negative if F0 is too high. "
+            f"Pending below {BASELINE_LEVEL_MIN_FRACTION:g} baseline fraction "
+            "(transient-dominated) or if too short; else fails if the worst "
+            f"|level| > {BASELINE_LEVEL_FAIL_PCT:g}%, passes if < "
+            f"{BASELINE_LEVEL_PASS_PCT:g}%, else Pending. Worst channel status wins."
+        ),
+    )
+
+
+#: Noise inflation by the Iso subtraction (see `noise_inflation`) for
+#: auto-pass/fail; values in between stay Pending.
+NOISE_INFLATION_PASS = 1.1
+NOISE_INFLATION_FAIL = 2.0
+
+
+def create_motion_noise_metric(fiber, method, stats_by_channel):
+    """Create the motion-correction QC metric from `{channel: (coefficient, noise_inflation)}`.
+
+    Covers the non-Iso channels. Per-channel status as in the metric description.
+    """
+    channels = list(stats_by_channel)
+    value = {
+        "index": channels,
+        "coefficient": [stats_by_channel[ch][0] for ch in channels],
+        "noise_inflation": [stats_by_channel[ch][1] for ch in channels],
+    }
+    channel_statuses = []
+    for infl in value["noise_inflation"]:
+        if not np.isfinite(infl):
+            channel_statuses.append(Status.PENDING)
+        elif infl > NOISE_INFLATION_FAIL:
+            channel_statuses.append(Status.FAIL)
+        elif infl < NOISE_INFLATION_PASS:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    return QCMetric(
+        name=f"Motion correction of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
+        status_history=_auto_status_history(_worst_status(channel_statuses)),
+        value=value,
+        description=(
+            "Per-channel Iso regression coefficient and the factor by which "
+            "the Iso subtraction raises the MAD noise estimate of the "
+            "channel (1 = none). Pending if NaN; else fails if > "
+            f"{NOISE_INFLATION_FAIL:g}, passes if < {NOISE_INFLATION_PASS:g}, "
+            "else Pending. Worst channel status wins."
+        ),
+    )
 
 
 def create_evaluation(method, metrics):
@@ -1694,17 +1796,9 @@ def generate_qc_plots(
                     _params_as_dict(fiber, method, df_pp_params),
                 )
             )
-            metrics.append(
-                create_metric(
-                    fiber,
-                    method,
-                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                    max(v for k, v in coeffs[method][int(fiber)].items() if k != "Iso"),
-                    True,
-                )
-            )
 
             ratio_by_channel, drift_by_channel = {}, {}
+            level_by_channel, noise_by_channel = {}, {}
             for ch in channels:
                 df = df_fip_pp[
                     (df_fip_pp.channel == ch)
@@ -1719,6 +1813,18 @@ def generate_qc_plots(
                 # still computed at both stages.
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
                 ratio_by_channel[ch] = ratio_dff
+                fs = 1 / np.median(np.diff(df.time_fip.values))
+                level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
+                if ch != "Iso":
+                    noise_by_channel[ch] = (
+                        coeffs[method][int(fiber)][ch],
+                        noise_inflation(
+                            df.dFF.values,
+                            df.motion_corrected.values,
+                            MOTION_CORRECT_FS,
+                            args.cutoff_freq_noise,
+                        ),
+                    )
                 if pregocue_starts is not None:
                     # Reuse the plotting pass's own stats; recompute only
                     # if unexpectedly missing.
@@ -1735,10 +1841,12 @@ def generate_qc_plots(
                         ),
                     }
             metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
+            metrics.append(create_baseline_level_metric(fiber, method, level_by_channel))
             if pregocue_starts is not None:
                 metrics.extend(
                     create_pregocue_metric(fiber, method, event_label, drift_by_channel)
                 )
+            metrics.append(create_motion_noise_metric(fiber, method, noise_by_channel))
         evaluations.append(create_evaluation(method, metrics))
 
     # Create QC object and save

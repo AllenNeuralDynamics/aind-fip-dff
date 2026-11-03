@@ -1,5 +1,52 @@
 #!/usr/bin/env bash
-set -ex
+set -euo pipefail
 
-# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
-python -u run_capsule.py "$@"
+# Entry point: run_capsule.py processes the one attached asset (default); set to
+# reprocess.py for a one-off batch run over many attached assets.
+entrypoint=run_capsule.py
+
+# App Panel parameters arrive as named flags (--name=value), so order in the
+# panel does not matter. Most are forwarded to the Python CLI untouched; only
+# the two that argparse cannot take in --flag=value form are translated:
+#   --dff_methods : one quoted string -> separate tokens for nargs="+"
+#   --serial, --no_qc : true/false    -> a bare store_true flag, or nothing
+# Paths keep the Python defaults and are deliberately not exposed in the panel.
+
+args=()
+serial=false
+no_qc=false
+
+is_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dff_methods=*)
+      read -r -a methods <<< "${1#*=}"
+      if [[ ${#methods[@]} -gt 0 ]]; then
+        args+=(--dff_methods "${methods[@]}")
+      fi
+      ;;
+    --serial=*) serial="${1#*=}" ;;
+    --no_qc=*) no_qc="${1#*=}" ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+
+# --serial is a run_capsule.py flag; reprocess.py parallelizes across assets itself
+# and must not get --parallel (nested oversubscription), so it gets neither.
+if [[ "$entrypoint" == run_capsule.py ]] && is_true "$serial"; then
+  args+=(--serial)
+fi
+
+if is_true "$no_qc"; then
+  args+=(--no_qc)
+fi
+
+echo "entrypoint: $entrypoint"
+python -u "$entrypoint" "${args[@]+${args[@]}}"
