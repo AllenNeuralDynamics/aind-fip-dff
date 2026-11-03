@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Entry point: run_capsule.py processes the one attached asset (default); set to
+# reprocess.py for a one-off batch run over many attached assets.
+entrypoint=run_capsule.py
+
 # Master script for the capsule. App Panel parameters arrive positionally, in
 # the order they are defined in the panel:
 #   $1 dF/F methods (space-separated)   $4 noise cutoff frequency [Hz]
@@ -34,7 +38,9 @@ if [[ ${#methods[@]} -gt 0 ]]; then
   args+=(--dff_methods "${methods[@]}")
 fi
 
-if is_true "$serial"; then
+# --serial is a run_capsule.py flag; reprocess.py parallelizes across assets itself
+# and must not get --parallel (nested oversubscription), so it gets neither.
+if [[ "$entrypoint" == run_capsule.py ]] && is_true "$serial"; then
   args+=(--serial)
 fi
 
@@ -42,4 +48,5 @@ if is_true "$no_qc"; then
   args+=(--no_qc)
 fi
 
-python -u run_capsule.py "${args[@]}"
+echo "entrypoint: $entrypoint"
+python -u "$entrypoint" "${args[@]}"
