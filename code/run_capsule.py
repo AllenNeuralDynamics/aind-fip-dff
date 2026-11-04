@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
-import zarr
 from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
@@ -46,6 +45,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
+from utils.fiber_detection import nwb_has_fiber_channels
 from utils.preprocess import chunk_processing, motion_correct
 from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
@@ -1974,26 +1974,19 @@ def main():
         destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
-        # Check if fiber photometry data exists
-        has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
-        if has_fiber:
-            zarr_root = zarr.open(str(destination_path), mode="r")
-            acquisition_group = zarr_root.get("acquisition")
-            fiber_prefixes = ("G_", "R_", "Iso_", "Signal_")
-            acquisition_entries = (
-                acquisition_group.keys() if acquisition_group is not None else []
+        # The NWB file decides whether there is fiber photometry data to
+        # process, not the raw asset's folders (which may be only partly
+        # attached to the capsule).
+        has_fiber = nwb_has_fiber_channels(destination_path)
+        if not has_fiber and (
+            (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        ):
+            logging.warning(
+                "Raw fiber directory is present but no fiber data "
+                f"was written to NWB file: {destination_path}. "
+                "This is likely due to an issue during NWB packaging, e.g. "
+                "'FIP data is present, but HARP timestamps are missing'"
             )
-            has_fiber_channels = any(
-                entry.startswith(fiber_prefixes) for entry in acquisition_entries
-            )
-            if not has_fiber_channels:
-                logging.warning(
-                    "Raw fiber directory is present but no fiber data "
-                    f"was written to NWB file: {destination_path}. "
-                    "This is likely due to an issue during NWB packaging, e.g. "
-                    "'FIP data is present, but HARP timestamps are missing'"
-                )
-                has_fiber = False
 
         if has_fiber:
             # Print the path to ensure correctness
