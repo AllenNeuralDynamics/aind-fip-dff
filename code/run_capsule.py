@@ -1974,8 +1974,7 @@ def main():
         destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
-        # The NWB file decides whether there is fiber photometry data to
-        # process, not the raw asset's folders (which may be only partly attached).
+        # Fiber data is present if the NWB has fiber signals in acquisition.
         acquisition = zarr.open(str(destination_path), mode="r").get("acquisition")
         has_fiber = acquisition is not None and any(
             entry.startswith(("G_", "R_", "Iso_", "Signal_")) for entry in acquisition.keys()
