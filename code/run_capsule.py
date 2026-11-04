@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
+import zarr
 from aind_data_schema.core.data_description import DerivedDataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
@@ -45,7 +46,6 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.fiber_detection import nwb_has_fiber_channels
 from utils.preprocess import chunk_processing, motion_correct
 from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
@@ -1975,9 +1975,11 @@ def main():
         shutil.copytree(source_path, destination_path)
 
         # The NWB file decides whether there is fiber photometry data to
-        # process, not the raw asset's folders (which may be only partly
-        # attached to the capsule).
-        has_fiber = nwb_has_fiber_channels(destination_path)
+        # process, not the raw asset's folders (which may be only partly attached).
+        acquisition = zarr.open(str(destination_path), mode="r").get("acquisition")
+        has_fiber = acquisition is not None and any(
+            entry.startswith(("G_", "R_", "Iso_", "Signal_")) for entry in acquisition.keys()
+        )
         if not has_fiber and (
             (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
         ):
