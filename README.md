@@ -53,11 +53,10 @@ For quality control (QC), the `dff-qc` subdirectory contains visualizations of t
   * On the right: A scatter plot of color vs isosbestic ΔF/F values for both the original and low-pass filtered (`cutoff_freq_motion`) data with the fitted regression line
 - The pre-event regression figures (`ROI0_dff-bright-v2_pregocue-regression[_mc-iso-IRLS].png`) plot each trial's mean ΔF/F before the GoCue (the delay period; else the second before the reward) against time, with a trend line, to show baseline drift.
 
-Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal), with one status per ROI and method (worst channel wins; in between the limits: Pending):
+Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal), with one status per ROI and method (worst channel wins). The metrics are:
+- **Calibration ratio**: the fit's median negative residual over what Gaussian noise would give; about 1 for a well-placed baseline.
+- **Baseline level**: the mode of the 1 Hz low-passed ΔF/F at the start, middle and end of the session; negative if F<sub>0</sub> is too high.
+- **Motion correction**: noise inflation of the corrected over the uncorrected trace.
+- **Pre-GoCue drift**: the mean pre-event ΔF/F and its trend across trials.
 
-| Metric | Pass | Fail |
-|---|---|---|
-| Calibration ratio: median negative residual of the fit over what Gaussian noise would give (about 1 for a well-placed baseline) | 0.9 – 1.4 | < 0.8 or > 2.5 |
-| Baseline level: mode of the 1 Hz low-passed ΔF/F in the first, middle and last 5 min (negative if F<sub>0</sub> is too high) | worst &#124;level&#124; < 1 % | > 5 % |
-| Motion correction: noise inflation of the corrected over the uncorrected trace | < 1.1 | > 2.0 |
-| Pre-GoCue ΔF/F drift: mean pre-event ΔF/F and its total trend across trials | both < 1 % | either > 5 % |
+Each metric's description in `quality_control.json` gives its pass and fail limits (constants in `run_capsule.py`).
