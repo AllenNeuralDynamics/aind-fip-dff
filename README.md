@@ -32,7 +32,7 @@ Motion correction is carried out in three to four steps:
 - `--serial`: Do not parallelize fibers and channels.
 - `--no_qc`: Skip the QC plots and metrics.
 
-In the Code Ocean App Panel the parameters arrive in `code/run` as named flags (`--name=value`); `--dff_methods` is one quoted string (`"poly exp bright-v2"`), `--serial` and `--no_qc` are `true`/`false`. The `entrypoint` line at the top of `code/run` switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset; the partial output of a failing asset is removed and the asset is listed, the others are kept, and the exit code is non-zero.
+In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset; a failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
 
 ## Output
 
