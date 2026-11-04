@@ -25,7 +25,7 @@ Motion correction is carried out in three to four steps:
 ## Input
 
 `code/run_capsule.py` processes the attached asset. Parameters (argparse in `main()`; the input and output paths keep their defaults and are not App Panel parameters):
-- `--dff_methods`: Method(s) for calculating ΔF/F. Default: `poly exp bright-v2`
+- `--dff_methods`: Method(s) for calculating ΔF/F (see Method).
 - `--b_percentile`: Reference level of "poly", "exp" and "tri-exp" (see Method): a fraction in (0, 1] or `mode`. Default: `0.7`
 - `--cutoff_freq_motion`: Cutoff frequency of the lowpass Butterworth filter that's only applied for estimating the regression coefficient, in Hz. Default: `0.05`
 - `--cutoff_freq_noise`: Cutoff frequency of the lowpass Butterworth filter that's applied to filter out noise, in Hz. If `None` or greater than the Nyquist frequency (`10` for `20`Hz sampling rate) no noise filtering is performed. Default: `3`
@@ -40,7 +40,7 @@ The primary output is the updated NWB file, which includes the newly processed d
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
 - **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_dff-[method]_mc-[method]` (e.g., `G_1_dff-poly_mc-iso-IRLS`). 
 
-Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` (fit time per method, ROI and channel) and the derived `data_description.json`. If the data-description upgrade fails (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
+Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` and the derived `data_description.json`. If the data-description upgrade fails (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
 
 For quality control (QC), the `dff-qc` subdirectory contains visualizations of the processing steps for each fiber and ΔF/F method.   
 - The ΔF/F figures (e.g., `ROI0_dff-bright-v2.png`) display raw traces with fitted baseline (F<sub>0</sub>) and ΔF/F traces of all channels.   
