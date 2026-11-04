@@ -1974,26 +1974,20 @@ def main():
         destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
-        # Check if fiber photometry data exists
-        has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
-        if has_fiber:
-            zarr_root = zarr.open(str(destination_path), mode="r")
-            acquisition_group = zarr_root.get("acquisition")
-            fiber_prefixes = ("G_", "R_", "Iso_", "Signal_")
-            acquisition_entries = (
-                acquisition_group.keys() if acquisition_group is not None else []
+        # Fiber data is present if the NWB has fiber signals in acquisition.
+        acquisition = zarr.open(str(destination_path), mode="r").get("acquisition")
+        has_fiber = acquisition is not None and any(
+            entry.startswith(("G_", "R_", "Iso_", "Signal_")) for entry in acquisition.keys()
+        )
+        if not has_fiber and (
+            (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        ):
+            logging.warning(
+                "Raw fiber directory is present but no fiber data "
+                f"was written to NWB file: {destination_path}. "
+                "This is likely due to an issue during NWB packaging, e.g. "
+                "'FIP data is present, but HARP timestamps are missing'"
             )
-            has_fiber_channels = any(
-                entry.startswith(fiber_prefixes) for entry in acquisition_entries
-            )
-            if not has_fiber_channels:
-                logging.warning(
-                    "Raw fiber directory is present but no fiber data "
-                    f"was written to NWB file: {destination_path}. "
-                    "This is likely due to an issue during NWB packaging, e.g. "
-                    "'FIP data is present, but HARP timestamps are missing'"
-                )
-                has_fiber = False
 
         if has_fiber:
             # Print the path to ensure correctness
