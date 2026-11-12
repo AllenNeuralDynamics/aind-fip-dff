@@ -36,11 +36,11 @@ In the Code Ocean App Panel the parameters are passed to `code/run` as named fla
 
 ## Output
 
-The primary output is the updated NWB file, which includes the newly processed data:
+The primary output is the updated NWB file, `fiber.nwb.zarr` in the output directory, which includes the newly processed data:
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
 - **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_dff-[method]_mc-[method]` (e.g., `G_1_dff-poly_mc-iso-IRLS`). 
 
-Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` and the derived `data_description.json`. If the derived data description cannot be built (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
+Besides the NWB file, the output directory contains `processing.json` and `dff_timing.csv`. The capsule does not write a `data_description.json`.
 
 For quality control (QC), the `dff-qc` subdirectory contains visualizations of the processing steps for each fiber and ΔF/F method.   
 - The ΔF/F figures (e.g., `ROI0_dff-bright-v2.png`) display raw traces with fitted baseline (F<sub>0</sub>) and ΔF/F traces of all channels.   

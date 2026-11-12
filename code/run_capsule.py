@@ -19,7 +19,6 @@ import pandas as pd
 import pynwb
 import zarr
 from aind_data_schema.components.identifiers import Code
-from aind_data_schema.core.data_description import DataDescription
 from aind_data_schema.core.processing import (
     DataProcess,
     Processing,
@@ -82,7 +81,6 @@ def setup_logging_from_metadata(fiber_path: Path):
 
 def write_output_metadata(
     metadata: dict,
-    json_dir: Union[str, Path],
     process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -94,8 +92,6 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    json_dir : Union[str, Path]
-        Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
     input_fp : Union[str, Path]
@@ -143,31 +139,6 @@ def write_output_metadata(
         ),
     )
     processing.write_standard_file(output_directory=Path(output_fp))
-
-    dd_file = Path(json_dir) / "data_description.json"
-    if dd_file.exists():
-        try:
-            with open(dd_file, "r") as f:
-                dd_data = json.load(f)
-
-            modalities = [
-                Modality.from_abbreviation(m["abbreviation"])
-                for m in dd_data.get("modality", [])
-                if isinstance(m, dict)
-                and m.get("abbreviation") in ("behavior", "fib")
-            ]
-            derived_dd = DataDescription.from_raw(
-                data_description=DataDescription(**dd_data),
-                process_name="processed",
-                modalities=modalities,
-            )
-            derived_dd.write_standard_file(output_directory=Path(output_fp))
-        except Exception:
-            # Invalid input metadata has to be fixed, so fail and name the file.
-            logging.exception(f"Could not derive data description from {dd_file}")
-            raise
-    else:
-        logging.error("no input data description")
 
 
 def plot_raw_dff_mc(
@@ -1557,17 +1528,13 @@ def main():
     args = parser.parse_args()
     fiber_path = Path(args.fiber_path)
     output_dir = Path(args.output_dir)
-    data_desc_fp = next(fiber_path.rglob("data_description.json"))
-    with open(data_desc_fp, "r") as j:
-        data_name = json.load(j).get("name")
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
     logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "nwb").mkdir(parents=True, exist_ok=True)
-    nwb_path = output_dir / "nwb" / (data_name + ".nwb")
+    nwb_path = output_dir / "fiber.nwb.zarr"
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
     if not source_paths:
@@ -1644,7 +1611,6 @@ def main():
 
         write_output_metadata(
             metadata=vars(args),
-            json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
             output_fp=output_dir,
