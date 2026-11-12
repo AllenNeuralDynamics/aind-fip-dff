@@ -20,4 +20,8 @@ RUN pip3 install -U --no-cache-dir \
     scikit-learn==1.7.2 \
     statsmodels==0.14.5 \
     watchtower==3.4.0
-
+    
+# Separate step: --extra-index-url would otherwise apply to every
+# package in a shared pip invocation, not just the one that needs it.
+RUN pip3 install -U --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    aind-ophys-utils==0.2.0
