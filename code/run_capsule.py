@@ -1531,7 +1531,8 @@ def main():
     logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    nwb_path = output_dir / "fiber.nwb.zarr"
+    nwb_path = output_dir / "nwb" / "fiber.nwb.zarr"
+    nwb_path.mkdir(parents=True, exist_ok=True)
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
     if not source_paths:
