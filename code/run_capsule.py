@@ -1617,20 +1617,6 @@ def main():
             start_date_time=start_time,
         )
 
-    # Iterate over all .json files in the source directory
-    for filename in [
-        "subject.json",
-        "procedures.json",
-        "session.json",
-        "rig.json",
-        "acquisition.json",
-        "instrument.json",
-    ]:
-        src_file = fiber_path / filename
-        if src_file.exists():
-            dest_file = output_dir / filename
-            shutil.copy2(src_file, dest_file)
-            logging.info(f"Copied: {src_file} to {dest_file}")
     logging.info("Capsule stage completed", extra={"event_type": "stage_complete"})
 
 
