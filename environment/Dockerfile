@@ -13,7 +13,7 @@ ENV PROCESS_NAME=aind-fip-dff
 RUN pip3 install -U --no-cache-dir \
     "aind-data-schema>=2.9.0" \
     aind-qcportal-schema==0.4.0 \
-    hdmf-zarr==0.11.3 \
+    hdmf-zarr==0.13.0 \
     matplotlib==3.10.6 \
     pynwb==3.1.2 \
     pyyaml==6.0.3 \
