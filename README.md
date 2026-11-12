@@ -40,7 +40,7 @@ The primary output is the updated NWB file, which includes the newly processed d
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
 - **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_dff-[method]_mc-[method]` (e.g., `G_1_dff-poly_mc-iso-IRLS`). 
 
-Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` and the derived `data_description.json`. If the data-description upgrade fails (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
+Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` and the derived `data_description.json`. If the derived data description cannot be built (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
 
 For quality control (QC), the `dff-qc` subdirectory contains visualizations of the processing steps for each fiber and ΔF/F method.   
 - The ΔF/F figures (e.g., `ROI0_dff-bright-v2.png`) display raw traces with fitted baseline (F<sub>0</sub>) and ΔF/F traces of all channels.   
@@ -51,12 +51,10 @@ For quality control (QC), the `dff-qc` subdirectory contains visualizations of t
     - The motion corrected, and optionally noise filtered, ΔF/F trace
   * In the middle: The corresponding power spectral densities with motion and (if applicable) noise cutoff frequencies indicated as dashed vertical lines
   * On the right: A scatter plot of color vs isosbestic ΔF/F values for both the original and low-pass filtered (`cutoff_freq_motion`) data with the fitted regression line
-- The pre-event regression figures (`ROI0_dff-bright-v2_pregocue-regression[_mc-iso-IRLS].png`) plot each trial's mean ΔF/F before the GoCue (the delay period; else the second before the reward) against time, with a trend line, to show baseline drift.
 
 Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal), with one status per ROI and method (worst channel wins). The metrics are:
 - **Calibration ratio**: the fit's median negative residual over what Gaussian noise would give; about 1 for a well-placed baseline.
 - **Baseline level**: the mode of the 1 Hz low-passed ΔF/F at the start, middle and end of the session; negative if F<sub>0</sub> is too high.
 - **Motion correction**: noise inflation of the corrected over the uncorrected trace.
-- **Pre-GoCue drift**: the mean pre-event ΔF/F and its trend across trials.
 
 Each metric's description in `quality_control.json` gives its pass and fail limits (constants in `run_capsule.py`).
