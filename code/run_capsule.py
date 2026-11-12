@@ -129,14 +129,11 @@ def write_output_metadata(
         data_processes=dp,
         pipelines=[
             Code(
-                name="Fiberphotometry Schema 2.0 Processing Pipeline",
+                name=os.getenv("PIPELINE_NAME", ""),
                 url=pipeline_url,
                 version=pipeline_version,
             )
         ],
-        dependency_graph=(
-            {ProcessName.DF_F_ESTIMATION: [dp[0].name]} if dp else {}
-        ),
     )
     processing.write_standard_file(output_directory=Path(output_fp))
 

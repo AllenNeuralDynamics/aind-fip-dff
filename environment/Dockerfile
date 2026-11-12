@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
 COPY git-ask-pass /
 
-ENV VERSION=16.0
+ENV VERSION=19.0
 ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 ENV PROCESS_NAME=aind-fip-dff
 
