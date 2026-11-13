@@ -11,7 +11,7 @@ ENV DFF_EXTRACTION_URL=https://github.com/AllenNeuralDynamics/aind-fip-dff
 ENV PROCESS_NAME=aind-fip-dff
 
 RUN pip3 install -U --no-cache-dir \
-    "aind-data-schema>=2.9.0" \
+    aind-data-schema>=2.9.0 \
     aind-qcportal-schema==0.4.0 \
     hdmf-zarr==0.13.0 \
     matplotlib==3.10.6 \
