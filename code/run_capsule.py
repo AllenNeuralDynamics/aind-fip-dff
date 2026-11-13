@@ -786,7 +786,7 @@ def _metric_schema_fields(fiber):
     return dict(
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
-        tags={"Fiber ROI": f"Fiber ROI {fiber}"},
+        tags={"type": "FIP DFF Processing", "group": f"Fiber ROI {fiber}"},
     )
 
 
