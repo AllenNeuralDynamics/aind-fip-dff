@@ -9,6 +9,8 @@ from scipy.ndimage import gaussian_filter1d, median_filter
 from scipy.signal import butter, sosfiltfilt
 from aind_ophys_utils.signal_utils import noise_std
 
+from utils.preprocess import filtfilt_finite
+
 #: Length of the start/middle/end windows of `baseline_levels` [s], capped at
 #: a sixth of the recording (so recordings shorter than 6 windows use shorter ones).
 BASELINE_WINDOW_S = 300
@@ -81,11 +83,17 @@ def noise_inflation(dff: np.ndarray, motion_corrected: np.ndarray, fs: float, cu
     estimates (`noise_std(method="mad")`, as for the calibration ratio) compares
     the corrected trace with `dff` low-passed at `cutoff_freq_noise` only, so
     the final low-pass of `motion_correct` cancels. 1 = no noise added.
+
+    Frames where `dff` or `motion_corrected` is not finite are left out of both estimates.
     """
     ref = dff
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
-        ref = sosfiltfilt(butter(2, cutoff_freq_noise, fs=fs, output="sos"), dff)
-    noise_ref = float(noise_std(ref, method="mad"))
-    if not noise_ref > 0 or not np.isfinite(motion_corrected).all():
+        sos = butter(2, cutoff_freq_noise, fs=fs, output="sos")
+        ref = filtfilt_finite(sos, np.asarray(dff, dtype=float)[:, None])[:, 0]
+    ok = np.isfinite(ref) & np.isfinite(motion_corrected)
+    if not ok.any():
         return float("nan")
-    return float(noise_std(motion_corrected, method="mad")) / noise_ref
+    noise_ref = float(noise_std(ref[ok], method="mad"))
+    if not noise_ref > 0:
+        return float("nan")
+    return float(noise_std(motion_corrected[ok], method="mad")) / noise_ref

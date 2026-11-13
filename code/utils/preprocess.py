@@ -1112,7 +1112,7 @@ M_MOTION_CORRECTION = AsymmetricTukeyBiweight(2)
 MIN_FRAMES_MOTION_CORRECTION = 3
 
 
-def _filtfilt_finite(sos: np.ndarray, x: np.ndarray) -> np.ndarray:
+def filtfilt_finite(sos: np.ndarray, x: np.ndarray) -> np.ndarray:
     """`sosfiltfilt` along the first axis that ignores non-finite samples.
 
     They are linearly interpolated for the filtering and NaN in the output, so one
@@ -1199,7 +1199,7 @@ def motion_correct(
         return np.nan * dff, np.nan * dff, c, c, c
     idx_iso = dff.columns.get_loc("Iso")
     sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
-    dff_filt = _filtfilt_finite(sos, values).T
+    dff_filt = filtfilt_finite(sos, values).T
     motion = dff_filt[idx_iso]
     coef = np.full(len(dff_filt), np.nan)
     intercept = np.full(len(dff_filt), np.nan)
@@ -1222,7 +1222,7 @@ def motion_correct(
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
         dff_mc = pd.DataFrame(
-            _filtfilt_finite(sos, dff_mc.to_numpy()), index=dff_mc.index, columns=dff_mc.columns
+            filtfilt_finite(sos, dff_mc.to_numpy()), index=dff_mc.index, columns=dff_mc.columns
         )
     coef = dict(zip(dff.columns, coef))
     intercept = dict(zip(dff.columns, intercept))

@@ -53,6 +53,19 @@ def test_noise_inflation():
     assert np.isnan(noise_inflation(g, np.full(n, np.nan), FS, 3))
 
 
+def test_noise_inflation_ignores_nonfinite_frames():
+    rng = np.random.default_rng(3)
+    n = 30 * 60 * FS
+    g, iso = rng.standard_normal(n), rng.standard_normal(n)
+    mc = sosfiltfilt(butter(2, 3, fs=FS, output="sos"), g - 2 * iso)
+    ref = noise_inflation(g, mc, FS, 3)
+    g_gap, mc_gap = g.copy(), mc.copy()
+    g_gap[5000:5200] = np.nan
+    mc_gap[5000:5200] = np.nan
+    mc_gap[-3000:] = np.nan
+    assert abs(noise_inflation(g_gap, mc_gap, FS, 3) - ref) < 0.1
+
+
 def test_baseline_levels_flat_trace_with_step_is_bounded():
     x = np.zeros(30 * 60 * FS)
     x[len(x) // 2 :] = 1.0
