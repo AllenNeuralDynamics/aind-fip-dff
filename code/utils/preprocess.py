@@ -1143,6 +1143,7 @@ def motion_correct(
     cutoff_freq_motion: float = 0.05,
     cutoff_freq_noise: float = 3,
     M: RobustNorm = M_MOTION_CORRECTION,
+    n_frame_to_cut: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
 
@@ -1172,6 +1173,9 @@ def motion_correct(
     M : RobustNorm, optional
         Robust criterion function used to downweight outliers.
         Default is M_MOTION_CORRECTION (AsymmetricTukeyBiweight(2), i.e. c_pos=2, c_neg=4.685).
+    n_frame_to_cut : int, optional
+        Number of initial frames left out of the regression (`chunk_processing` fills them
+        with a constant). They are still corrected. Default is 0.
 
     Returns
     -------
@@ -1202,6 +1206,7 @@ def motion_correct(
     weights = np.full_like(dff_filt, np.nan)
     for i, d in enumerate(dff_filt):
         valid = np.isfinite(d) & np.isfinite(motion)
+        valid[:n_frame_to_cut] = False
         if i != idx_iso and valid.sum() >= MIN_FRAMES_MOTION_CORRECTION:
             intercept[i], coef[i], weights[i, valid] = _fit_motion(d[valid], motion[valid], M)
     coef[idx_iso], intercept[idx_iso], weights[idx_iso] = 1, 0, 1

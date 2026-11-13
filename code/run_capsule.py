@@ -51,6 +51,8 @@ from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
+#: Frames `chunk_processing` crops from each fit (the pipeline never passes `n_frame_to_cut`).
+N_FRAME_TO_CUT = inspect.signature(chunk_processing).parameters["n_frame_to_cut"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -1450,6 +1452,7 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
+        n_frame_to_cut=N_FRAME_TO_CUT,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(

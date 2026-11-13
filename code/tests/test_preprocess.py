@@ -51,3 +51,11 @@ def test_motion_correct_ignores_nonfinite_frames():
         assert (np.isnan(weights[ch]) == gap).all()
     assert (mc["Iso"].isna() == no_iso).all()
     assert abs(coef["G"] - coef_ref["G"]) < 0.05 and abs(coef["R"] - coef_ref["R"]) < 0.05
+
+
+def test_motion_correct_leaves_cut_frames_out_of_the_fit():
+    dff = _dff_frame()
+    _, _, _, _, weights = motion_correct(dff, n_frame_to_cut=100)
+    assert np.isnan(weights["G"][:100]).all() and np.isfinite(weights["G"][100:]).all()
+    mc, _, _, _, _ = motion_correct(dff, n_frame_to_cut=100)
+    assert np.isfinite(mc.to_numpy()).all()  # the cut frames are still corrected
