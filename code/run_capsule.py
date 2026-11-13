@@ -1419,7 +1419,7 @@ def generate_qc_plots(
 
     # Create QC object and save
     qc = QualityControl(
-        metrics=metrics, default_grouping=["modality", "Fiber ROI"]
+        metrics=metrics, default_grouping=["type", "group"]
     )
     qc.write_standard_file(output_directory=output_dir / "dff-qc")
     return qc
