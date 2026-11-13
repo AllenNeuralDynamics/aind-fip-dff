@@ -6,7 +6,7 @@ capsule's NWB stack.
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, median_filter
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter
 from aind_ophys_utils.signal_utils import noise_std
 
 from utils.preprocess import filtfilt_finite
@@ -50,13 +50,17 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
         `start`, `mid`, `end` (levels, same units as `dff`) and
         `frac_baseline`, the fraction of samples within 2 robust sigma above
         a 60 s running median (low for traces dominated by transients, where
-        the mode is not the baseline). None if the recording is shorter than
-        `BASELINE_MIN_DURATION_S` or not finite.
+        the mode is not the baseline). None if fewer than `BASELINE_MIN_DURATION_S`
+        of finite frames are left.
+
+    Non-finite frames are left out: the windows are taken from the remaining frames.
     """
-    n = len(dff)
-    if n < BASELINE_MIN_DURATION_S * fs or not np.isfinite(dff).all():
+    dff = np.asarray(dff, dtype=float)
+    ok = np.isfinite(dff)
+    if ok.sum() < BASELINE_MIN_DURATION_S * fs:
         return None
-    xf = sosfiltfilt(butter(2, 1.0, fs=fs, output="sos"), dff)
+    xf = filtfilt_finite(butter(2, 1.0, fs=fs, output="sos"), dff[:, None])[:, 0][ok]
+    n = len(xf)
     step = max(int(round(fs / 2)), 1)
     running = np.repeat(median_filter(xf[::step], size=int(60 * fs / step), mode="nearest"), step)[:n]
     resid = xf - running

@@ -34,11 +34,21 @@ def test_baseline_levels_recover_offsets():
     assert lv["frac_baseline"] > 0.9
 
 
-def test_baseline_levels_short_or_nonfinite_is_none():
+def test_baseline_levels_short_or_mostly_nonfinite_is_none():
     assert baseline_levels(_trace(minutes=10), FS) is None
     x = _trace()
-    x[5] = np.nan
+    x[len(x) // 2 :] = np.nan
     assert baseline_levels(x, FS) is None
+
+
+def test_baseline_levels_ignore_nonfinite_frames():
+    x = _trace((0.02, 0.0, -0.01))
+    ref = baseline_levels(x, FS)
+    x[:100] = np.nan
+    x[len(x) // 2 : len(x) // 2 + 200] = np.nan
+    x[3000] = np.inf
+    lv = baseline_levels(x, FS)
+    assert all(abs(lv[k] - ref[k]) < 0.002 for k in ("start", "mid", "end"))
 
 
 def test_noise_inflation():
