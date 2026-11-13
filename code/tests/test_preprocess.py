@@ -4,10 +4,16 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from utils.preprocess import _evaluate_baseline, _half_sample_mode, chunk_processing  # noqa: E402
+from utils.preprocess import (  # noqa: E402
+    _evaluate_baseline,
+    _half_sample_mode,
+    chunk_processing,
+    motion_correct,
+)
 
 
 def test_half_sample_mode_three_points_keep_closer_pair():
@@ -73,3 +79,44 @@ def test_chunk_processing_without_valid_frames_gives_nans(caplog):
     dff, _, fit = chunk_processing(np.full(500, np.nan), np.arange(500) * 0.05, method="poly")
     assert np.isnan(dff).all() and np.isnan(fit).all()
     assert "nothing to fit" in caplog.text
+
+
+def _dff_frame(n=4000, seed=0):
+    """dF/F of G and R that follow Iso with factors 0.7 and 0.2 (a slow random walk)."""
+    rng = np.random.default_rng(seed)
+    walk = np.cumsum(rng.normal(0, 0.002, n))
+    return pd.DataFrame(
+        {
+            "G": 0.7 * walk + rng.normal(0, 0.01, n),
+            "Iso": walk + rng.normal(0, 0.01, n),
+            "R": 0.2 * walk + rng.normal(0, 0.01, n),
+        }
+    )
+
+
+def test_motion_correct_ignores_nonfinite_frames():
+    dff = _dff_frame()
+    _, _, coef_ref, _, _ = motion_correct(dff)
+    assert abs(coef_ref["G"] - 0.7) < 0.05 and abs(coef_ref["R"] - 0.2) < 0.05
+    dff.loc[1000:1010, "G"] = np.nan  # a gap in one channel
+    dff.loc[2900:3400, "G"] = np.nan  # a longer one, where Iso is finite
+    dff.loc[2500, "Iso"] = np.inf  # a frame without Iso
+    dff.loc[3500:, "Iso"] = np.nan  # an Iso tail
+    mc, _, coef, _, weights = motion_correct(dff)
+    no_iso = ~np.isfinite(dff["Iso"])
+    for ch in ("G", "R"):
+        gap = no_iso | ~np.isfinite(dff[ch])
+        assert (mc[ch].isna() == gap).all()
+        assert (np.isnan(weights[ch]) == gap).all()
+    assert (mc["Iso"].isna() == no_iso).all()
+    assert abs(coef["G"] - coef_ref["G"]) < 0.05 and abs(coef["R"] - coef_ref["R"]) < 0.05
+    ok = mc["G"].notna()  # the Iso term is centred over these frames, so the mean is kept
+    assert abs(mc["G"][ok].mean() - dff["G"][ok].mean()) < 1e-3
+
+
+def test_motion_correct_leaves_cut_frames_out_of_the_fit():
+    dff = _dff_frame()
+    _, _, _, _, weights = motion_correct(dff, n_frame_to_cut=100)
+    assert np.isnan(weights["G"][:100]).all() and np.isfinite(weights["G"][100:]).all()
+    mc, _, _, _, _ = motion_correct(dff, n_frame_to_cut=100)
+    assert np.isfinite(mc.to_numpy()).all()  # the cut frames are still corrected
