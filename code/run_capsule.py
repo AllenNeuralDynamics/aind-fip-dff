@@ -672,12 +672,13 @@ def plot_motion_correction(
         ax = fig.add_subplot(
             gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        if np.isfinite(np.mean(weight)):
+        valid = np.isfinite(weight)
+        if valid.any():
             sc = ax.scatter(
-                df_iso["filtered"] * 100,
-                df["filtered"] * 100,
-                s=0.02 + 0.08 * weight,
-                c=weight,
+                df_iso["filtered"].values[valid] * 100,
+                df["filtered"].values[valid] * 100,
+                s=0.02 + 0.08 * weight[valid],
+                c=weight[valid],
                 label="low-passed",
                 alpha=0.5,
             )
@@ -1814,7 +1815,7 @@ def generate_qc_plots(
                 # still computed at both stages.
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
                 ratio_by_channel[ch] = ratio_dff
-                fs = 1 / np.median(np.diff(df.time_fip.values))
+                fs = 1 / np.nanmedian(np.diff(df.time_fip.values))
                 level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
                 if ch != "Iso":
                     noise_by_channel[ch] = (

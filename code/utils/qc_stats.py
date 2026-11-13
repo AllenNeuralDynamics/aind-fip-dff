@@ -57,7 +57,7 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
     """
     dff = np.asarray(dff, dtype=float)
     ok = np.isfinite(dff)
-    if ok.sum() < BASELINE_MIN_DURATION_S * fs:
+    if not fs > 0 or ok.sum() < BASELINE_MIN_DURATION_S * fs:
         return None
     xf = filtfilt_finite(butter(2, 1.0, fs=fs, output="sos"), dff[:, None])[:, 0][ok]
     n = len(xf)
@@ -90,10 +90,10 @@ def noise_inflation(dff: np.ndarray, motion_corrected: np.ndarray, fs: float, cu
 
     Frames where `dff` or `motion_corrected` is not finite are left out of both estimates.
     """
-    ref = dff
+    ref = np.where(np.isfinite(motion_corrected), dff, np.nan)
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         sos = butter(2, cutoff_freq_noise, fs=fs, output="sos")
-        ref = filtfilt_finite(sos, np.asarray(dff, dtype=float)[:, None])[:, 0]
+        ref = filtfilt_finite(sos, ref[:, None])[:, 0]
     ok = np.isfinite(ref) & np.isfinite(motion_corrected)
     if not ok.any():
         return float("nan")

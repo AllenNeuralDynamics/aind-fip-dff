@@ -1214,7 +1214,7 @@ def motion_correct(
     for i in np.flatnonzero(np.isfinite(coef)):
         if i != idx_iso:
             motions[i] = coef[i] * iso
-            motions[i] -= np.nanmean(motions[i])
+            motions[i] -= motions[i][np.isfinite(values[:, i]) & np.isfinite(iso)].mean()
     dff_mc = dff - motions.T
     dff_mc["Iso"] = np.where(np.isfinite(iso), 0.0, np.nan)
     dff_filt = pd.DataFrame(dff_filt.T)

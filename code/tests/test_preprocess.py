@@ -41,6 +41,7 @@ def test_motion_correct_ignores_nonfinite_frames():
     _, _, coef_ref, _, _ = motion_correct(dff)
     assert abs(coef_ref["G"] - 0.7) < 0.05 and abs(coef_ref["R"] - 0.2) < 0.05
     dff.loc[1000:1010, "G"] = np.nan  # a gap in one channel
+    dff.loc[2900:3400, "G"] = np.nan  # a longer one, where Iso is finite
     dff.loc[2500, "Iso"] = np.inf  # a frame without Iso
     dff.loc[3500:, "Iso"] = np.nan  # an Iso tail
     mc, _, coef, _, weights = motion_correct(dff)
@@ -51,6 +52,8 @@ def test_motion_correct_ignores_nonfinite_frames():
         assert (np.isnan(weights[ch]) == gap).all()
     assert (mc["Iso"].isna() == no_iso).all()
     assert abs(coef["G"] - coef_ref["G"]) < 0.05 and abs(coef["R"] - coef_ref["R"]) < 0.05
+    ok = mc["G"].notna()  # the Iso term is centred over these frames, so the mean is kept
+    assert abs(mc["G"][ok].mean() - dff["G"][ok].mean()) < 1e-3
 
 
 def test_motion_correct_leaves_cut_frames_out_of_the_fit():

@@ -7,6 +7,7 @@ import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from utils.preprocess import filtfilt_finite  # noqa: E402
 from utils.qc_stats import baseline_levels, noise_inflation  # noqa: E402
 
 FS = 20
@@ -39,6 +40,7 @@ def test_baseline_levels_short_or_mostly_nonfinite_is_none():
     x = _trace()
     x[len(x) // 2 :] = np.nan
     assert baseline_levels(x, FS) is None
+    assert baseline_levels(_trace(), np.nan) is None
 
 
 def test_baseline_levels_ignore_nonfinite_frames():
@@ -74,6 +76,14 @@ def test_noise_inflation_ignores_nonfinite_frames():
     mc_gap[5000:5200] = np.nan
     mc_gap[-3000:] = np.nan
     assert abs(noise_inflation(g_gap, mc_gap, FS, 3) - ref) < 0.1
+
+
+def test_noise_inflation_with_gaps_only_in_iso_is_one():
+    g = np.random.default_rng(4).standard_normal(30 * 60 * FS)
+    mc = g.copy()
+    mc[5000:5200] = np.nan  # a motion-corrected trace with no Iso term, where Iso is missing
+    mc = filtfilt_finite(butter(2, 3, fs=FS, output="sos"), mc[:, None])[:, 0]
+    assert abs(noise_inflation(g, mc, FS, 3) - 1) < 1e-9
 
 
 def test_baseline_levels_flat_trace_with_step_is_bounded():
