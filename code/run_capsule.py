@@ -1350,7 +1350,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
-        timestamps - timestamps[0],
+        timestamps - np.nanmin(timestamps),
         method=pp_name,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
