@@ -53,6 +53,14 @@ def test_chunk_processing_drops_nonfinite_samples(method, caplog):
     assert f"dropping {(~valid).sum()} non-finite" in caplog.text
 
 
+def test_chunk_processing_drops_nonfinite_signal_that_the_median_filter_hides():
+    tc, t = _bleaching_trace()
+    tc[1500] = np.inf  # a median of 3 would turn it into a finite value
+    dff, _, fit = chunk_processing(tc, t, method="poly", n_frame_to_cut=0, kernel_size=3)
+    assert np.isnan(dff[1500]) and np.isfinite(np.delete(dff, 1500)).all()
+    assert np.isfinite(fit).all()
+
+
 @pytest.mark.parametrize("method", ["poly", "exp", "bright-v2"])
 def test_evaluate_baseline_reproduces_the_fit(method):
     tc, t = _bleaching_trace()

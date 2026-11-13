@@ -919,7 +919,8 @@ def chunk_processing(
     ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
     # Drop (don't interpolate) frames with a non-finite signal or timestamp before fitting.
-    valid = np.isfinite(tc_filtered) & np.isfinite(ts)
+    # (the median filter can turn an isolated inf into a finite value, so check the input too)
+    valid = np.isfinite(tc_cropped) & np.isfinite(tc_filtered) & np.isfinite(ts)
     tc_valid, ts_valid = tc_filtered[valid], ts[valid]
     if 0 < (n_dropped := int((~valid).sum())) < len(valid):
         logging.warning(
