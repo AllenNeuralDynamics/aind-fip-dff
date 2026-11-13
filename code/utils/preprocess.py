@@ -190,6 +190,11 @@ def tc_polyfit(
     return tc_poly, coefs
 
 
+def biexp(x, a, b, c, d):
+    """Biphasic exponential decay: a * exp(-b * x) + c * exp(-d * x)."""
+    return a * np.exp(-b * x) + c * np.exp(-d * x)
+
+
 def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Fit with Biphasic exponential decay.
 
@@ -209,21 +214,18 @@ def tc_expfit(tc: np.ndarray, timestamps: np.ndarray) -> tuple[np.ndarray, np.nd
             Optimal values for the parameters of the preprocessing.
     """
 
-    def func(x, a, b, c, d):
-        return a * np.exp(-b * x) + c * np.exp(-d * x)
-
     try:  # try first providing initial estimates
         tc0 = tc[:20].mean()
         popt, pcov = curve_fit(
-            func,
+            biexp,
             timestamps,
             tc,
             (0.9 * tc0, 1 / 3600, 0.1 * tc0, 1 / 200),
             maxfev=20000,
         )
     except RuntimeError:
-        popt, pcov = curve_fit(func, timestamps, tc, maxfev=20000)
-    tc_exp = func(timestamps, *popt)
+        popt, pcov = curve_fit(biexp, timestamps, tc, maxfev=20000)
+    tc_exp = biexp(timestamps, *popt)
     return tc_exp, popt
 
 
@@ -703,11 +705,8 @@ def tc_brightfit_v2(
     Slow time constants are left effectively unbounded (`TAU_MAX`); a term
     whose tau is poorly determined is kept as fitted rather than dropped.
 
-    Samples where `trace` or `timestamps` is non-finite are dropped (not
-    interpolated) before fitting, since one corrupted sample can poison the
-    IRLS loss everywhere. The baseline is NaN at those positions, a
-    `UserWarning` reports how many were dropped, and a `ValueError` is raised
-    if none are usable.
+    `trace` and `timestamps` must be finite: one corrupted sample can poison the
+    IRLS loss everywhere. `chunk_processing` drops the other samples first.
 
     Parameters
     ----------
@@ -750,33 +749,12 @@ def tc_brightfit_v2(
         [b_inf, b1, tau1, b2, tau2, b3, tau3, b_bright, tau_bright]
         (unused terms set to amplitude=0, tau=inf).
     """
-    # Drop (don't interpolate) non-finite samples -- see docstring.
-    valid = np.isfinite(trace) & np.isfinite(timestamps)
-    # Checked regardless of n_dropped: an empty input has n_dropped == 0.
-    if not valid.any():
-        raise ValueError(
-            "tc_brightfit_v2: every sample is non-finite (trace or "
-            "timestamps) -- nothing to fit."
-        )
-    n_dropped = int((~valid).sum())
-    if n_dropped:
-        warnings.warn(
-            f"tc_brightfit_v2: dropping {n_dropped} non-finite sample(s) "
-            "(trace or timestamps) before fitting.",
-            stacklevel=2,
-        )
-        trace_valid = trace[valid]
-        ts_valid = timestamps[valid]
-    else:
-        trace_valid = trace
-        ts_valid = timestamps
-
     if fixed_sigma == "auto":
-        sigma_est = float(noise_std(trace_valid, method=noise_method))
+        sigma_est = float(noise_std(trace, method=noise_method))
         fixed_sigma = sigma_est if np.isfinite(sigma_est) and sigma_est > 0 else None
 
-    tc_ds = downsample_array(trace_valid, factors=ds, strategy="first")
-    ts_ds = downsample_array(ts_valid, factors=ds, strategy="first")
+    tc_ds = downsample_array(trace, factors=ds, strategy="first")
+    ts_ds = downsample_array(timestamps, factors=ds, strategy="first")
 
     dt_ds = float(ts_ds[1] - ts_ds[0]) if len(ts_ds) > 1 else float(ds)
     n_eval_ds = min(len(tc_ds), round(t_eval_exp3 / dt_ds))
@@ -848,21 +826,38 @@ def tc_brightfit_v2(
 
     # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
     _, bnd_full = _init_sum_of_exps(
-        trace_valid, n_exp=n_exp_won, include_brightening=include_bright
+        trace, n_exp=n_exp_won, include_brightening=include_bright
     )
     f0, res_full = nonlinear_fit(
-        trace_valid, ts_valid, x0=params_ds, bounds=bnd_full, **kw_full
+        trace, timestamps, x0=params_ds, bounds=bnd_full, **kw_full
     )
     params_ds = _sort_bleach_params(res_full.x, n_exp_won, include_bright)
 
     logging.info(f"Fit of original trace with model selection: {model_str}")
 
-    if n_dropped:
-        f0_full = np.full(len(trace), np.nan)
-        f0_full[valid] = f0
-        f0 = f0_full
-
     return f0, _pad_sum_of_exps_params(params_ds, n_exp_won, include_bright)
+
+
+def _put_valid(x: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """`x` at the positions where `valid` is True, NaN elsewhere."""
+    out = np.full(valid.shape, np.nan)
+    out[valid] = x
+    return out
+
+
+def _evaluate_baseline(method: str, coefs: np.ndarray, timestamps: np.ndarray) -> np.ndarray:
+    """Baseline fitted with `method` (parameters `coefs`) at `timestamps`."""
+    if method == "poly":
+        return np.polyval(coefs, timestamps)
+    if method == "exp":
+        return biexp(timestamps, *coefs)
+    if method == "tri-exp":
+        return triple_exp(timestamps, coefs)
+    if method == "bright":
+        return baseline(timestamps, *coefs)
+    if method == "bright-v2":
+        return sum_of_exps(coefs, timestamps)
+    raise ValueError(f"Unknown method {method!r}.")
 
 
 # dF/F total function
@@ -885,7 +880,9 @@ def chunk_processing(
     tc : np.ndarray
         Fiber photometry signal.
     timestamps : np.ndarray
-        Fiber photometry timestamps.
+        Fiber photometry timestamps. Frames with a non-finite signal or timestamp
+        are dropped before fitting and have NaN dF/F. The baseline is NaN only
+        where the timestamp is not finite.
     method : str, optional
         Method to preprocess the data. Options: poly, exp, tri-exp, bright,
         bright-v2. Default is "poly".
@@ -921,31 +918,48 @@ def chunk_processing(
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     ts = tc_crop(timestamps, n_frame_to_cut)
     tc_filtered = medfilt(tc_cropped, kernel_size=kernel_size)
+    # Drop (don't interpolate) frames with a non-finite signal or timestamp before fitting.
+    # (the median filter can turn an isolated inf into a finite value, so check the input too)
+    valid = np.isfinite(tc_cropped) & np.isfinite(tc_filtered) & np.isfinite(ts)
+    tc_valid, ts_valid = tc_filtered[valid], ts[valid]
+    if 0 < (n_dropped := int((~valid).sum())) < len(valid):
+        logging.warning(
+            f"Processing {trace_id} with method {method}: dropping {n_dropped} "
+            "non-finite sample(s) (signal or timestamps) before fitting."
+        )
     try:
+        if not valid.any():
+            raise ValueError("every sample is non-finite (signal or timestamps) -- nothing to fit.")
         if method == "poly":
-            tc_fit, tc_coefs = tc_polyfit(tc_filtered, ts, degree)
+            tc_fit, tc_coefs = tc_polyfit(tc_valid, ts_valid, degree)
         elif method == "exp":
-            tc_fit, tc_coefs = tc_expfit(tc_filtered, ts)
+            tc_fit, tc_coefs = tc_expfit(tc_valid, ts_valid)
         elif method == "tri-exp":
             try:
                 tc_fit, tc_coefs = tc_triexpfit(
-                    tc_filtered, ts, sampling_rate, xtol=1e-5
+                    tc_valid, ts_valid, sampling_rate, xtol=1e-5
                 )
             except RuntimeError:
                 tc_fit, tc_coefs = tc_triexpfit(
-                    tc_filtered, ts, sampling_rate, xtol=1e-4
+                    tc_valid, ts_valid, sampling_rate, xtol=1e-4
                 )
         elif method == "bright":
-            tc_fit, tc_coefs = tc_brightfit(tc_filtered, ts)
+            tc_fit, tc_coefs = tc_brightfit(tc_valid, ts_valid)
         elif method == "bright-v2":
-            tc_fit, tc_coefs = tc_brightfit_v2(tc_filtered, ts)
+            tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid)
 
         if method in ("bright", "bright-v2"):
-            tc_dFoF = tc_filtered / tc_fit - 1
+            tc_dFoF = tc_valid / tc_fit - 1
         else:
-            tc_estim = tc_filtered - tc_fit
-            tc_base = tc_slidingbase(tc_filtered, sampling_rate)
+            tc_estim = tc_valid - tc_fit
+            tc_base = tc_slidingbase(tc_valid, sampling_rate)
             tc_dFoF = tc_dFF(tc_estim, tc_base, b_percentile)
+        tc_dFoF = _put_valid(tc_dFoF, valid)
+        # the baseline is defined wherever the timestamp is finite, also if the signal is not
+        tc_fit = _put_valid(tc_fit, valid)
+        no_signal = np.isfinite(ts) & ~valid
+        if no_signal.any():
+            tc_fit[no_signal] = _evaluate_baseline(method, tc_coefs, ts[no_signal])
         tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
     except Exception as e:
