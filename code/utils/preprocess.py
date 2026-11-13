@@ -1108,6 +1108,35 @@ class OneSidedTukeyBiweight(AsymmetricTukeyBiweight):
 M_MOTION_CORRECTION = AsymmetricTukeyBiweight(2)
 
 
+#: Fewest finite frames with which `motion_correct` fits a channel.
+MIN_FRAMES_MOTION_CORRECTION = 3
+
+
+def _filtfilt_finite(sos: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """`sosfiltfilt` along the first axis that ignores non-finite samples.
+
+    They are linearly interpolated for the filtering and NaN in the output, so one
+    NaN does not turn the whole trace into NaN. Same as `sosfiltfilt` if all are finite.
+    """
+    out = np.full(x.shape, np.nan)
+    t = np.arange(len(x))
+    for j in range(x.shape[1]):
+        ok = np.isfinite(x[:, j])
+        if ok.any():
+            out[ok, j] = sosfiltfilt(sos, np.interp(t, t[ok], x[ok, j]))[ok]
+    return out
+
+
+def _fit_motion(d: np.ndarray, motion: np.ndarray, M: RobustNorm | None):
+    """Regress `d` on `motion`: `(intercept, non-negative coefficient, weights)`."""
+    if M is not None:
+        res = RLM(d, add_constant(motion), M=M).fit()
+        w = res.weights if hasattr(res.model, "weights") else np.ones(len(d))
+        return res.params[0], max(res.params[1], 0), w
+    lr = LinearRegression(fit_intercept=True, positive=True).fit(motion[:, None], d)
+    return lr.intercept_, lr.coef_[0], np.ones(len(d))
+
+
 def motion_correct(
     dff: pd.DataFrame,
     fs: float = 20,
@@ -1116,6 +1145,9 @@ def motion_correct(
     M: RobustNorm = M_MOTION_CORRECTION,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict]:
     """Perform motion correction on fiber's dF/F traces by regressing out isosbestic traces.
+
+    Non-finite frames (NaN or inf) are ignored by the filters and the regression. A corrected
+    channel is NaN where it or Iso is not finite.
 
     The fitted regression's intercept is reported (see Returns) but not
     subtracted -- discarding it is the safe choice, since subtracting it
@@ -1155,54 +1187,39 @@ def motion_correct(
         - weights : dict
             The final regression weights.
     """
-    if np.isnan(dff["Iso"]).any() or np.isinf(dff["Iso"]).any():
+    dff = dff.where(np.isfinite(dff))  # inf -> NaN
+    values = dff.to_numpy(dtype=float)
+    iso = dff["Iso"].to_numpy(dtype=float)
+    if np.isfinite(iso).sum() < MIN_FRAMES_MOTION_CORRECTION:
         c = {ch: np.nan for ch in dff.columns}
         return np.nan * dff, np.nan * dff, c, c, c
-    sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
-    dff_filt = sosfiltfilt(sos, dff, axis=0).T
     idx_iso = dff.columns.get_loc("Iso")
+    sos = butter(N=2, Wn=cutoff_freq_motion, fs=fs, output="sos")
+    dff_filt = _filtfilt_finite(sos, values).T
     motion = dff_filt[idx_iso]
-    no_nans = ~np.isnan(dff_filt.sum(1))
-    no_nans[idx_iso] = False  # skip regressing motion against motion, it's obviously 1
-    if M is not None:
-        coef = np.empty((no_nans.sum(), 2))
-        w = np.empty((no_nans.sum(), len(motion)))
-        for i, d in enumerate(dff_filt[no_nans]):
-            rlm_result = RLM(d, add_constant(motion), M=M).fit()
-            coef[i] = rlm_result.params
-            w[i] = (
-                rlm_result.weights
-                if hasattr(rlm_result.model, "weights")
-                else np.ones(len(d))
-            )
-        intercept = np.array(coef)[:, 0]
-        coef = np.maximum(coef[:, 1:], 0)
-    else:
-        lr = LinearRegression(fit_intercept=True, positive=True).fit(
-            motion[:, None], dff_filt[no_nans].T
-        )
-        coef = lr.coef_
-        intercept = lr.intercept_
-        w = np.ones((no_nans.sum(), len(motion)))
+    coef = np.full(len(dff_filt), np.nan)
+    intercept = np.full(len(dff_filt), np.nan)
     weights = np.full_like(dff_filt, np.nan)
-    weights[no_nans] = w
-    weights[idx_iso] = 1
-    weights = {ch: w for ch, w in zip(dff.columns, weights)}
+    for i, d in enumerate(dff_filt):
+        valid = np.isfinite(d) & np.isfinite(motion)
+        if i != idx_iso and valid.sum() >= MIN_FRAMES_MOTION_CORRECTION:
+            intercept[i], coef[i], weights[i, valid] = _fit_motion(d[valid], motion[valid], M)
+    coef[idx_iso], intercept[idx_iso], weights[idx_iso] = 1, 0, 1
     motions = np.full_like(dff_filt, np.nan)
-    motions[no_nans] = coef * dff["Iso"].values
-    motions -= motions.mean(axis=1, keepdims=True)
+    for i in np.flatnonzero(np.isfinite(coef)):
+        if i != idx_iso:
+            motions[i] = coef[i] * iso
+            motions[i] -= np.nanmean(motions[i])
     dff_mc = dff - motions.T
-    dff_mc["Iso"] = 0
+    dff_mc["Iso"] = np.where(np.isfinite(iso), 0.0, np.nan)
     dff_filt = pd.DataFrame(dff_filt.T)
     dff_filt.columns = dff_mc.columns
-    c = np.full(len(motions), np.nan)
-    c[no_nans] = coef.ravel()
-    c[idx_iso] = 1
-    coef = {ch: c_ for ch, c_ in zip(dff.columns, c)}
-    c[no_nans] = intercept
-    c[idx_iso] = 0
-    intercept = {ch: c_ for ch, c_ in zip(dff.columns, c)}
     if cutoff_freq_noise is not None and cutoff_freq_noise < fs / 2:
         sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
-        dff_mc = dff_mc.apply(lambda x: sosfiltfilt(sos, x))
+        dff_mc = pd.DataFrame(
+            _filtfilt_finite(sos, dff_mc.to_numpy()), index=dff_mc.index, columns=dff_mc.columns
+        )
+    coef = dict(zip(dff.columns, coef))
+    intercept = dict(zip(dff.columns, intercept))
+    weights = dict(zip(dff.columns, weights))
     return dff_mc, dff_filt, coef, intercept, weights
