@@ -7,6 +7,7 @@ import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from utils.preprocess import filtfilt_finite  # noqa: E402
 from utils.qc_stats import baseline_levels, noise_inflation  # noqa: E402
 
 FS = 20
@@ -34,11 +35,22 @@ def test_baseline_levels_recover_offsets():
     assert lv["frac_baseline"] > 0.9
 
 
-def test_baseline_levels_short_or_nonfinite_is_none():
+def test_baseline_levels_short_or_mostly_nonfinite_is_none():
     assert baseline_levels(_trace(minutes=10), FS) is None
     x = _trace()
-    x[5] = np.nan
+    x[len(x) // 2 :] = np.nan
     assert baseline_levels(x, FS) is None
+    assert baseline_levels(_trace(), np.nan) is None
+
+
+def test_baseline_levels_ignore_nonfinite_frames():
+    x = _trace((0.02, 0.0, -0.01))
+    ref = baseline_levels(x, FS)
+    x[:100] = np.nan
+    x[len(x) // 2 : len(x) // 2 + 200] = np.nan
+    x[3000] = np.inf
+    lv = baseline_levels(x, FS)
+    assert all(abs(lv[k] - ref[k]) < 0.002 for k in ("start", "mid", "end"))
 
 
 def test_noise_inflation():
@@ -51,6 +63,27 @@ def test_noise_inflation():
     # subtracting 2 x an independent Iso of equal noise: sqrt(1 + 2^2)
     assert abs(noise_inflation(g, sosfiltfilt(sos, g - 2 * iso), FS, 3) - np.sqrt(5)) < 0.1
     assert np.isnan(noise_inflation(g, np.full(n, np.nan), FS, 3))
+
+
+def test_noise_inflation_ignores_nonfinite_frames():
+    rng = np.random.default_rng(3)
+    n = 30 * 60 * FS
+    g, iso = rng.standard_normal(n), rng.standard_normal(n)
+    mc = sosfiltfilt(butter(2, 3, fs=FS, output="sos"), g - 2 * iso)
+    ref = noise_inflation(g, mc, FS, 3)
+    g_gap, mc_gap = g.copy(), mc.copy()
+    g_gap[5000:5200] = np.nan
+    mc_gap[5000:5200] = np.nan
+    mc_gap[-3000:] = np.nan
+    assert abs(noise_inflation(g_gap, mc_gap, FS, 3) - ref) < 0.1
+
+
+def test_noise_inflation_with_gaps_only_in_iso_is_one():
+    g = np.random.default_rng(4).standard_normal(30 * 60 * FS)
+    mc = g.copy()
+    mc[5000:5200] = np.nan  # a motion-corrected trace with no Iso term, where Iso is missing
+    mc = filtfilt_finite(butter(2, 3, fs=FS, output="sos"), mc[:, None])[:, 0]
+    assert abs(noise_inflation(g, mc, FS, 3) - 1) < 1e-9
 
 
 def test_baseline_levels_flat_trace_with_step_is_bounded():

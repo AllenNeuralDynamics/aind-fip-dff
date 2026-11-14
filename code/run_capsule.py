@@ -47,6 +47,8 @@ from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
+#: Frames `chunk_processing` crops from each fit (the pipeline never passes `n_frame_to_cut`).
+N_FRAME_TO_CUT = inspect.signature(chunk_processing).parameters["n_frame_to_cut"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -647,12 +649,13 @@ def plot_motion_correction(
             gs[3 * c : 3 * c + 3, 2],
             sharex=(None if c == 0 else right_axes[0]),
         )
-        if np.isfinite(np.mean(weight)):
+        valid = np.isfinite(weight)
+        if valid.any():
             sc = ax.scatter(
-                df_iso["filtered"] * 100,
-                df["filtered"] * 100,
-                s=0.02 + 0.08 * weight,
-                c=weight,
+                df_iso["filtered"].values[valid] * 100,
+                df["filtered"].values[valid] * 100,
+                s=0.02 + 0.08 * weight[valid],
+                c=weight[valid],
                 label="low-passed",
                 alpha=0.5,
             )
@@ -982,7 +985,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
-        timestamps - timestamps[0],
+        timestamps - np.nanmin(timestamps),
         method=pp_name,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
@@ -1085,6 +1088,7 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
+        n_frame_to_cut=N_FRAME_TO_CUT,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -1401,7 +1405,7 @@ def generate_qc_plots(
                 # create_calibration_metric's docstring for why.
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
                 ratio_by_channel[ch] = ratio_dff
-                fs = 1 / np.median(np.diff(df.time_fip.values))
+                fs = 1 / np.nanmedian(np.diff(df.time_fip.values))
                 level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
                 if ch != "Iso":
                     noise_by_channel[ch] = (
