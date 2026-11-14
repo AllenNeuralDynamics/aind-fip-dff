@@ -40,8 +40,20 @@ and quality_control.json files for each dataset.
 DFF_QC_TYPE = "FIP DFF Processing"
 
 
-def merge_qc(destination_path, new_qc):
+def _dff_metric_names(source_path):
+    """Names of the dF/F metrics in `source_path/dff-qc/quality_control.json`, if present."""
+    path = source_path / "dff-qc" / "quality_control.json"
+    try:
+        return {m["name"] for m in json.loads(path.read_text())["metrics"]}
+    except (OSError, KeyError, ValueError):
+        return set()
+
+
+def merge_qc(destination_path, new_qc, source_path=None):
     """Write `new_qc` to `quality_control.json`, keeping the other metrics already in it.
+
+    The old dF/F metrics are dropped: those tagged `DFF_QC_TYPE`, and those listed in the
+    source's `dff-qc/quality_control.json` (outputs of earlier versions are not tagged).
 
     Parameters
     ----------
@@ -49,6 +61,8 @@ def merge_qc(destination_path, new_qc):
         Dataset directory, with an existing `quality_control.json` (optional).
     new_qc : QualityControl
         The dF/F metrics of this run.
+    source_path : Path, optional
+        Dataset directory the run started from.
     """
     qc_path = destination_path / "quality_control.json"
     if qc_path.exists():
@@ -59,8 +73,16 @@ def merge_qc(destination_path, new_qc):
                 f"{qc_path} is not valid for this schema. Writing only the new metrics."
             )
         else:
-            kept = [m for m in old_qc.metrics if (m.tags or {}).get("type") != DFF_QC_TYPE]
+            old_dff = _dff_metric_names(source_path) if source_path else set()
+            kept = [
+                m
+                for m in old_qc.metrics
+                if (m.tags or {}).get("type") != DFF_QC_TYPE and m.name not in old_dff
+            ]
             new_qc.metrics = kept + new_qc.metrics
+            new_qc.default_grouping = list(
+                dict.fromkeys(old_qc.default_grouping + new_qc.default_grouping)
+            )
     new_qc.write_standard_file(destination_path)
     # Remove the temporary QC file from dff-qc subdirectory
     (destination_path / "dff-qc" / "quality_control.json").unlink(missing_ok=True)
@@ -145,7 +167,7 @@ def process1dataset(source_path, args, start_time):
                 args,
                 destination_path,
             )
-            merge_qc(destination_path, new_qc)
+            merge_qc(destination_path, new_qc, fiber_path)
 
         # Append DataProcess to processing.json
         process_name = ProcessName.DF_F_ESTIMATION
