@@ -79,7 +79,7 @@ def process1dataset(source_path, args, start_time):
         Start time of the processing run.
     """
     source_path = Path(source_path)
-    fiber_path = source_path.parent.parent
+    fiber_path = source_path.parent
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
@@ -91,11 +91,8 @@ def process1dataset(source_path, args, start_time):
         destination_path,
         ignore=shutil.ignore_patterns("output", "dff-qc", "processing.json"),
     )
-    # Update path to the NWB file within the copied directory
-    old_nwb_file_path = destination_path / "nwb" / source_path.name
-    nwb_file_path = destination_path / "fiber.nwb.zarr"
-    if old_nwb_file_path.exists():
-        shutil.move(old_nwb_file_path, nwb_file_path)
+    # Path to the NWB file within the copied directory
+    nwb_file_path = destination_path / source_path.name
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
@@ -172,7 +169,7 @@ def _process1dataset_safe(source_path, args, start_time):
     """Wrap process1dataset so one dataset's unhandled exception logs and
     gets skipped (partial output removed) instead of aborting the whole
     outer Parallel job. Returns the failed path for the caller to log."""
-    destination_path = args.output_dir / Path(source_path).parent.parent.name
+    destination_path = args.output_dir / Path(source_path).parent.name
     destination_existed = destination_path.exists()
     try:
         process1dataset(source_path, args, start_time)
@@ -190,7 +187,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/*/nwb/*.nwb",
+        default=r"/data/*/fiber.nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -272,7 +269,7 @@ if __name__ == "__main__":
 
     # Each input writes to <output_dir>/<dataset dir name>; two inputs in one dataset
     # would write (and, on failure, clean up) the same directory concurrently.
-    destinations = Counter(Path(p).parent.parent.name for p in source_paths)
+    destinations = Counter(Path(p).parent.name for p in source_paths)
     shared = sorted(name for name, n in destinations.items() if n > 1)
     if shared:
         logging.error(f"Several inputs map to the same output directory: {', '.join(shared)}")
