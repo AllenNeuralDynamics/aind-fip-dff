@@ -118,7 +118,7 @@ def write_output_metadata(
                     parameters=metadata,
                 ),
                 output_path=Path(output_fp).as_posix(),
-                pipeline_name=name=os.getenv("PIPELINE_NAME", "")
+                pipeline_name=os.getenv("PIPELINE_NAME", "")
             )
         ]
         if process_name is not None
