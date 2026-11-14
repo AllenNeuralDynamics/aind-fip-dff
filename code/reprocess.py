@@ -11,7 +11,7 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import zarr
-from aind_data_schema.core.processing import ProcessName
+from aind_data_schema.core.processing import ProcessName, Processing
 from aind_data_schema.core.quality_control import QualityControl
 from pydantic import ValidationError
 from hdmf_zarr import NWBZarrIO
@@ -88,6 +88,48 @@ def merge_qc(destination_path, new_qc, source_path=None):
     (destination_path / "dff-qc" / "quality_control.json").unlink(missing_ok=True)
 
 
+def append_processing(destination_path, old_path):
+    """Append the dF/F process in `destination_path/processing.json` to the history in `old_path`.
+
+    Parameters
+    ----------
+    destination_path : Path
+        Dataset directory whose `processing.json` holds only this run's process.
+    old_path : Path
+        `processing.json` of the dataset this run started from (optional).
+    """
+    if not old_path.exists():
+        return
+    try:
+        old = Processing.model_validate(json.loads(old_path.read_text()))
+    except ValidationError:
+        logging.warning(f"{old_path} is not valid for this schema. Writing only the new process.")
+        return
+    new = Processing.model_validate(json.loads((destination_path / "processing.json").read_text()))
+
+    graph = dict(old.dependency_graph) if old.dependency_graph is not None else None
+    previous = old.data_processes[-1].name if old.data_processes else None
+    names = set(old.process_names)
+    for process in new.data_processes:
+        base, i = process.name, 0
+        while process.name in names:  # a dF/F process from an earlier run is kept
+            i += 1
+            process.name = f"{base}_{i}"
+        names.add(process.name)
+        if graph is not None:
+            graph[process.name] = [previous] if previous else []
+        previous = process.name
+
+    pipelines = list(old.pipelines or [])
+    pipelines += [p for p in new.pipelines or [] if p.name and p not in pipelines]
+    Processing(
+        data_processes=old.data_processes + new.data_processes,
+        pipelines=pipelines or None,
+        notes=old.notes,
+        dependency_graph=graph,
+    ).write_standard_file(destination_path)
+
+
 def process1dataset(source_path, args, start_time):
     """Process a single dataset/NWB file.
 
@@ -111,7 +153,7 @@ def process1dataset(source_path, args, start_time):
     shutil.copytree(
         fiber_path,
         destination_path,
-        ignore=shutil.ignore_patterns("output", "dff-qc", "processing.json"),
+        ignore=shutil.ignore_patterns("output", "dff-qc"),
     )
     # Path to the NWB file within the copied directory
     nwb_file_path = destination_path / source_path.name
@@ -185,6 +227,7 @@ def process1dataset(source_path, args, start_time):
         output_fp=destination_path,
         start_date_time=start_time,
     )
+    append_processing(destination_path, fiber_path / "processing.json")
 
 
 def _process1dataset_safe(source_path, args, start_time):
