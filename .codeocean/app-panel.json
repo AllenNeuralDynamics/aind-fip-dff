@@ -1,0 +1,96 @@
+{
+	"version": 1,
+	"named_parameters": true,
+	"categories": [
+		{
+			"id": "c4agUo5ysMLZNFqz",
+			"name": "Baseline (dF/F) fitting",
+			"help_text": "Which baseline models to fit and how the baseline level is estimated.",
+			"icon": "📂"
+		},
+		{
+			"id": "RFZKXkleom7uSKe0",
+			"name": "Motion correction and filtering",
+			"help_text": "Lowpass filter cutoffs used for the isosbestic regression and noise removal.",
+			"icon": "📂"
+		},
+		{
+			"id": "J5k0tX3nucr7dXKd",
+			"name": "Execution and QC",
+			"help_text": "Parallelism and whether QC figures are produced.",
+			"icon": "📂"
+		}
+	],
+	"parameters": [
+		{
+			"id": "6nvSRSzbeU4KsXIV",
+			"category": "c4agUo5ysMLZNFqz",
+			"name": "dF/F methods",
+			"param_name": "dff_methods",
+			"description": "Space-separated list of baseline fitting methods: poly, exp, tri-exp, bright, bright-v2.",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "poly exp bright-v2"
+		},
+		{
+			"id": "F85wc5DtB0aRCkMT",
+			"category": "c4agUo5ysMLZNFqz",
+			"name": "Baseline percentile",
+			"param_name": "b_percentile",
+			"description": "Fraction in (0, 1] or 'mode'. Applies to poly/exp/tri-exp only; no effect on bright/bright-v2.",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "0.7"
+		},
+		{
+			"id": "eT6DU1RMiSxN5puj",
+			"category": "RFZKXkleom7uSKe0",
+			"name": "Motion cutoff frequency (Hz)",
+			"param_name": "cutoff_freq_motion",
+			"description": "Lowpass Butterworth cutoff used only when estimating the isosbestic regression coefficient.",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.05",
+			"minimum": 0
+		},
+		{
+			"id": "TZI3EZE1AroA25Np",
+			"category": "RFZKXkleom7uSKe0",
+			"name": "Noise cutoff frequency (Hz)",
+			"param_name": "cutoff_freq_noise",
+			"description": "Lowpass Butterworth cutoff applied to filter out noise.",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "3",
+			"minimum": 0
+		},
+		{
+			"id": "ijVlsHHPnSIQte6I",
+			"category": "J5k0tX3nucr7dXKd",
+			"name": "Run serially",
+			"param_name": "serial",
+			"description": "true disables parallel processing of fibers and channels (slower, but fit timings are precise).",
+			"type": "list",
+			"value_type": "string",
+			"default_value": "false",
+			"extra_data": [
+				"false",
+				"true"
+			]
+		},
+		{
+			"id": "VwE1RpchZI701hvU",
+			"category": "J5k0tX3nucr7dXKd",
+			"name": "Skip QC plots",
+			"param_name": "no_qc",
+			"description": "true skips generation of the QC figures and quality_control.json.",
+			"type": "list",
+			"value_type": "string",
+			"default_value": "false",
+			"extra_data": [
+				"false",
+				"true"
+			]
+		}
+	]
+}
