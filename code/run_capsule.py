@@ -1105,9 +1105,6 @@ def process_nwb_file(
     dict,
     dict,
     list,
-    Union[np.ndarray, None],
-    Union[np.ndarray, None],
-    Union[str, None],
 ]:
     """Process a single NWB file: compute dF/F and motion correction.
 
