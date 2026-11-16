@@ -29,6 +29,8 @@ from run_capsule import (
     write_output_metadata,
     setup_logging_from_metadata,
     _b_percentile_type,
+    _cutoff_freq_motion_type,
+    _cutoff_freq_noise_type,
 )
 
 """
@@ -335,7 +337,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cutoff_freq_motion",
-        type=float,
+        type=_cutoff_freq_motion_type,
         default=0.05,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter that's only "
@@ -344,7 +346,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cutoff_freq_noise",
-        type=float,
+        type=_cutoff_freq_noise_type,
         default=3,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "

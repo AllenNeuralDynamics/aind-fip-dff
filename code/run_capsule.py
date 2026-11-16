@@ -47,6 +47,8 @@ from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
+#: Frames `chunk_processing` crops from each fit (the pipeline never passes `n_frame_to_cut`).
+N_FRAME_TO_CUT = inspect.signature(chunk_processing).parameters["n_frame_to_cut"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -116,6 +118,7 @@ def write_output_metadata(
                     parameters=metadata,
                 ),
                 output_path=Path(output_fp).as_posix(),
+                pipeline_name=os.getenv("PIPELINE_NAME", "")
             )
         ]
         if process_name is not None
@@ -163,16 +166,14 @@ def plot_raw_dff_mc(
         The path where the generated plot will be saved. Defaults to "/results/dff-qc/".
     """
     fig, ax = plt.subplots(3, 1, figsize=(12, 4), sharex=True)
-    for i, suffix in enumerate(
-        ("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")
-    ):
+    for i, suffix in enumerate(("", f"_dff-{method}", f"_dff-{method}_mc-iso-IRLS")):
         for ch in sorted(channels):
             if i == 0:
                 trace = nwb_file.acquisition[ch + f"_{fiber}"]
             else:
-                trace = nwb_file.processing[
-                    "fiber_photometry"
-                ].data_interfaces[ch + f"_{fiber}{suffix}"]
+                trace = nwb_file.processing["fiber_photometry"].data_interfaces[
+                    ch + f"_{fiber}{suffix}"
+                ]
             t, d = trace.timestamps[:], trace.data[:]
             t -= t[0]
             if ~np.isnan(t).all():
@@ -195,9 +196,7 @@ def plot_raw_dff_mc(
                 r"$\Delta$F/F + motion-correction ('dff_mc')",
             )[i]
         )
-        ax[i].set_ylabel(
-            ("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i]
-        )
+        ax[i].set_ylabel(("F [a.u.]", r"$\Delta$F/F [%]", r"$\Delta$F/F [%]")[i])
     tmin, tmax = np.nanmin(t), np.nanmax(t)
     ax[i].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
     plt.suptitle(f"Method: {method},  ROI: {fiber}", y=1)
@@ -579,29 +578,22 @@ def plot_motion_correction(
                 gs[3 * c + i, 0], sharex=(None if c + i == 0 else left_axes[0])
             )
             ax2 = fig.add_subplot(
-                gs[3 * c + i, 1],
-                sharex=(None if c + i == 0 else center_axes[0]),
+                gs[3 * c + i, 1], sharex=(None if c + i == 0 else center_axes[0])
             )
             if i < 2:
                 if cut:
-                    sos = butter(
-                        N=2, Wn=cutoff_freq_noise, fs=fs, output="sos"
-                    )
+                    sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
                     noise_filt = lambda x: sosfiltfilt(sos, x)
                 else:
                     noise_filt = lambda x: x
                 ax.plot(
                     t,
-                    (noise_filt(df["dFF"]) if i == 0 else df["filtered"])
-                    * 100,
+                    (noise_filt(df["dFF"]) if i == 0 else df["filtered"]) * 100,
                     c=color,
                     label=(("", "low-passed ")[i] + ch),
                 )
                 plot_psd(
-                    ax2,
-                    df["dFF"] if i == 0 else df["filtered"],
-                    color,
-                    i == 1 and cut,
+                    ax2, df["dFF"] if i == 0 else df["filtered"], color, i == 1 and cut
                 )
                 if i == 0:
                     ax.plot(
@@ -611,9 +603,9 @@ def plot_motion_correction(
                         label="regressed Iso",
                         alpha=0.8,
                     )
-                    plot_psd(
-                        ax2.twinx(), df_iso["dFF"], colors["Iso"]
-                    ).tick_params(axis="y", which="both", colors=colors["Iso"])
+                    plot_psd(ax2.twinx(), df_iso["dFF"], colors["Iso"]).tick_params(
+                        axis="y", which="both", colors=colors["Iso"]
+                    )
                 else:
                     ax2.axvline(cutoff_freq_motion, c="k", ls="--")
                     plot_psd(
@@ -627,10 +619,7 @@ def plot_motion_correction(
                 )
             else:
                 ax.plot(
-                    t,
-                    df["motion_corrected"] * 100,
-                    c=color,
-                    label=f"corrected {ch}",
+                    t, df["motion_corrected"] * 100, c=color, label=f"corrected {ch}"
                 )
                 plot_psd(ax2, df["motion_corrected"], color, cut)
                 if cut:
@@ -644,15 +633,15 @@ def plot_motion_correction(
 
         # Create subplots in the right column, each spanning 3 rows
         ax = fig.add_subplot(
-            gs[3 * c : 3 * c + 3, 2],
-            sharex=(None if c == 0 else right_axes[0]),
+            gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        if np.isfinite(np.mean(weight)):
+        valid = np.isfinite(weight)
+        if valid.any():
             sc = ax.scatter(
-                df_iso["filtered"] * 100,
-                df["filtered"] * 100,
-                s=0.02 + 0.08 * weight,
-                c=weight,
+                df_iso["filtered"].values[valid] * 100,
+                df["filtered"].values[valid] * 100,
+                s=0.02 + 0.08 * weight[valid],
+                c=weight[valid],
                 label="low-passed",
                 alpha=0.5,
             )
@@ -676,9 +665,7 @@ def plot_motion_correction(
         plt.setp(ax.get_xticklabels(), visible=False)
 
     tmin, tmax = np.nanmin(t), np.nanmax(t)
-    left_axes[-1].set_xlim(
-        tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100
-    )
+    left_axes[-1].set_xlim(tmin - (tmax - tmin) / 100, tmax + (tmax - tmin) / 100)
     left_axes[-1].set_xlabel("Time [s]")
     left_axes[rows // 2].set_ylabel(
         "$\Delta$F/F [%]", y=(1.1, 0.5)[rows % 2], labelpad=10
@@ -763,7 +750,6 @@ def create_metric(fiber, method, reference, value):
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
     }
-
     return QCMetric(
         name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -982,7 +968,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
-        timestamps - timestamps[0],
+        timestamps - np.nanmin(timestamps),
         method=pp_name,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
@@ -1085,6 +1071,7 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
+        n_frame_to_cut=N_FRAME_TO_CUT,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -1118,9 +1105,6 @@ def process_nwb_file(
     dict,
     dict,
     list,
-    Union[np.ndarray, None],
-    Union[np.ndarray, None],
-    Union[str, None],
 ]:
     """Process a single NWB file: compute dF/F and motion correction.
 
@@ -1401,7 +1385,7 @@ def generate_qc_plots(
                 # create_calibration_metric's docstring for why.
                 ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
                 ratio_by_channel[ch] = ratio_dff
-                fs = 1 / np.median(np.diff(df.time_fip.values))
+                fs = 1 / np.nanmedian(np.diff(df.time_fip.values))
                 level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
                 if ch != "Iso":
                     noise_by_channel[ch] = (
@@ -1443,6 +1427,31 @@ def _b_percentile_type(s: str) -> float | str:
     return val
 
 
+def _cutoff_freq_motion_type(s: str) -> float:
+    """argparse type for --cutoff_freq_motion: in (0, Nyquist), as `butter`
+    in `motion_correct` requires -- checked up front so a bad value fails
+    before any processing."""
+    val = float(s)
+    nyquist = MOTION_CORRECT_FS / 2
+    if not (0 < val < nyquist):
+        raise argparse.ArgumentTypeError(
+            f"--cutoff_freq_motion must be in (0, {nyquist:g}) Hz, got {val:g}"
+        )
+    return val
+
+
+def _cutoff_freq_noise_type(s: str) -> float:
+    """argparse type for --cutoff_freq_noise: positive. Values at or above
+    Nyquist are allowed and skip noise filtering (see `motion_correct`)."""
+    val = float(s)
+    if not val > 0:
+        raise argparse.ArgumentTypeError(
+            f"--cutoff_freq_noise must be > 0 Hz (>= {MOTION_CORRECT_FS / 2:g} "
+            f"disables noise filtering), got {val:g}"
+        )
+    return val
+
+
 def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -1453,11 +1462,7 @@ def main():
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
-        "-o",
-        "--output-dir",
-        type=str,
-        default="/results/",
-        help="Output directory",
+        "-o", "--output-dir", type=str, default="/results/", help="Output directory"
     )
     parser.add_argument(
         "--fiber_path",
@@ -1500,7 +1505,7 @@ def main():
     )
     parser.add_argument(
         "--cutoff_freq_motion",
-        type=float,
+        type=_cutoff_freq_motion_type,
         default=0.05,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter that's only "
@@ -1509,7 +1514,7 @@ def main():
     )
     parser.add_argument(
         "--cutoff_freq_noise",
-        type=float,
+        type=_cutoff_freq_noise_type,
         default=3,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "
@@ -1624,4 +1629,3 @@ if __name__ == "__main__":
         logging.error("Pipeline stage failed", extra={"event_type": "stage_error"})
         logging.exception(e)
         raise
-
