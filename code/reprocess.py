@@ -181,9 +181,6 @@ def process1dataset(source_path, args, start_time, data_description=None):
     if data_description is None:
         data_description = derive_description(fiber_path)
 
-    # Setup logging
-    setup_logging_from_metadata(fiber_path)
-
     # Copy files to the destination directory
     destination_path = args.output_dir / data_description.name
     shutil.copytree(
@@ -192,6 +189,10 @@ def process1dataset(source_path, args, start_time, data_description=None):
         ignore=shutil.ignore_patterns("output", "dff-qc"),
     )
     data_description.write_standard_file(destination_path)
+
+    # Setup logging, labelled with the name of the new asset
+    setup_logging_from_metadata(destination_path)
+
     # Path to the NWB file within the copied directory
     nwb_file_path = destination_path / source_path.name
     logging.info(f"Processing NWB file: {nwb_file_path}")
