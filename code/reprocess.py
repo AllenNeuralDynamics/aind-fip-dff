@@ -263,7 +263,6 @@ def process1dataset(source_path, args, start_time, data_description=None):
         process_name=process_name,
         input_fp=source_path,
         output_fp=destination_path,
-        nwb_name=nwb_file_path.name,
         start_date_time=start_time,
     )
     append_processing(destination_path, fiber_path / "processing.json")
