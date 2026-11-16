@@ -193,8 +193,10 @@ def process1dataset(source_path, args, start_time, data_description=None):
     # Setup logging, labelled with the name of the new asset
     setup_logging_from_metadata(destination_path)
 
-    # Path to the NWB file within the copied directory
-    nwb_file_path = destination_path / source_path.name
+    # The output asset has a fixed NWB file name, which `processing.json` records
+    nwb_file_path = destination_path / "fiber.nwb.zarr"
+    if source_path.name != nwb_file_path.name:
+        shutil.move(destination_path / source_path.name, nwb_file_path)
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
