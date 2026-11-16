@@ -86,6 +86,7 @@ def write_output_metadata(
     process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
+    nwb_name: str,
     start_date_time: dt,
 ) -> None:
     """Writes output metadata to processing.json
@@ -100,6 +101,8 @@ def write_output_metadata(
         Path to the data input.
     output_fp : Union[str, Path]
         Path to the data output.
+    nwb_name : str
+        Name of the output NWB file in `output_fp`, recorded as the process's `output_path`.
     start_date_time : dt
         Start date and time of the process.
     """
@@ -117,7 +120,7 @@ def write_output_metadata(
                     version=os.getenv("VERSION", ""),
                     parameters=metadata,
                 ),
-                output_path="fiber.nwb.zarr",
+                output_path=nwb_name,
                 pipeline_name=os.getenv("PIPELINE_NAME", "")
             )
         ]
@@ -1616,6 +1619,7 @@ def main():
             process_name=process_name,
             input_fp=source_path,
             output_fp=output_dir,
+            nwb_name=nwb_path.name,
             start_date_time=start_time,
         )
 
