@@ -196,6 +196,8 @@ def process1dataset(source_path, args, start_time, data_description=None):
     # The output asset has a fixed NWB file name, which `processing.json` records
     nwb_file_path = destination_path / "fiber.nwb.zarr"
     if source_path.name != nwb_file_path.name:
+        if nwb_file_path.exists():
+            raise FileExistsError(f"{fiber_path} already has a {nwb_file_path.name}")
         shutil.move(destination_path / source_path.name, nwb_file_path)
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
