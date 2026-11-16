@@ -86,9 +86,15 @@ def merge_qc(destination_path, new_qc, source_path=None):
                 for m in old_qc.metrics
                 if (m.tags or {}).get("type") != DFF_QC_TYPE and m.name not in old_dff
             ]
-            new_qc.metrics = kept + new_qc.metrics
-            new_qc.default_grouping = list(
-                dict.fromkeys(old_qc.default_grouping + new_qc.default_grouping)
+            # Rebuild instead of assigning `metrics`, so that `status` is recomputed
+            new_qc = QualityControl(
+                metrics=kept + new_qc.metrics,
+                default_grouping=list(
+                    dict.fromkeys(old_qc.default_grouping + new_qc.default_grouping)
+                ),
+                allow_tag_failures=old_qc.allow_tag_failures,
+                key_experimenters=old_qc.key_experimenters,
+                notes=old_qc.notes,
             )
     new_qc.write_standard_file(destination_path)
     # Remove the temporary QC file from dff-qc subdirectory
