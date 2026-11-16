@@ -117,7 +117,7 @@ def write_output_metadata(
                     version=os.getenv("VERSION", ""),
                     parameters=metadata,
                 ),
-                output_path=Path(output_fp).as_posix(),
+                output_path="fiber.nwb.zarr",
                 pipeline_name=os.getenv("PIPELINE_NAME", "")
             )
         ]

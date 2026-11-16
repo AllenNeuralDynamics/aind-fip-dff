@@ -11,10 +11,15 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import zarr
+from aind_data_schema.core.data_description import DataDescription, DataLevel
 from aind_data_schema.core.processing import ProcessName, Processing
 from aind_data_schema.core.quality_control import QualityControl
 from pydantic import ValidationError
 from hdmf_zarr import NWBZarrIO
+from aind_data_schema.utils.inheritance import (
+    derive_data_description_from_derived,
+    derive_data_description_from_raw,
+)
 from joblib import Parallel, delayed
 
 from run_capsule import (
@@ -132,7 +137,31 @@ def append_processing(destination_path, old_path):
     ).write_standard_file(destination_path)
 
 
-def process1dataset(source_path, args, start_time):
+def derive_description(fiber_path):
+    """Data description of the reprocessed asset: a new derived asset of the input one.
+
+    Parameters
+    ----------
+    fiber_path : Path
+        Dataset directory with the input `data_description.json`.
+
+    Returns
+    -------
+    DataDescription
+        Named `<original input>_processed_<now>`, with the input asset in `source_data`.
+    """
+    old = DataDescription.model_validate(
+        json.loads((fiber_path / "data_description.json").read_text())
+    )
+    derive = (
+        derive_data_description_from_derived
+        if old.data_level == DataLevel.DERIVED
+        else derive_data_description_from_raw
+    )
+    return derive(old, "processed", source_data=[old.name])
+
+
+def process1dataset(source_path, args, start_time, data_description=None):
     """Process a single dataset/NWB file.
 
     Parameters
@@ -143,22 +172,33 @@ def process1dataset(source_path, args, start_time):
         Command-line arguments containing processing parameters.
     start_time : dt
         Start time of the processing run.
+    data_description : DataDescription, optional
+        Description of the output asset, whose name is the output directory.
+        Derived from the input's if not given.
     """
     source_path = Path(source_path)
     fiber_path = source_path.parent
-
-    # Setup logging
-    setup_logging_from_metadata(fiber_path)
+    if data_description is None:
+        data_description = derive_description(fiber_path)
 
     # Copy files to the destination directory
-    destination_path = args.output_dir / fiber_path.name
+    destination_path = args.output_dir / data_description.name
     shutil.copytree(
         fiber_path,
         destination_path,
         ignore=shutil.ignore_patterns("output", "dff-qc"),
     )
-    # Path to the NWB file within the copied directory
-    nwb_file_path = destination_path / source_path.name
+    data_description.write_standard_file(destination_path)
+
+    # Setup logging, labelled with the name of the new asset
+    setup_logging_from_metadata(destination_path)
+
+    # The output asset has a fixed NWB file name, which `processing.json` records
+    nwb_file_path = destination_path / "fiber.nwb.zarr"
+    if source_path.name != nwb_file_path.name:
+        if nwb_file_path.exists():
+            raise FileExistsError(f"{fiber_path} already has a {nwb_file_path.name}")
+        shutil.move(destination_path / source_path.name, nwb_file_path)
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
@@ -236,10 +276,13 @@ def _process1dataset_safe(source_path, args, start_time):
     """Wrap process1dataset so one dataset's unhandled exception logs and
     gets skipped (partial output removed) instead of aborting the whole
     outer Parallel job. Returns the failed path for the caller to log."""
-    destination_path = args.output_dir / Path(source_path).parent.name
-    destination_existed = destination_path.exists()
+    destination_path = None
+    destination_existed = True
     try:
-        process1dataset(source_path, args, start_time)
+        data_description = derive_description(Path(source_path).parent)
+        destination_path = args.output_dir / data_description.name
+        destination_existed = destination_path.exists()
+        process1dataset(source_path, args, start_time, data_description)
         return None
     except Exception:
         logging.exception(f"Failed processing {source_path}")
