@@ -11,8 +11,9 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import zarr
-from aind_data_schema.core.processing import ProcessName
+from aind_data_schema.core.processing import ProcessName, Processing
 from aind_data_schema.core.quality_control import QualityControl
+from pydantic import ValidationError
 from hdmf_zarr import NWBZarrIO
 from joblib import Parallel, delayed
 
@@ -23,55 +24,110 @@ from run_capsule import (
     write_output_metadata,
     setup_logging_from_metadata,
     _b_percentile_type,
-    _cutoff_freq_motion_type,
-    _cutoff_freq_noise_type,
 )
 
 """
 This script reprocesses fiber photometry data from multiple datasets in parallel.
-The folder for each dataset includes the NWB file as well as metadata JSONs.
+The subfolder for each dataset includes the NWB file as well as metadata JSONs.
 For each dataset, the script processes each channel (typically 3) of each ROI
 (typically 4) by generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then overwritten in the NWB file. It also updates the processing.json
 and quality_control.json files for each dataset.
 """
 
-#: Name of the NWB file in each output dataset, matching run_capsule.py.
-NWB_NAME = "fiber.nwb.zarr"
-#: Where to look for inputs without --source_pattern: this branch's outputs,
-#: and older ones with the NWB in an `nwb/` subfolder.
-DEFAULT_SOURCE_PATTERNS = ("/data/*/" + NWB_NAME, "/data/*/nwb/*.nwb")
-#: `type` tag of the metrics run_capsule.py writes (see `_metric_schema_fields`).
-DFF_METRIC_TYPE = "FIP DFF Processing"
+
+#: `tags["type"]` of the dF/F metrics written by `run_capsule` (see `_metric_schema_fields`).
+DFF_QC_TYPE = "FIP DFF Processing"
 
 
-def _dataset_dir(source_path: Path) -> Path:
-    """Dataset folder of an NWB file: its parent, or the parent of the older
-    `nwb/` subfolder layout."""
-    return source_path.parent.parent if source_path.parent.name == "nwb" else source_path.parent
-
-
-def _schema_major(metadata: dict) -> int:
-    """Major version of a metadata file's `schema_version`; 1 if it is
-    missing or unparsable, or the file has schema 1's `evaluations`."""
-    if "evaluations" in metadata:
-        return 1
+def _dff_metric_names(source_path):
+    """Names of the dF/F metrics in `source_path/dff-qc/quality_control.json`, if present."""
+    path = source_path / "dff-qc" / "quality_control.json"
     try:
-        return int(str(metadata.get("schema_version", "1")).split(".")[0])
-    except ValueError:
-        return 1
+        return {m["name"] for m in json.loads(path.read_text())["metrics"]}
+    except (OSError, KeyError, ValueError):
+        return set()
 
 
-def _is_dff_metric(metric) -> bool:
-    """Whether a QC metric was written by this capsule, so a rerun replaces it.
+def merge_qc(destination_path, new_qc, source_path=None):
+    """Write `new_qc` to `quality_control.json`, keeping the other metrics already in it.
 
-    Matches the current `type` tag, and the "Fiber ROI" tag key older runs of
-    this branch used.
+    The old dF/F metrics are dropped: those tagged `DFF_QC_TYPE`, and those listed in the
+    source's `dff-qc/quality_control.json` (outputs of earlier versions are not tagged).
+
+    Parameters
+    ----------
+    destination_path : Path
+        Dataset directory, with an existing `quality_control.json` (optional).
+    new_qc : QualityControl
+        The dF/F metrics of this run.
+    source_path : Path, optional
+        Dataset directory the run started from.
     """
-    tags = metric.tags or {}
-    if isinstance(tags, dict):
-        return tags.get("type") == DFF_METRIC_TYPE or "Fiber ROI" in tags
-    return DFF_METRIC_TYPE in tags
+    qc_path = destination_path / "quality_control.json"
+    if qc_path.exists():
+        try:
+            old_qc = QualityControl.model_validate(json.loads(qc_path.read_text()))
+        except ValidationError:
+            logging.warning(
+                f"{qc_path} is not valid for this schema. Writing only the new metrics."
+            )
+        else:
+            old_dff = _dff_metric_names(source_path) if source_path else set()
+            kept = [
+                m
+                for m in old_qc.metrics
+                if (m.tags or {}).get("type") != DFF_QC_TYPE and m.name not in old_dff
+            ]
+            new_qc.metrics = kept + new_qc.metrics
+            new_qc.default_grouping = list(
+                dict.fromkeys(old_qc.default_grouping + new_qc.default_grouping)
+            )
+    new_qc.write_standard_file(destination_path)
+    # Remove the temporary QC file from dff-qc subdirectory
+    (destination_path / "dff-qc" / "quality_control.json").unlink(missing_ok=True)
+
+
+def append_processing(destination_path, old_path):
+    """Append the dF/F process in `destination_path/processing.json` to the history in `old_path`.
+
+    Parameters
+    ----------
+    destination_path : Path
+        Dataset directory whose `processing.json` holds only this run's process.
+    old_path : Path
+        `processing.json` of the dataset this run started from (optional).
+    """
+    if not old_path.exists():
+        return
+    try:
+        old = Processing.model_validate(json.loads(old_path.read_text()))
+    except ValidationError:
+        logging.warning(f"{old_path} is not valid for this schema. Writing only the new process.")
+        return
+    new = Processing.model_validate(json.loads((destination_path / "processing.json").read_text()))
+
+    graph = dict(old.dependency_graph) if old.dependency_graph is not None else None
+    previous = old.data_processes[-1].name if old.data_processes else None
+    names = set(old.process_names)
+    for process in new.data_processes:
+        base, i = process.name, 0
+        while process.name in names:  # a dF/F process from an earlier run is kept
+            i += 1
+            process.name = f"{base}_{i}"
+        names.add(process.name)
+        if graph is not None:
+            graph[process.name] = [previous] if previous else []
+        previous = process.name
+
+    pipelines = list(old.pipelines or [])
+    pipelines += [p for p in new.pipelines or [] if p.name and p not in pipelines]
+    Processing(
+        data_processes=old.data_processes + new.data_processes,
+        pipelines=pipelines or None,
+        notes=old.notes,
+        dependency_graph=graph,
+    ).write_standard_file(destination_path)
 
 
 def process1dataset(source_path, args, start_time):
@@ -87,7 +143,7 @@ def process1dataset(source_path, args, start_time):
         Start time of the processing run.
     """
     source_path = Path(source_path)
-    fiber_path = _dataset_dir(source_path)
+    fiber_path = source_path.parent
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
@@ -97,17 +153,10 @@ def process1dataset(source_path, args, start_time):
     shutil.copytree(
         fiber_path,
         destination_path,
-        ignore=shutil.ignore_patterns("output", "dff-qc", "processing.json"),
+        ignore=shutil.ignore_patterns("output", "dff-qc"),
     )
-    # Move the NWB file to the top level of the copied directory under its
-    # standard name (older outputs kept it in an `nwb/` subfolder).
-    old_nwb_file_path = destination_path / source_path.relative_to(fiber_path)
-    nwb_file_path = destination_path / NWB_NAME
-    if old_nwb_file_path != nwb_file_path and old_nwb_file_path.exists():
-        shutil.move(old_nwb_file_path, nwb_file_path)
-        nwb_dir = old_nwb_file_path.parent
-        if nwb_dir != destination_path and not any(nwb_dir.iterdir()):
-            nwb_dir.rmdir()
+    # Path to the NWB file within the copied directory
+    nwb_file_path = destination_path / source_path.name
     logging.info(f"Processing NWB file: {nwb_file_path}")
 
     with NWBZarrIO(nwb_file_path, mode="r+", load_namespaces=True) as io:
@@ -160,41 +209,7 @@ def process1dataset(source_path, args, start_time):
                 args,
                 destination_path,
             )
-
-            # Merge into the dataset's quality_control.json, replacing this
-            # capsule's metrics from the earlier run and keeping the rest.
-            # Without a schema 2 one, the new QC stays in dff-qc as
-            # run_capsule.py leaves it.
-            qc_path = destination_path / "quality_control.json"
-            old_qc_data = None
-            if qc_path.exists():
-                with open(qc_path) as f:
-                    old_qc_data = json.load(f)
-            if old_qc_data is None:
-                logging.info(
-                    f"No {qc_path.name} in {fiber_path}; QC left in the dff-qc folder"
-                )
-            elif _schema_major(old_qc_data) < 2:
-                # Schema 1 QC (evaluations, not a flat metric list) cannot be
-                # merged with schema 2 metrics; keep it untouched rather than
-                # dropping other capsules' evaluations.
-                logging.warning(
-                    f"{qc_path} is schema "
-                    f"{old_qc_data.get('schema_version', '1.x')}; left unchanged, "
-                    "new QC is in the dff-qc folder"
-                )
-            else:
-                old_qc = QualityControl.model_validate(old_qc_data)
-
-                new_qc.metrics = [
-                    m for m in old_qc.metrics if not _is_dff_metric(m)
-                ] + new_qc.metrics
-                new_qc.write_standard_file(destination_path)
-
-                # Remove the temporary QC file from dff-qc subdirectory
-                new_qc_path = destination_path / "dff-qc" / "quality_control.json"
-                if new_qc_path.exists():
-                    new_qc_path.unlink()
+            merge_qc(destination_path, new_qc, fiber_path)
 
         # Append DataProcess to processing.json
         process_name = ProcessName.DF_F_ESTIMATION
@@ -212,13 +227,14 @@ def process1dataset(source_path, args, start_time):
         output_fp=destination_path,
         start_date_time=start_time,
     )
+    append_processing(destination_path, fiber_path / "processing.json")
 
 
 def _process1dataset_safe(source_path, args, start_time):
     """Wrap process1dataset so one dataset's unhandled exception logs and
     gets skipped (partial output removed) instead of aborting the whole
     outer Parallel job. Returns the failed path for the caller to log."""
-    destination_path = args.output_dir / _dataset_dir(Path(source_path)).name
+    destination_path = args.output_dir / Path(source_path).parent.name
     destination_existed = destination_path.exists()
     try:
         process1dataset(source_path, args, start_time)
@@ -236,12 +252,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=None,
-        help=(
-            "Source pattern to find nwb input files. Default: both "
-            + " and ".join(DEFAULT_SOURCE_PATTERNS)
-            + " (current and older output layouts)"
-        ),
+        default=r"/data/*/fiber.nwb.zarr",
+        help="Source pattern to find nwb input files",
     )
     parser.add_argument(
         "-o",
@@ -285,7 +297,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cutoff_freq_motion",
-        type=_cutoff_freq_motion_type,
+        type=float,
         default=0.05,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter that's only "
@@ -294,7 +306,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cutoff_freq_noise",
-        type=_cutoff_freq_noise_type,
+        type=float,
         default=3,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "
@@ -314,16 +326,15 @@ if __name__ == "__main__":
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all files matching the source pattern
-    patterns = [args.source_pattern] if args.source_pattern else DEFAULT_SOURCE_PATTERNS
-    source_paths = sorted({p for pattern in patterns for p in glob.glob(pattern)})
+    source_paths = glob.glob(args.source_pattern)
 
     if len(source_paths) == 0:
-        logging.error(f"No files found matching pattern(s): {', '.join(patterns)}")
+        logging.error(f"No files found matching pattern: {args.source_pattern}")
         sys.exit(1)
 
     # Each input writes to <output_dir>/<dataset dir name>; two inputs in one dataset
     # would write (and, on failure, clean up) the same directory concurrently.
-    destinations = Counter(_dataset_dir(Path(p)).name for p in source_paths)
+    destinations = Counter(Path(p).parent.name for p in source_paths)
     shared = sorted(name for name, n in destinations.items() if n > 1)
     if shared:
         logging.error(f"Several inputs map to the same output directory: {', '.join(shared)}")
