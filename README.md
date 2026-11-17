@@ -2,6 +2,20 @@
 
 This capsule processes input NWB files containing raw fiber photometry data by generating baseline-corrected (ΔF/F) and motion-corrected traces, which are then appended back to the NWB file.
 
+## Installing with pip
+
+This branch (`pip`) is the pip-installable package; it is not meant to run as the Code Ocean capsule (the App Panel text below describes the capsule on `main`).
+
+```
+pip install git+https://github.com/AllenNeuralDynamics/aind-fip-dff@pip
+```
+
+Requires Python 3.10 or newer. Use a fresh environment: the dependencies are pinned to the capsule's (aind-data-schema 2.x, hdmf-zarr, aind-ophys-utils).
+
+- `import aind_fip_dff`: the functions of `run_capsule.py` are available at the package root, the helpers (`chunk_processing`, `motion_correct`, ...) in `aind_fip_dff.utils`.
+- `python -m aind_fip_dff`: runs `run_capsule.py` with the arguments under Input.
+- `python -m aind_fip_dff.reprocess --source_pattern "<asset>/fiber.nwb.zarr" -o <output dir>`: redoes the ΔF/F step of an existing asset (see Input).
+
 ## Method
 ### Baseline (F<sub>0</sub>) Estimation Methods for Calculating ΔF/F
 The following baseline estimation methods are implemented (the default is `poly`, `exp` and `bright-v2`; `tri-exp` and `bright` are opt-in via `--dff_methods`):
