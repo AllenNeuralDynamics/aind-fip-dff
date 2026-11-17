@@ -12,7 +12,7 @@ The following baseline estimation methods are implemented (the default is `poly`
   Fitting starts with a biphasic exponential, and the brightening and/or 3rd exponential are only included if they substantially improve the fit.
 - "bright-v2": Robust fit with a sum of exponentials, $b_{\infty} + \sum_{i=1}^{3} b_i e^{-t/\tau_i} + b_{bright} e^{-t/\tau_{bright}}$ (bleaching terms with an optional negative-amplitude brightening term), selected on a decimated trace and refit at full resolution with an asymmetric Tukey biweight M-estimator ($c_{pos}=c_{neg}=4$) via `aind_ophys_utils.nonlinear_fit`. The scale of the weights is a MAD-based noise estimate (`noise_std(method="mad")`), annealed in from the OLS residuals over 6 steps. Much faster than "bright" (about 50x less fit compute).
 
-For "poly", "exp" and "tri-exp", ΔF/F = F / fit − r, where r is the median of the lowest `b_percentile` fraction of F / fit (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" ignore `--b_percentile`.
+For "poly", "exp" and "tri-exp", ΔF/F = (F − fit) / F_base − r, where F_base is a sliding baseline of F (`tc_slidingbase`) and r is the median of the lowest `b_percentile` fraction of (F − fit) / F_base (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" use ΔF/F = F / fit − 1 and ignore `--b_percentile`.
 
 ### Motion Correction
 Motion correction is carried out in three to four steps:
