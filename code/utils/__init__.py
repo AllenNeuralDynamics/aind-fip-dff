@@ -1,3 +1,4 @@
+from . import blas_threads  # noqa: F401 -- sets BLAS env vars, must precede numpy
 from .preprocess import *
 from .nwb_dict_utils import *
 

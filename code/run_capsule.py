@@ -1,10 +1,13 @@
+from .utils import blas_threads  # noqa: F401 -- sets BLAS env vars, must precede numpy
 import argparse
 import glob
+import inspect
 import itertools
 import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime as dt
 from joblib import Parallel, delayed
 from pathlib import Path
@@ -14,15 +17,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pynwb
-from aind_data_schema.core.data_description import DerivedDataDescription
+import zarr
+from aind_data_schema.components.identifiers import Code
 from aind_data_schema.core.processing import (
     DataProcess,
-    PipelineProcess,
     Processing,
     ProcessName,
+    ProcessStage,
 )
 from aind_data_schema.core.quality_control import (
-    QCEvaluation,
     QCMetric,
     QCStatus,
     QualityControl,
@@ -30,67 +33,56 @@ from aind_data_schema.core.quality_control import (
     Status,
 )
 from aind_data_schema_models.modalities import Modality
-from aind_metadata_upgrader.data_description_upgrade import DataDescriptionUpgrade
-from aind_metadata_upgrader.processing_upgrade import ProcessingUpgrade
+from .aind_logging import setup_logging
 from hdmf_zarr import NWBZarrIO
+from aind_ophys_utils.signal_utils import noise_std
+from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, sosfiltfilt, welch
 
 from .utils import nwb_dict_utils as nwb_utils
 from .utils.preprocess import chunk_processing, motion_correct
+from .utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+
+#: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
+MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
+#: Frames `chunk_processing` crops from each fit (the pipeline never passes `n_frame_to_cut`).
+N_FRAME_TO_CUT = inspect.signature(chunk_processing).parameters["n_frame_to_cut"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
-then process each channel (usually 4) of each ROI (usually 4) by
+then process each channel (usually 3) of each ROI (usually 4) by
 generating baseline-corrected (ΔF/F) and motion-corrected traces,
 which are then appended back to the NWB file.
 """
 
 
-def setup_logging_from_metadata(fiber_path: Path) -> tuple[str, str]:
+def setup_logging_from_metadata(fiber_path: Path):
     """Setup logging from subject and data_description metadata.
 
     Parameters
     ----------
     fiber_path : Path
         Path to directory containing metadata files.
-
-    Returns
-    -------
-    tuple[str, str]
-        Subject ID and asset name.
     """
-    # Load subject data
-    subject_json_path = fiber_path / "subject.json"
-    with open(subject_json_path, "r") as f:
-        subject_data = json.load(f)
-
-    subject_id = subject_data.get("subject_id", None)
-    if subject_id is None:
-        logging.error("No subject_id in subject file")
-        raise ValueError("subject_id is missing from the subject_data.")
-
     # Load data description
     data_description_path = fiber_path / "data_description.json"
     with open(data_description_path, "r") as f:
         data_description = json.load(f)
 
-    asset_name = data_description.get("name", None)
-
-    # log.setup_logging(
-    #     "aind-fip-dff",
-    #     subject_id=subject_id,
-    #     asset_name=asset_name,
-    # )
-    logging.basicConfig(level=logging.INFO)
-
-    return subject_id, asset_name
+    process_name = os.getenv("PROCESS_NAME")
+    asset_name = data_description.get("name")
+    setup_logging(
+        process_name,
+        acquisition_name=asset_name,
+        process_name=process_name,
+        pipeline_name=os.getenv("PIPELINE_NAME", ""),
+    )
 
 
 def write_output_metadata(
     metadata: dict,
-    json_dir: Union[str, Path],
     process_name: Union[str, None],
     input_fp: Union[str, Path],
     output_fp: Union[str, Path],
@@ -102,8 +94,6 @@ def write_output_metadata(
     ----------
     metadata : dict
         Parameters passed to the capsule.
-    json_dir : Union[str, Path]
-        Directory where the processing.json and data_description.json file is located.
     process_name : str
         Name of the process being recorded.
     input_fp : Union[str, Path]
@@ -113,63 +103,42 @@ def write_output_metadata(
     start_date_time : dt
         Start date and time of the process.
     """
-    proc_path = Path(json_dir) / "processing.json"
-
     dp = (
         [
             DataProcess(
                 name=process_name,
-                software_version=os.getenv("VERSION", ""),
+                process_type=ProcessName.DF_F_ESTIMATION,
+                stage=ProcessStage.PROCESSING,
                 start_date_time=start_date_time,
                 end_date_time=dt.now(),
-                input_location=str(input_fp),
-                output_location=str(output_fp),
-                code_url=(os.getenv("DFF_EXTRACTION_URL")),
-                parameters=metadata,
+                experimenters=["Ahad Bawany", "Johannes Friedrich"],
+                code=Code(
+                    url=os.getenv("DFF_EXTRACTION_URL"),
+                    version=os.getenv("VERSION", ""),
+                    parameters=metadata,
+                ),
+                output_path="fiber.nwb.zarr",
+                pipeline_name=os.getenv("PIPELINE_NAME", "")
             )
         ]
         if process_name is not None
         else []
     )
 
-    if proc_path.exists():
-        with open(proc_path, "r") as f:
-            proc_data = json.load(f)
+    pipeline_url = os.getenv("PIPELINE_URL", "")
+    pipeline_version = os.getenv("PIPELINE_VERSION", "")
 
-        proc_upgrader = ProcessingUpgrade(old_processing_model=proc_data)
-        processing = proc_upgrader.upgrade(
-            processor_full_name="Fiberphotometry Processing Pipeline"
-        )
-        p = processing.processing_pipeline
-        p.data_processes += dp
-    else:
-        p = PipelineProcess(
-            processor_full_name="Fiberphotometry Processing Pipeline",
-            data_processes=dp,
-        )
-        processing = Processing(processing_pipeline=p)
-    if u := os.getenv("PIPELINE_URL", ""):
-        p.pipeline_url = u
-    if v := os.getenv("PIPELINE_VERSION", ""):
-        p.pipeline_version = v
-    processing.write_standard_file(output_directory=Path(output_fp).parent)
-
-    dd_file = Path(json_dir) / "data_description.json"
-    if dd_file.exists():
-        with open(dd_file, "r") as f:
-            dd_data = json.load(f)
-        dd_data["modality"] = [
-            m for m in dd_data.get("modality", [])
-            if isinstance(m, dict) and m.get("abbreviation") == "fib"
-        ]
-        dd_upgrader = DataDescriptionUpgrade(old_data_description_dict=dd_data)
-        new_dd = dd_upgrader.upgrade()
-        derived_dd = DerivedDataDescription.from_data_description(
-            data_description=new_dd, process_name="processed"
-        )
-        derived_dd.write_standard_file(output_directory=Path(output_fp).parent)
-    else:
-        logging.error("no input data description")
+    processing = Processing(
+        data_processes=dp,
+        pipelines=[
+            Code(
+                name=os.getenv("PIPELINE_NAME", ""),
+                url=pipeline_url,
+                version=pipeline_version,
+            )
+        ],
+    )
+    processing.write_standard_file(output_directory=Path(output_fp))
 
 
 def plot_raw_dff_mc(
@@ -433,9 +402,13 @@ def plot_dff(
 
                     if len(dff_zoom) > 0:
                         y_margin = 0.1 * (dff_zoom.max() - dff_zoom.min())
-                        inset_ax.set_ylim(
-                            dff_zoom.min() - y_margin, dff_zoom.max() + y_margin
-                        )
+                        try:
+                            inset_ax.set_ylim(
+                                np.nanmin(dff_zoom) - y_margin,
+                                np.nanmax(dff_zoom) + y_margin,
+                            )
+                        except ValueError:
+                            pass
 
                     inset_ax.set_title(
                         f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
@@ -570,7 +543,10 @@ def plot_motion_correction(
         matplotlib.axes.Axes
             The axis with the PSD plot.
         """
-        psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
+        # np.asarray guards against pandas Series input: scipy>=1.15's welch
+        # slices internally with an Ellipsis+tuple index that Series.__getitem__
+        # doesn't support (raises KeyError), whereas ndarray input works fine.
+        psd = np.array(welch(np.asarray(data) * 100, nperseg=1024))[:, 1:-1]
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
@@ -659,14 +635,20 @@ def plot_motion_correction(
         ax = fig.add_subplot(
             gs[3 * c : 3 * c + 3, 2], sharex=(None if c == 0 else right_axes[0])
         )
-        sc = ax.scatter(
-            df_iso["filtered"] * 100,
-            df["filtered"] * 100,
-            s=0.02 + 0.08 * weight,
-            c=weight,
-            label="low-passed",
-            alpha=0.5,
-        )
+        valid = np.isfinite(weight)
+        if valid.any():
+            sc = ax.scatter(
+                df_iso["filtered"].values[valid] * 100,
+                df["filtered"].values[valid] * 100,
+                s=0.02 + 0.08 * weight[valid],
+                c=weight[valid],
+                label="low-passed",
+                alpha=0.5,
+            )
+        else:
+            sc = ax.scatter(
+                [], [], c=[], cmap="viridis", norm=Normalize(vmin=0, vmax=1)
+            )
         plt.colorbar(sc, fraction=0.05, pad=0.03).set_label("IRLS weight")
         x, y = np.array(ax.get_xlim()), ax.get_ylim()
         ax.plot(x, intercept * 100 + coef * x, c="k", label="regression")
@@ -706,8 +688,38 @@ def plot_motion_correction(
     plt.close()
 
 
-def create_metric(fiber, method, reference, value, motion=False):
-    """Create a QC metric for baseline or motion correction.
+def _calibration_ratio(signal: np.ndarray, f0: np.ndarray) -> tuple[float, float]:
+    """Negative-residual calibration ratio of a fitted baseline.
+
+    The median absolute negative residual (`signal - f0`) over what Gaussian
+    noise at the trace's own std would give (0.6745 * sigma), as in
+    `aind_ophys_dff_library.triexp_dff`'s model selection. Sigma is the MAD
+    estimate (`noise_std(..., method="mad")`): Welch can fall well below the
+    true noise on dense-transient traces and inflate the ratio. A ratio far
+    from 1 suggests a biased fit or an over- or under-aggressive robust fit
+    (it is not exactly 1 on real data with transients).
+
+    With `f0=0` an already-centered trace is checked for its own
+    residual-to-noise consistency.
+
+    Returns
+    -------
+    ratio, sigma : float
+        `ratio` is NaN if 10 or fewer residuals are negative, or sigma is 0.
+    """
+    resid = signal - f0
+    valid = np.isfinite(resid)
+    if not valid.any():
+        return np.nan, np.nan
+    sigma = float(noise_std(signal[valid], method="mad"))
+    deep = resid[valid & (resid < 0)]
+    if len(deep) <= 10 or sigma == 0:
+        return np.nan, sigma
+    return float(np.median(-deep) / (0.6745 * sigma)), sigma
+
+
+def create_metric(fiber, method, reference, value):
+    """Create the QC metric for the baseline fit.
 
     Parameters
     ----------
@@ -717,10 +729,8 @@ def create_metric(fiber, method, reference, value, motion=False):
         The preprocessing method used.
     reference : str
         Path to the reference image for this metric.
-    value : float | dict
+    value : dict
         Metric value.
-    motion : bool, optional
-        Whether this is a motion correction metric. Defaults to False.
 
     Returns
     -------
@@ -735,58 +745,219 @@ def create_metric(fiber, method, reference, value, motion=False):
             "$$b_{inf} \cdot (1 + b_{slow}\exp(-t/t_{slow}) + b_{fast}\exp(-t/t_{fast}) + "
             "b_{rapid}\exp(-t/t_{rapid})) \cdot (1 - b_{bright}\exp(-t/t_{bright}))$$"
         ),
+        "bright-v2": (
+            "$$b_{inf} + b_1\exp(-t/\\tau_1) + b_2\exp(-t/\\tau_2) + b_3\exp(-t/\\tau_3) + "
+            "b_{bright}\exp(-t/\\tau_{bright})$$"
+        ),
     }
     return QCMetric(
-        name=f"{'Motion' if motion else 'Baseline'} correction of ROI {fiber} using method '{method}'",
+        name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
         status_history=[
             QCStatus(
-                evaluator=(
-                    "Automatic" if (motion and value > 10) else "Pending review"
-                ),
+                evaluator="Pending review",
                 timestamp=dt.now(),
-                status=Status.FAIL if (motion and value > 10) else Status.PENDING,
+                status=Status.PENDING,
             )
         ],
         value=value,
-        description=(
-            "Maximum regression coefficient"
-            if motion
-            else "Baseline $$F_0(t)$$ fit with  " + baselines[method]
-        ),
+        description="Baseline $$F_0(t)$$ fit with  " + baselines[method],
+        **_metric_schema_fields(fiber),
     )
 
 
-def create_evaluation(method, metrics):
-    """Create a QC evaluation for a specific preprocessing method.
-
-    Parameters
-    ----------
-    method : str
-        The preprocessing method being evaluated.
-    metrics : list of QCMetric
-        The metrics included in this evaluation.
-
-    Returns
-    -------
-    QCEvaluation
-        The created quality control evaluation.
-    """
-    name = f"Preprocessing using method '{method}'"
-    return QCEvaluation(
-        name=name,
+def _metric_schema_fields(fiber):
+    """Schema 2.0 fields shared by every QCMetric: modality, stage, and the
+    "Fiber ROI" tag that `QualityControl.default_grouping` groups by."""
+    return dict(
         modality=Modality.FIB,
         stage=Stage.PROCESSING,
-        metrics=metrics,
-        allow_failed_metrics=False,
-        description=(
-            "Review the preprocessing plots to ensure accurate "
-            "baseline (dF/F) and motion correction."
-        ),
+        tags={"type": "FIP DFF Processing", "group": f"Fiber ROI {fiber}"},
     )
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name):
+#: The ratio is asymmetric around 1 (transient contamination pushes F0 up, so
+#: the upper tail is long), so the bounds apply to `ratio` itself, not to a
+#: symmetric `|ratio - 1|` band. Set for the MAD noise estimate, whose ratio is
+#: rarely below 1.
+CALIBRATION_PASS_LOWER = 0.9
+CALIBRATION_PASS_UPPER = 1.4
+CALIBRATION_FAIL_UPPER = 2.5
+CALIBRATION_FAIL_LOWER = 0.8
+
+
+def _worst_status(statuses):
+    """Worst per-channel status: FAIL > Pending > PASS (the
+    `aind_qcportal_schema.CheckboxMetric` convention)."""
+    if Status.FAIL in statuses:
+        return Status.FAIL
+    if not statuses or Status.PENDING in statuses:
+        return Status.PENDING
+    return Status.PASS
+
+
+def _auto_status_history(status):
+    """Single-entry status_history for an automatically-computed status."""
+    return [
+        QCStatus(
+            evaluator="Pending review" if status == Status.PENDING else "Automatic",
+            timestamp=dt.now(),
+            status=status,
+        )
+    ]
+
+
+def create_calibration_metric(fiber, method, ratio_by_channel):
+    """Create the calibration-ratio QC metric from `{channel: ratio}`.
+
+    dF/F stage only (see `_calibration_ratio`): after motion correction its
+    sigma assumes high-frequency noise that `motion_correct`'s final filter
+    suppresses, which would inflate the ratio by the attenuation.
+
+    Per channel, a NaN ratio stays Pending; otherwise FAIL outside
+    `[CALIBRATION_FAIL_LOWER, CALIBRATION_FAIL_UPPER]`, PASS in
+    `[CALIBRATION_PASS_LOWER, CALIBRATION_PASS_UPPER)`, else Pending. The
+    overall status is the worst across channels.
+    """
+    channel_statuses = []
+    for ratio in ratio_by_channel.values():
+        if not np.isfinite(ratio):
+            channel_statuses.append(Status.PENDING)
+        elif ratio < CALIBRATION_FAIL_LOWER or ratio > CALIBRATION_FAIL_UPPER:
+            channel_statuses.append(Status.FAIL)
+        elif CALIBRATION_PASS_LOWER <= ratio < CALIBRATION_PASS_UPPER:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    status = _worst_status(channel_statuses)
+
+    return QCMetric(
+        name=f"Calibration ratio of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}.png",
+        status_history=_auto_status_history(status),
+        value={"index": list(ratio_by_channel), "ratio": list(ratio_by_channel.values())},
+        description=(
+            "Per-channel calibration ratio (dF/F stage only, noise from the "
+            "MAD estimate). Expected near 1. Pending if NaN; else fails if ratio outside "
+            f"[{CALIBRATION_FAIL_LOWER:g}, {CALIBRATION_FAIL_UPPER:g}], "
+            f"passes if in [{CALIBRATION_PASS_LOWER:g}, "
+            f"{CALIBRATION_PASS_UPPER:g}), else Pending. Worst channel "
+            "status wins."
+        ),
+        **_metric_schema_fields(fiber),
+    )
+
+
+#: Worst |baseline level| [%] over the start/middle/end windows for
+#: auto-pass/fail; values in between stay Pending.
+BASELINE_LEVEL_PASS_PCT = 1.0
+BASELINE_LEVEL_FAIL_PCT = 5.0
+#: Below this fraction of baseline samples the trace is dominated by
+#: transients, the histogram mode is not the baseline, and the channel stays
+#: Pending.
+BASELINE_LEVEL_MIN_FRACTION = 0.9
+
+
+def create_baseline_level_metric(fiber, method, stats_by_channel):
+    """Create the baseline-level QC metric from `{channel: baseline_levels(...)}`.
+
+    Levels are fractions (None where the recording is too short) and are
+    reported in percent. Per-channel status as in the metric description.
+    """
+    channels = list(stats_by_channel)
+    keys = ("start", "mid", "end")
+    levels = np.array(
+        [
+            [stats_by_channel[ch][k] * 100 if stats_by_channel[ch] else np.nan for k in keys]
+            for ch in channels
+        ]
+    ).reshape(len(channels), len(keys))
+    worst = np.abs(levels).max(axis=1)
+    value = {"index": channels}
+    value.update({f"{k}_pct": levels[:, i].tolist() for i, k in enumerate(keys)})
+    value["worst_pct"] = worst.tolist()
+    value["frac_baseline"] = [
+        stats_by_channel[ch]["frac_baseline"] if stats_by_channel[ch] else np.nan
+        for ch in channels
+    ]
+
+    channel_statuses = []
+    for w, frac in zip(worst, value["frac_baseline"]):
+        if not np.isfinite(w) or frac < BASELINE_LEVEL_MIN_FRACTION:
+            channel_statuses.append(Status.PENDING)
+        elif w > BASELINE_LEVEL_FAIL_PCT:
+            channel_statuses.append(Status.FAIL)
+        elif w < BASELINE_LEVEL_PASS_PCT:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    return QCMetric(
+        name=f"Baseline level at start, middle and end of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}.png",
+        status_history=_auto_status_history(_worst_status(channel_statuses)),
+        value=value,
+        description=(
+            "Per-channel dF/F baseline level [%] in the first, middle and "
+            f"last {BASELINE_WINDOW_S // 60} min (a sixth of the recording if "
+            f"shorter than {6 * BASELINE_WINDOW_S // 60} min; mode of the 1 Hz low-passed "
+            "trace); 0 if F0 tracks the baseline, negative if F0 is too high. "
+            f"Pending below {BASELINE_LEVEL_MIN_FRACTION:g} baseline fraction "
+            "(transient-dominated) or if too short; else fails if the worst "
+            f"|level| > {BASELINE_LEVEL_FAIL_PCT:g}%, passes if < "
+            f"{BASELINE_LEVEL_PASS_PCT:g}%, else Pending. Worst channel status wins."
+        ),
+        **_metric_schema_fields(fiber),
+    )
+
+
+#: Noise inflation by the Iso subtraction (see `noise_inflation`) for
+#: auto-pass/fail; values in between stay Pending.
+NOISE_INFLATION_PASS = 1.1
+NOISE_INFLATION_FAIL = 2.0
+
+
+def create_motion_noise_metric(fiber, method, stats_by_channel):
+    """Create the motion-correction QC metric from `{channel: (coefficient, noise_inflation)}`.
+
+    Covers the non-Iso channels. Per-channel status as in the metric description.
+    """
+    channels = list(stats_by_channel)
+    value = {
+        "index": channels,
+        "coefficient": [stats_by_channel[ch][0] for ch in channels],
+        "noise_inflation": [stats_by_channel[ch][1] for ch in channels],
+    }
+    channel_statuses = []
+    for infl in value["noise_inflation"]:
+        if not np.isfinite(infl):
+            channel_statuses.append(Status.PENDING)
+        elif infl > NOISE_INFLATION_FAIL:
+            channel_statuses.append(Status.FAIL)
+        elif infl < NOISE_INFLATION_PASS:
+            channel_statuses.append(Status.PASS)
+        else:
+            channel_statuses.append(Status.PENDING)
+
+    return QCMetric(
+        name=f"Motion correction of ROI {fiber} using method '{method}'",
+        reference=f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
+        status_history=_auto_status_history(_worst_status(channel_statuses)),
+        value=value,
+        description=(
+            "Per-channel Iso regression coefficient and the factor by which "
+            "the Iso subtraction raises the MAD noise estimate of the "
+            "channel (1 = none). Pending if NaN; else fails if > "
+            f"{NOISE_INFLATION_FAIL:g}, passes if < {NOISE_INFLATION_PASS:g}, "
+            "else Pending. Worst channel status wins."
+        ),
+        **_metric_schema_fields(fiber),
+    )
+
+
+
+def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -794,15 +965,19 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
 
     NM_values = df_fip_iter["signal"].values
     timestamps = df_fip_iter["time_fip"].values
+    _t0 = time.perf_counter()
     NM_preprocessed, NM_fitting_params, NM_fit = chunk_processing(
         NM_values,
-        timestamps - timestamps[0],
+        timestamps - np.nanmin(timestamps),
         method=pp_name,
+        b_percentile=b_percentile,
+        trace_id=f"{channel}_{fiber_number}",
     )
+    fit_time_s = time.perf_counter() - _t0
     params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
     logging.info(
         f"Fitted parameters for {channel:>3}{fiber_number} "
-        f"using method '{pp_name}':  {params_str}"
+        f"using method '{pp_name}' ({fit_time_s:.3f}s):  {params_str}"
     )
     df_fip_iter.loc[:, "dFF"] = NM_preprocessed
     df_fip_iter.loc[:, "preprocess"] = pp_name
@@ -813,6 +988,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name):
             "preprocess": pp_name,
             "channel": channel,
             "fiber_number": fiber_number,
+            "fit_time_s": fit_time_s,
         }
     )
     df_pp_params_ses = pd.DataFrame(NM_fitting_params, index=[0])
@@ -827,6 +1003,7 @@ def _process1fiber(
     cutoff_freq_motion,
     cutoff_freq_noise,
     serial,
+    b_percentile=0.7,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -846,6 +1023,11 @@ def _process1fiber(
         Cutoff frequency for noise filtering.
     serial : bool
         Whether to process channels serially.
+    b_percentile : float, optional
+        Percentile for baseline calculation (see `tc_dFF`) -- 'poly'/'exp'/
+        'tri-exp' only, no effect on 'bright'/'bright-v2'. Default is
+        0.7 (median of the lowest 70%), matching `chunk_processing`'s own
+        default.
 
     Returns
     -------
@@ -864,10 +1046,13 @@ def _process1fiber(
     """
     # dF/F - process each channel
     if serial:
-        res = [_process1channel(ch, df_fip, fiber_number, pp_name) for ch in channels]
+        res = [
+            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile)
+            for ch in channels
+        ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name)
+            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, b_percentile)
             for ch in channels
         )
 
@@ -886,6 +1071,7 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
+        n_frame_to_cut=N_FRAME_TO_CUT,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -897,10 +1083,29 @@ def _process1fiber(
     return df_1fiber, df_pp_params, coeff, intercept, weight
 
 
+def write_fit_timing(df_pp_params: pd.DataFrame, output_dir: Path) -> None:
+    """Write per-(method, fiber, channel) fit timing to `dff_timing.csv`.
+
+    This is the time of each fit, not cumulative processing time. Under
+    `--parallel` (threading), `fit_time_s` can include contention with sibling
+    channels, so it is only precise for a serial (`--serial`, the default) run.
+    """
+    df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+        Path(output_dir) / "dff_timing.csv", index=False
+    )
+
+
 def process_nwb_file(
     nwb_file_path: Path,
     args,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict, dict, list]:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    dict,
+    dict,
+    dict,
+    list,
+]:
     """Process a single NWB file: compute dF/F and motion correction.
 
     Parameters
@@ -940,7 +1145,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2"]:
             continue
 
         if args.serial:
@@ -953,6 +1158,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             ]
@@ -966,6 +1172,7 @@ def process_nwb_file(
                     args.cutoff_freq_motion,
                     args.cutoff_freq_noise,
                     args.serial,
+                    args.b_percentile,
                 )
                 for fib in fiber_numbers
             )
@@ -1000,7 +1207,14 @@ def process_nwb_file(
             f" using methods {methods}"
         )
 
-    return df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods
+    return (
+        df_fip_pp,
+        df_pp_params,
+        coeffs,
+        intercepts,
+        weights,
+        methods,
+    )
 
 
 def _plot_both(
@@ -1015,7 +1229,8 @@ def _plot_both(
     cutoff_freq_motion,
     cutoff_freq_noise,
 ):
-    """Helper function to plot both dff and motion correction (must be at module level for pickling)."""
+    """Helper function to plot both dff and motion correction (must be at
+    module level for pickling)."""
     output_dir = Path(output_dir)
     plot_dff(
         df_fip_pp,
@@ -1040,13 +1255,11 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
-    ][
-        ["channel"]
-        + list(range({"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9}[method]))
-    ]
+    ][["channel"] + list(range(n_params[method]))]
     param_names = {
         "poly": [*"abcde"],
         "exp": [*"abcd"],
@@ -1062,8 +1275,22 @@ def _params_as_dict(fiber, method, df_pp_params):
             "t_rapid",
             "t_bright",
         ],
+        "bright-v2": [
+            "b_inf",
+            "b1",
+            "tau1",
+            "b2",
+            "tau2",
+            "b3",
+            "tau3",
+            "b_bright",
+            "tau_bright",
+        ],
     }
-    df.columns = ["channel"] + param_names[method]
+    # "index" (not "channel") so the QC portal uses channel names as the
+    # DataFrame's row index instead of a redundant data column -- same
+    # convention the other per-channel metrics use.
+    df.columns = ["index"] + param_names[method]
     return df.to_dict("list")
 
 
@@ -1101,7 +1328,7 @@ def generate_qc_plots(
     Returns
     -------
     QualityControl
-        Quality control object with evaluations.
+        Quality control object with metrics.
     """
     channels = df_fip_pp["channel"].unique()
     fibers = df_fip_pp["fiber_number"].unique()
@@ -1133,9 +1360,8 @@ def generate_qc_plots(
             delayed(_plot_both)(*args_tuple) for args_tuple in plot_args
         )
 
-    evaluations = []
+    metrics = []
     for method in methods:
-        metrics = []
         for fiber in fibers:
             metrics.append(
                 create_metric(
@@ -1145,30 +1371,94 @@ def generate_qc_plots(
                     _params_as_dict(fiber, method, df_pp_params),
                 )
             )
-            metrics.append(
-                create_metric(
-                    fiber,
-                    method,
-                    f"dff-qc/ROI{fiber}_dff-{method}_mc-iso-IRLS.png",
-                    max(v for k, v in coeffs[method][int(fiber)].items() if k != "Iso"),
-                    True,
-                )
-            )
-        evaluations.append(create_evaluation(method, metrics))
+
+            ratio_by_channel, level_by_channel, noise_by_channel = {}, {}, {}
+            for ch in channels:
+                df = df_fip_pp[
+                    (df_fip_pp.channel == ch)
+                    & (df_fip_pp.fiber_number == fiber)
+                    & (df_fip_pp.preprocess == method)
+                ]
+                if df.empty:
+                    continue
+                # Calibration ratio is "dff"-stage only -- see
+                # create_calibration_metric's docstring for why.
+                ratio_dff, _ = _calibration_ratio(df.dFF.values, 0)
+                ratio_by_channel[ch] = ratio_dff
+                fs = 1 / np.nanmedian(np.diff(df.time_fip.values))
+                level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
+                if ch != "Iso":
+                    noise_by_channel[ch] = (
+                        coeffs[method][int(fiber)][ch],
+                        noise_inflation(
+                            df.dFF.values,
+                            df.motion_corrected.values,
+                            MOTION_CORRECT_FS,
+                            args.cutoff_freq_noise,
+                        ),
+                    )
+            metrics.append(create_calibration_metric(fiber, method, ratio_by_channel))
+            metrics.append(create_baseline_level_metric(fiber, method, level_by_channel))
+            metrics.append(create_motion_noise_metric(fiber, method, noise_by_channel))
 
     # Create QC object and save
-    qc = QualityControl(evaluations=evaluations)
+    qc = QualityControl(
+        metrics=metrics, default_grouping=["type", "group"]
+    )
     qc.write_standard_file(output_directory=output_dir / "dff-qc")
     return qc
 
 
-if __name__ == "__main__":
+def _b_percentile_type(s: str) -> float | str:
+    """argparse type for --b_percentile: a fraction in (0, 1], or "mode"
+    -- tc_dFF's own long-standing (0, 1] fraction convention."""
+    if s.lower() == "mode":
+        return "mode"
+    try:
+        val = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f'--b_percentile must be a fraction in (0, 1] or "mode", got {s!r}'
+        )
+    if not (0 < val <= 1):
+        raise argparse.ArgumentTypeError(
+            f"--b_percentile must be in (0, 1], got {val}"
+        )
+    return val
+
+
+def _cutoff_freq_motion_type(s: str) -> float:
+    """argparse type for --cutoff_freq_motion: in (0, Nyquist), as `butter`
+    in `motion_correct` requires -- checked up front so a bad value fails
+    before any processing."""
+    val = float(s)
+    nyquist = MOTION_CORRECT_FS / 2
+    if not (0 < val < nyquist):
+        raise argparse.ArgumentTypeError(
+            f"--cutoff_freq_motion must be in (0, {nyquist:g}) Hz, got {val:g}"
+        )
+    return val
+
+
+def _cutoff_freq_noise_type(s: str) -> float:
+    """argparse type for --cutoff_freq_noise: positive. Values at or above
+    Nyquist are allowed and skip noise filtering (see `motion_correct`)."""
+    val = float(s)
+    if not val > 0:
+        raise argparse.ArgumentTypeError(
+            f"--cutoff_freq_noise must be > 0 Hz (>= {MOTION_CORRECT_FS / 2:g} "
+            f"disables noise filtering), got {val:g}"
+        )
+    return val
+
+
+def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--source_pattern",
         type=str,
-        default=r"/data/nwb/*.nwb",
+        default=r"/data/fib_raw_nwb/nwb.zarr",
         help="Source pattern to find nwb input files",
     )
     parser.add_argument(
@@ -1183,20 +1473,39 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dff_methods",
         nargs="+",
-        default=["poly", "exp", "bright"],
+        default=["poly", "exp", "bright-v2"],
         help=(
             "List of dff methods to run. Available options are:\n"
             "  'poly': Fit with 4th order polynomial using ordinary least squares (OLS)\n"
             "  'exp': Fit with biphasic exponential using OLS\n"
             "  'tri-exp': Fit with triphasic exponential using OLS\n"
-            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay (bleaching)] x "
-            "[Increasing saturating exponential (brightening)] using iteratively "
-            "reweighted least squares (IRLS)"
+            "  'bright': Robust fit with [Bi- or Tri-phasic exponential decay "
+            "(bleaching)] x [Increasing saturating exponential (brightening)] using "
+            "iteratively reweighted least squares (IRLS)\n"
+            "  'bright-v2': Robust fit with a sum-of-exponentials baseline (bleaching, "
+            "optionally with a brightening term) selected and fit via "
+            "aind_ophys_utils.nonlinear_fit (see utils.preprocess.tc_brightfit_v2); "
+            "much faster than 'bright'"
+        ),
+    )
+    parser.add_argument(
+        "--b_percentile",
+        type=_b_percentile_type,
+        default=0.7,
+        help=(
+            "Percentile (or 'mode') for baseline calculation in tc_dFF -- "
+            "'poly'/'exp'/'tri-exp' only, no effect on 'bright'/'bright-v2'. "
+            "A fraction in (0, 1]: the plain median of the lowest "
+            "`b_percentile` fraction of the whole ratio distribution is "
+            "subtracted (e.g. 0.7 == median of the lowest 70%%, 1.0 == plain "
+            "median of everything). 'mode': the half-sample mode of the "
+            "whole ratio distribution instead. Default is 0.7 (median of "
+            "the lowest 70%%), matching production."
         ),
     )
     parser.add_argument(
         "--cutoff_freq_motion",
-        type=float,
+        type=_cutoff_freq_motion_type,
         default=0.05,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter that's only "
@@ -1205,7 +1514,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cutoff_freq_noise",
-        type=float,
+        type=_cutoff_freq_noise_type,
         default=3,
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "
@@ -1224,29 +1533,55 @@ if __name__ == "__main__":
 
     # Setup logging
     setup_logging_from_metadata(fiber_path)
-
+    logging.info("Begin processing...", extra={"event_type": "stage_start"})
     # Create the destination directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-
+    nwb_path = output_dir / "fiber.nwb.zarr"
     # Find all files matching the source pattern
     source_paths = glob.glob(args.source_pattern)
+    if not source_paths:
+        logging.error(
+            "No NWB file found! Did you specify the correct source_pattern?"
+        )
+        raise FileNotFoundError(
+            f"No files matched source_pattern: {args.source_pattern}"
+        )
 
     # Copy each matching file to the destination directory
     for source_path in source_paths:
-        destination_path = output_dir / "fib.nwb.zarr"
+        destination_path = nwb_path
         shutil.copytree(source_path, destination_path)
 
-        # Check if fiber photometry data exists
-        has_fiber = (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        # Fiber data is present if the NWB has fiber signals in acquisition.
+        acquisition = zarr.open(str(destination_path), mode="r").get("acquisition")
+        has_fiber = acquisition is not None and any(
+            entry.startswith(("G_", "R_", "Iso_", "Signal_")) for entry in acquisition.keys()
+        )
+        if not has_fiber and (
+            (fiber_path / "FIP").is_dir() or (fiber_path / "fib").is_dir()
+        ):
+            logging.warning(
+                "Raw fiber directory is present but no fiber data "
+                f"was written to NWB file: {destination_path}. "
+                "This is likely due to an issue during NWB packaging, e.g. "
+                "'FIP data is present, but HARP timestamps are missing'"
+            )
 
         if has_fiber:
             # Print the path to ensure correctness
             logging.info(f"Processing NWB file: {destination_path}")
 
             # Process the NWB file
-            df_fip_pp, df_pp_params, coeffs, intercepts, weights, methods = (
-                process_nwb_file(destination_path, args)
-            )
+            (
+                df_fip_pp,
+                df_pp_params,
+                coeffs,
+                intercepts,
+                weights,
+                methods,
+            ) = process_nwb_file(destination_path, args)
+
+            write_fit_timing(df_pp_params, output_dir)
 
             # Generate QC plots if requested
             if not args.no_qc:
@@ -1278,17 +1613,19 @@ if __name__ == "__main__":
 
         write_output_metadata(
             metadata=vars(args),
-            json_dir=fiber_path,
             process_name=process_name,
             input_fp=source_path,
-            output_fp=output_dir / "fib.nwb.zarr",
+            output_fp=output_dir,
             start_date_time=start_time,
         )
 
-    # Iterate over all .json files in the source directory
-    for filename in ["subject.json", "procedures.json", "session.json", "rig.json"]:
-        src_file = fiber_path / filename
-        if src_file.exists():
-            dest_file = output_dir / filename
-            shutil.copy2(src_file, dest_file)
-            logging.info(f"Copied: {src_file} to {dest_file}")
+    logging.info("Capsule stage completed", extra={"event_type": "stage_complete"})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logging.error("Pipeline stage failed", extra={"event_type": "stage_error"})
+        logging.exception(e)
+        raise
