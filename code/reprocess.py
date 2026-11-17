@@ -407,11 +407,12 @@ if __name__ == "__main__":
         failures = Parallel(n_jobs=n_jobs)(
             delayed(_process1dataset_safe)(path, args, start_time) for path in source_paths
         )
-        failures = [path for path in failures if path is not None]
-        if failures:
-            # Every worker has finished (completed outputs are kept); exit
-            # nonzero so orchestration can tell an incomplete batch from success.
-            logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
-            sys.exit(1)
     else:
-        process1dataset(source_paths[0], args, start_time)
+        # Same wrapper, so a failure removes the partial output here too
+        failures = [_process1dataset_safe(source_paths[0], args, start_time)]
+    failures = [path for path in failures if path is not None]
+    if failures:
+        # Every dataset has finished (completed outputs are kept); exit nonzero so
+        # orchestration can tell an incomplete run from success.
+        logging.error("Failed datasets: %s", ", ".join(map(str, failures)))
+        sys.exit(1)
