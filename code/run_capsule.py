@@ -1031,6 +1031,7 @@ def create_metric(fiber, method, reference, value):
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
     }
+    baselines["bright-v2-signed"] = baselines["bright-v2"]
     return QCMetric(
         name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -1537,7 +1538,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2", "bright-v2-signed"]:
             continue
 
         if args.serial:
@@ -1666,7 +1667,7 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9}
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, "bright-v2-signed": 9}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
@@ -1698,6 +1699,7 @@ def _params_as_dict(fiber, method, df_pp_params):
             "tau_bright",
         ],
     }
+    param_names["bright-v2-signed"] = param_names["bright-v2"]
     # "index" (not "channel") so the QC portal uses channel names as the
     # DataFrame's row index instead of a redundant data column -- same
     # convention create_pregocue_metric uses for its field names.

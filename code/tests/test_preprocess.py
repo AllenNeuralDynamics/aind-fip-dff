@@ -120,3 +120,24 @@ def test_motion_correct_leaves_cut_frames_out_of_the_fit():
     assert np.isnan(weights["G"][:100]).all() and np.isfinite(weights["G"][100:]).all()
     mc, _, _, _, _ = motion_correct(dff, n_frame_to_cut=100)
     assert np.isfinite(mc.to_numpy()).all()  # the cut frames are still corrected
+
+
+def test_brightfit_v2_signed_third_follows_early_dip_then_rise():
+    """A cancelling pair of fast terms (early dip-then-rise) is out of reach of non-negative bleach amplitudes plus a
+    single brightening term; the experimental `signed_third` option follows it. On a plain trace it changes nothing."""
+    from utils.preprocess import tc_brightfit_v2
+
+    t = np.arange(40000) * 0.05
+    rng = np.random.default_rng(1)
+    f0 = (8200 + 126 * np.exp(-t / 3939) + 562 * np.exp(-t / 1246) - 1500 * np.exp(-t / 2773)
+          + 3799 * np.exp(-t / 39) - 3951 * np.exp(-t / 48.6))
+    y = f0 + rng.normal(0, 40, t.size)
+    early = t < 150
+    err = lambda f: np.sqrt(np.mean((f[early] - f0[early]) ** 2))
+    f_shipped, _ = tc_brightfit_v2(y, t)
+    f_signed, p_signed = tc_brightfit_v2(y, t, signed_third=True)
+    assert err(f_signed) < 0.1 * err(f_shipped)
+    assert (p_signed[[1, 3, 5]] < 0).any()  # a negative bleach amplitude, i.e. the pair
+
+    y_plain = 500 + 800 * np.exp(-t / 150) + rng.normal(0, 3, t.size)
+    np.testing.assert_array_equal(tc_brightfit_v2(y_plain, t)[0], tc_brightfit_v2(y_plain, t, signed_third=True)[0])

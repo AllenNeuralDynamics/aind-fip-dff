@@ -681,6 +681,56 @@ def _half_sample_mode(r: np.ndarray) -> float:
     return float(x.mean())
 
 
+# Experimental option `signed_third` of `tc_brightfit_v2` (method "bright-v2-signed"): the 3rd bleach
+# exponential may have a NEGATIVE amplitude, which lets two near-cancelling terms (a dip-then-rise bump) follow an
+# early transient that non-negative bleach amplitudes plus a single brightening term cannot.
+SIGNED_NEG_CAP_REL = 0.5  # negative amplitude >= -SIGNED_NEG_CAP_REL * b_inf
+SIGNED_NEG_TAU_MAX = 180.0  # the term with the signed amplitude stays a fast term (s)
+SIGNED_NEG_RATIO = 0.7  # a candidate with a negative amplitude must cut the early-window RSS below this ratio
+SIGNED_PAIR_STARTS = ((0.3, 35.0), (0.1, 60.0), (0.5, 40.0))  # (|amplitude| / b_inf, tau [s]) of cancelling pairs
+
+
+def _signed_bounds(bnd, x0, n_exp):
+    """`bnd` with signed amplitudes (and tau <= SIGNED_NEG_TAU_MAX) for the 3rd bleach term and for every bleach term
+    that has a negative amplitude in the warm start `x0`."""
+    b = [list(x) for x in bnd]
+    b_inf = max(abs(x0[0]), 1.0)
+    for i in range(n_exp):
+        k = 1 + 2 * i
+        if x0[k] < 0 or (i == n_exp - 1 and n_exp == 3):
+            b[k] = [-SIGNED_NEG_CAP_REL * b_inf, b[k][1]]
+            b[k + 1] = [b[k + 1][0], min(b[k + 1][1], SIGNED_NEG_TAU_MAX)]
+    return tuple(map(tuple, b))
+
+
+def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_eval, rss_thresh_3, kw_ds):
+    """Step 3 with a signed 3rd bleach term. Fits one positive single start (the shipped start) and three cancelling-pair
+    starts (slot 2 positive, new slot 3 negative, similar short taus); each candidate has to pass the acceptance test
+    (new tau < 180 s and early-window RSS ratio < `rss_thresh_3`, or < SIGNED_NEG_RATIO if an amplitude is negative); the
+    passing candidate with the lowest early RSS wins. Returns (params, n_exp)."""
+    n_exp_won = 2
+    ntau = 2 + 2 * n_exp_won
+    _, b3 = _init_sum_of_exps(tc_ds, n_exp=3, include_brightening=include_bright)
+    b3 = _signed_bounds(b3, np.concatenate([[params_ds[0]], np.zeros(len(b3) - 1)]), 3)
+    e_base = float(np.sum((tc_ds[:n_eval] - f0_best[:n_eval]) ** 2))
+    best = None
+    for kind, frac, tau in [("single", 0.05, 50.0)] + [("pair", f, t) for f, t in SIGNED_PAIR_STARTS]:
+        p0 = params_ds.copy()
+        if kind == "pair":
+            p0[3], p0[4] = frac * params_ds[0], tau * 1.2
+            frac = -frac
+        new = np.array([frac * params_ds[0], tau])
+        x03 = np.concatenate([p0[:-2], new, p0[-2:]]) if include_bright else np.concatenate([p0, new])
+        x03 = np.clip(x03, [q[0] for q in b3], [q[1] for q in b3])
+        f3, r3 = nonlinear_fit(tc_ds, ts_ds, x0=x03, bounds=b3, **kw_ds)
+        p3 = _sort_bleach_params(r3.x, 3, include_bright)
+        e3 = float(np.sum((tc_ds[:n_eval] - f3[:n_eval]) ** 2))
+        thresh = SIGNED_NEG_RATIO if (p3[1:7:2] < 0).any() else rss_thresh_3
+        if p3[ntau] < 180.0 and e3 < thresh * e_base and (best is None or e3 < best[0]):
+            best = (e3, p3)
+    return (best[1], 3) if best is not None else (params_ds, n_exp_won)
+
+
 def tc_brightfit_v2(
     trace: np.ndarray,
     timestamps: np.ndarray,
@@ -692,6 +742,7 @@ def tc_brightfit_v2(
     sigma_anneal_steps: int = 6,
     t_eval_exp3: float = 120.0,
     noise_method: str = "mad",
+    signed_third: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -740,6 +791,11 @@ def tc_brightfit_v2(
         `noise_std` method behind `fixed_sigma="auto"`: "mad" (default) or
         "welch". Welch can sit far below the MAD estimate on dense-transient
         traces, which puts the Tukey cutoffs c * sigma inside the noise.
+    signed_third : bool, optional
+        Experimental (method "bright-v2-signed"): the 3rd bleach term may have
+        a negative amplitude (tried from a positive start and three
+        cancelling-pair starts; a candidate with a negative amplitude must cut
+        the early-window RSS below `SIGNED_NEG_RATIO`). Default False.
 
     Returns
     -------
@@ -801,33 +857,40 @@ def tc_brightfit_v2(
         )
 
     # Step 3: try adding a 3rd bleach exponential (early-window RSS).
-    n_exp_next = n_exp_won + 1
-    # Clamped as in `_init_sum_of_exps`: this bleach amplitude's bound is
-    # (0, amp_cap), so this warm-start guess must stay >= 0 too.
-    new_exp = np.array([max(0.05 * params_ds[0], 0.0), 50.0])
-    x0_3 = (
-        np.concatenate([params_ds[:-2], new_exp, params_ds[-2:]])
-        if include_bright
-        else np.concatenate([params_ds, new_exp])
-    )
-    _, bnd_3 = _init_sum_of_exps(
-        tc_ds, n_exp=n_exp_next, include_brightening=include_bright
-    )
-    f0_3_ds, res_3_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_3, bounds=bnd_3, **kw_ds)
-    p3_sorted = _sort_bleach_params(res_3_ds.x, n_exp_next, include_bright)
-    tau_new = p3_sorted[2 + 2 * n_exp_won]
-    if (
-        _rss_ds_early(f0_3_ds) < rss_thresh[1] * _rss_ds_early(f0_ds_best)
-        and tau_new < 180.0
-    ):
-        params_ds = p3_sorted
-        n_exp_won = n_exp_next
+    if signed_third:
+        params_ds, n_exp_won = _try_signed_third_exp(
+            tc_ds, ts_ds, params_ds, f0_ds_best, include_bright, n_eval_ds, rss_thresh[1], kw_ds
+        )
+    else:
+        n_exp_next = n_exp_won + 1
+        # Clamped as in `_init_sum_of_exps`: this bleach amplitude's bound is
+        # (0, amp_cap), so this warm-start guess must stay >= 0 too.
+        new_exp = np.array([max(0.05 * params_ds[0], 0.0), 50.0])
+        x0_3 = (
+            np.concatenate([params_ds[:-2], new_exp, params_ds[-2:]])
+            if include_bright
+            else np.concatenate([params_ds, new_exp])
+        )
+        _, bnd_3 = _init_sum_of_exps(
+            tc_ds, n_exp=n_exp_next, include_brightening=include_bright
+        )
+        f0_3_ds, res_3_ds = nonlinear_fit(tc_ds, ts_ds, x0=x0_3, bounds=bnd_3, **kw_ds)
+        p3_sorted = _sort_bleach_params(res_3_ds.x, n_exp_next, include_bright)
+        tau_new = p3_sorted[2 + 2 * n_exp_won]
+        if (
+            _rss_ds_early(f0_3_ds) < rss_thresh[1] * _rss_ds_early(f0_ds_best)
+            and tau_new < 180.0
+        ):
+            params_ds = p3_sorted
+            n_exp_won = n_exp_next
     model_str = f"{n_exp_won}-exp{'+bright' if include_bright else ''}"
 
     # Step 4: final full-resolution IRLS fit, warm-started from the decimated winner.
     _, bnd_full = _init_sum_of_exps(
         trace, n_exp=n_exp_won, include_brightening=include_bright
     )
+    if signed_third and n_exp_won == 3:
+        bnd_full = _signed_bounds(bnd_full, params_ds, n_exp_won)
     f0, res_full = nonlinear_fit(
         trace, timestamps, x0=params_ds, bounds=bnd_full, **kw_full
     )
@@ -855,7 +918,7 @@ def _evaluate_baseline(method: str, coefs: np.ndarray, timestamps: np.ndarray) -
         return triple_exp(timestamps, coefs)
     if method == "bright":
         return baseline(timestamps, *coefs)
-    if method == "bright-v2":
+    if method in ("bright-v2", "bright-v2-signed"):
         return sum_of_exps(coefs, timestamps)
     raise ValueError(f"Unknown method {method!r}.")
 
@@ -947,8 +1010,10 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_brightfit(tc_valid, ts_valid)
         elif method == "bright-v2":
             tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid)
+        elif method == "bright-v2-signed":
+            tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid, signed_third=True)
 
-        if method in ("bright", "bright-v2"):
+        if method in ("bright", "bright-v2", "bright-v2-signed"):
             tc_dFoF = tc_valid / tc_fit - 1
         else:
             tc_estim = tc_valid - tc_fit
@@ -971,7 +1036,7 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9}[method]
+                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, "bright-v2-signed": 9}[method]
             )
         }
 
