@@ -135,9 +135,21 @@ def test_brightfit_v2_signed_third_follows_early_dip_then_rise():
     early = t < 150
     err = lambda f: np.sqrt(np.mean((f[early] - f0[early]) ** 2))
     f_shipped, _ = tc_brightfit_v2(y, t)
-    f_signed, p_signed = tc_brightfit_v2(y, t, signed_third=True)
+    diag = {}
+    f_signed, p_signed = tc_brightfit_v2(y, t, signed_third=True, diagnostics=diag)
+    assert diag["accepted"] == 2 and diag["best_neg_ratio"] < 0.7 and diag["best_neg_tau"] < 180
     assert err(f_signed) < 0.1 * err(f_shipped)
     assert (p_signed[[1, 3, 5]] < 0).any()  # a negative bleach amplitude, i.e. the pair
 
     y_plain = 500 + 800 * np.exp(-t / 150) + rng.normal(0, 3, t.size)
     np.testing.assert_array_equal(tc_brightfit_v2(y_plain, t)[0], tc_brightfit_v2(y_plain, t, signed_third=True)[0])
+
+
+def test_chunk_processing_signed_returns_selection_diagnostics():
+    y, t = _bleaching_trace()
+    _, params, _ = chunk_processing(y, t, method="bright-v2-signed", sampling_rate=20)
+    assert {k for k in params if isinstance(k, str)} == {
+        "diag_best_pos_ratio", "diag_best_neg_ratio", "diag_best_neg_tau", "diag_accepted"}
+    assert len([k for k in params if isinstance(k, int)]) == 9
+    _, params_v2, _ = chunk_processing(y, t, method="bright-v2", sampling_rate=20)
+    assert all(isinstance(k, int) for k in params_v2)

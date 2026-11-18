@@ -703,7 +703,7 @@ def _signed_bounds(bnd, x0, n_exp):
     return tuple(map(tuple, b))
 
 
-def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_eval, rss_thresh_3, kw_ds):
+def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_eval, rss_thresh_3, kw_ds, diagnostics=None):
     """Step 3 with a signed 3rd bleach term. Fits one positive single start (the shipped start) and three cancelling-pair
     starts (slot 2 positive, new slot 3 negative, similar short taus); each candidate has to pass the acceptance test
     (new tau < 180 s and early-window RSS ratio < `rss_thresh_3`, or < SIGNED_NEG_RATIO if an amplitude is negative); the
@@ -714,6 +714,7 @@ def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_ev
     b3 = _signed_bounds(b3, np.concatenate([[params_ds[0]], np.zeros(len(b3) - 1)]), 3)
     e_base = float(np.sum((tc_ds[:n_eval] - f0_best[:n_eval]) ** 2))
     best = None
+    cand = []  # (early RSS ratio, has a negative amplitude, new term's tau) of every candidate, accepted or not
     for kind, frac, tau in [("single", 0.05, 50.0)] + [("pair", f, t) for f, t in SIGNED_PAIR_STARTS]:
         p0 = params_ds.copy()
         if kind == "pair":
@@ -725,9 +726,22 @@ def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_ev
         f3, r3 = nonlinear_fit(tc_ds, ts_ds, x0=x03, bounds=b3, **kw_ds)
         p3 = _sort_bleach_params(r3.x, 3, include_bright)
         e3 = float(np.sum((tc_ds[:n_eval] - f3[:n_eval]) ** 2))
-        thresh = SIGNED_NEG_RATIO if (p3[1:7:2] < 0).any() else rss_thresh_3
+        has_neg = bool((p3[1:7:2] < 0).any())
+        cand.append((e3 / e_base if e_base > 0 else np.nan, has_neg, float(p3[ntau])))
+        thresh = SIGNED_NEG_RATIO if has_neg else rss_thresh_3
         if p3[ntau] < 180.0 and e3 < thresh * e_base and (best is None or e3 < best[0]):
             best = (e3, p3)
+    if diagnostics is not None:
+        # best (lowest) early RSS ratio among the candidates without / with a negative amplitude, whether accepted or
+        # not, and the new term's tau of the best negative one: lets a sweep ask what another gate would have done
+        pos, neg = [c for c in cand if not c[1]], [c for c in cand if c[1]]
+        bn = min(neg, key=lambda c: c[0]) if neg else None
+        diagnostics.update(
+            best_pos_ratio=min((c[0] for c in pos), default=np.nan),
+            best_neg_ratio=bn[0] if bn else np.nan,
+            best_neg_tau=bn[2] if bn else np.nan,
+            accepted=0 if best is None else (2 if (best[1][1:7:2] < 0).any() else 1),
+        )
     return (best[1], 3) if best is not None else (params_ds, n_exp_won)
 
 
@@ -743,6 +757,7 @@ def tc_brightfit_v2(
     t_eval_exp3: float = 120.0,
     noise_method: str = "mad",
     signed_third: bool = False,
+    diagnostics: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
     with a negative-amplitude brightening term) via `aind_ophys_utils`'s
@@ -796,6 +811,10 @@ def tc_brightfit_v2(
         a negative amplitude (tried from a positive start and three
         cancelling-pair starts; a candidate with a negative amplitude must cut
         the early-window RSS below `SIGNED_NEG_RATIO`). Default False.
+    diagnostics : dict, optional
+        With `signed_third`, filled with the model-selection diagnostics `best_pos_ratio`, `best_neg_ratio`,
+        `best_neg_tau` (early RSS ratios of the best candidate without / with a negative amplitude and the new
+        term's tau of the latter, accepted or not) and `accepted` (0 none, 1 positive, 2 negative).
 
     Returns
     -------
@@ -859,7 +878,7 @@ def tc_brightfit_v2(
     # Step 3: try adding a 3rd bleach exponential (early-window RSS).
     if signed_third:
         params_ds, n_exp_won = _try_signed_third_exp(
-            tc_ds, ts_ds, params_ds, f0_ds_best, include_bright, n_eval_ds, rss_thresh[1], kw_ds
+            tc_ds, ts_ds, params_ds, f0_ds_best, include_bright, n_eval_ds, rss_thresh[1], kw_ds, diagnostics
         )
     else:
         n_exp_next = n_exp_won + 1
@@ -990,6 +1009,7 @@ def chunk_processing(
             f"Processing {trace_id} with method {method}: dropping {n_dropped} "
             "non-finite sample(s) (signal or timestamps) before fitting."
         )
+    diag = {}  # model-selection diagnostics of "bright-v2-signed", returned as extra `diag_*` keys of the params
     try:
         if not valid.any():
             raise ValueError("every sample is non-finite (signal or timestamps) -- nothing to fit.")
@@ -1011,7 +1031,7 @@ def chunk_processing(
         elif method == "bright-v2":
             tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid)
         elif method == "bright-v2-signed":
-            tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid, signed_third=True)
+            tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid, signed_third=True, diagnostics=diag)
 
         if method in ("bright", "bright-v2", "bright-v2-signed"):
             tc_dFoF = tc_valid / tc_fit - 1
@@ -1027,6 +1047,7 @@ def chunk_processing(
             tc_fit[no_signal] = _evaluate_baseline(method, tc_coefs, ts[no_signal])
         tc_dFoF = tc_filling(tc_dFoF, n_frame_to_cut)
         tc_params = {i_coef: tc_coefs[i_coef] for i_coef in range(len(tc_coefs))}
+        tc_params.update({f"diag_{k}": v for k, v in diag.items()})
     except Exception as e:
         logging.warning(
             f"Processing {trace_id} with method {method} failed with Error {e}. Setting dF/F to nans."

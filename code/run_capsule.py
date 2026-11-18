@@ -1362,7 +1362,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
         trace_id=f"{channel}_{fiber_number}",
     )
     fit_time_s = time.perf_counter() - _t0
-    params_str = ", ".join(f"{v:.5g}" for v in NM_fitting_params.values())
+    params_str = ", ".join(f"{v:.5g}" for k, v in NM_fitting_params.items() if isinstance(k, int))
     logging.info(
         f"Fitted parameters for {channel:>3}{fiber_number} "
         f"using method '{pp_name}' ({fit_time_s:.3f}s):  {params_str}"
@@ -1478,7 +1478,8 @@ def write_fit_timing(df_pp_params: pd.DataFrame, output_dir: Path) -> None:
     `--parallel` (threading), `fit_time_s` can include contention with sibling
     channels, so it is only precise for a serial (`--serial`, the default) run.
     """
-    df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s"]].to_csv(
+    diag_cols = [c for c in df_pp_params.columns if str(c).startswith("diag_")]  # "bright-v2-signed" model selection
+    df_pp_params[["preprocess", "channel", "fiber_number", "fit_time_s", *diag_cols]].to_csv(
         Path(output_dir) / "dff_timing.csv", index=False
     )
 
