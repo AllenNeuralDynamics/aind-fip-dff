@@ -45,6 +45,15 @@ def test_baseline_levels_start_window_sees_a_short_early_misfit():
     assert abs(lv["mid"]) < 0.002
 
 
+def test_baseline_levels_early_means():
+    x = _trace()
+    x[: 30 * FS] -= 0.04
+    x[30 * FS : 120 * FS] += 0.02
+    lv = baseline_levels(x, FS)
+    assert abs(lv["early_0_30"] + 0.04) < 0.006
+    assert abs(lv["early_30_120"] - 0.02) < 0.006
+
+
 def test_baseline_levels_short_or_mostly_nonfinite_is_none():
     assert baseline_levels(_trace(minutes=10), FS) is None
     x = _trace()

@@ -1234,6 +1234,10 @@ def create_baseline_level_metric(fiber, method, stats_by_channel):
     value = {"index": channels}
     value.update({f"{k}_pct": levels[:, i].tolist() for i, k in enumerate(keys)})
     value["worst_pct"] = worst.tolist()
+    for k in ("early_0_30", "early_30_120"):  # experiment branch: mean dF/F [%] in seconds 0-30 and 30-120
+        value[f"{k}_pct"] = [
+            stats_by_channel[ch][k] * 100 if stats_by_channel[ch] else np.nan for ch in channels
+        ]
     value["frac_baseline"] = [
         stats_by_channel[ch]["frac_baseline"] if stats_by_channel[ch] else np.nan
         for ch in channels

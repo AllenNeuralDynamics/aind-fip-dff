@@ -52,6 +52,7 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
     dict or None
         `start`, `mid`, `end` (levels, same units as `dff`; the start window is
         `BASELINE_START_WINDOW_S` long, the others `BASELINE_WINDOW_S`) and
+        `early_0_30`, `early_30_120` (mean dF/F over seconds 0-30 and 30-120), and
         `frac_baseline`, the fraction of samples within 2 robust sigma above
         a 60 s running median (low for traces dominated by transients, where
         the mode is not the baseline). None if fewer than `BASELINE_MIN_DURATION_S`
@@ -80,6 +81,10 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
         "mid": _mode(xf[mid : mid + w], scale),
         "end": _mode(xf[n - w :], scale),
         "frac_baseline": float((resid < 2 * scale).mean()),
+        # mean of the 1 Hz low-passed trace over the first 30 s and the following 90 s (the early-bias measure
+        # of the signed-third-term comparison)
+        "early_0_30": float(xf[: int(30 * fs)].mean()),
+        "early_30_120": float(xf[int(30 * fs) : int(120 * fs)].mean()),
     }
 
 
