@@ -14,6 +14,9 @@ from utils.preprocess import filtfilt_finite
 #: Length of the start/middle/end windows of `baseline_levels` [s], capped at
 #: a sixth of the recording (so recordings shorter than 6 windows use shorter ones).
 BASELINE_WINDOW_S = 300
+#: Length of the start window [s] (same cap). Shorter than the others: an early F0 misfit that lasts ~100 s is
+#: invisible to the mode over 300 s, which sits at the settled level.
+BASELINE_START_WINDOW_S = 100
 #: Recordings shorter than this [s] get no baseline levels.
 BASELINE_MIN_DURATION_S = 1000
 
@@ -47,7 +50,8 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
     Returns
     -------
     dict or None
-        `start`, `mid`, `end` (levels, same units as `dff`) and
+        `start`, `mid`, `end` (levels, same units as `dff`; the start window is
+        `BASELINE_START_WINDOW_S` long, the others `BASELINE_WINDOW_S`) and
         `frac_baseline`, the fraction of samples within 2 robust sigma above
         a 60 s running median (low for traces dominated by transients, where
         the mode is not the baseline). None if fewer than `BASELINE_MIN_DURATION_S`
@@ -69,9 +73,10 @@ def baseline_levels(dff: np.ndarray, fs: float) -> dict | None:
     if not scale > 0:
         return None
     w = min(int(BASELINE_WINDOW_S * fs), n // 6)
+    w_start = min(int(BASELINE_START_WINDOW_S * fs), n // 6)
     mid = n // 2 - w // 2
     return {
-        "start": _mode(xf[:w], scale),
+        "start": _mode(xf[:w_start], scale),
         "mid": _mode(xf[mid : mid + w], scale),
         "end": _mode(xf[n - w :], scale),
         "frac_baseline": float((resid < 2 * scale).mean()),

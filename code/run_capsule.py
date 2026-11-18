@@ -47,7 +47,7 @@ from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, motion_correct
-from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+from utils.qc_stats import BASELINE_START_WINDOW_S, BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
@@ -1256,7 +1256,8 @@ def create_baseline_level_metric(fiber, method, stats_by_channel):
         status_history=_auto_status_history(_worst_status(channel_statuses)),
         value=value,
         description=(
-            "Per-channel dF/F baseline level [%] in the first, middle and "
+            "Per-channel dF/F baseline level [%] in the first "
+            f"{BASELINE_START_WINDOW_S} s, and in the middle and "
             f"last {BASELINE_WINDOW_S // 60} min (a sixth of the recording if "
             f"shorter than {6 * BASELINE_WINDOW_S // 60} min; mode of the 1 Hz low-passed "
             "trace); 0 if F0 tracks the baseline, negative if F0 is too high. "

@@ -35,6 +35,16 @@ def test_baseline_levels_recover_offsets():
     assert lv["frac_baseline"] > 0.9
 
 
+def test_baseline_levels_start_window_sees_a_short_early_misfit():
+    """An offset in the first 100 s only (an early F0 misfit): the 100 s start window reads it; a 300 s window would
+    sit at the settled level."""
+    x = _trace()
+    x[: 100 * FS] -= 0.03
+    lv = baseline_levels(x, FS)
+    assert abs(lv["start"] + 0.03) < 0.003
+    assert abs(lv["mid"]) < 0.002
+
+
 def test_baseline_levels_short_or_mostly_nonfinite_is_none():
     assert baseline_levels(_trace(minutes=10), FS) is None
     x = _trace()
