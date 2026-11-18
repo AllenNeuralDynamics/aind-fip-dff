@@ -12,7 +12,7 @@ The following baseline estimation methods are implemented (the default is `poly`
   Fitting starts with a biphasic exponential, and the brightening and/or 3rd exponential are only included if they substantially improve the fit.
 - "bright-v2": Robust fit with a sum of exponentials, $b_{\infty} + \sum_{i=1}^{3} b_i e^{-t/\tau_i} + b_{bright} e^{-t/\tau_{bright}}$ (bleaching terms with an optional negative-amplitude brightening term), selected on a decimated trace and refit at full resolution with an asymmetric Tukey biweight M-estimator ($c_{pos}=c_{neg}=4$) via `aind_ophys_utils.nonlinear_fit`. The scale of the weights is a MAD-based noise estimate (`noise_std(method="mad")`), annealed in from the OLS residuals over 6 steps. Much faster than "bright" (about 50x less fit compute).
 
-For "poly", "exp" and "tri-exp", ΔF/F = F / fit − r, where r is the median of the lowest `b_percentile` fraction of F / fit (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" ignore `--b_percentile`.
+For "poly", "exp" and "tri-exp", ΔF/F = (F − fit) / F_base − r, where F_base is a sliding baseline of F (`tc_slidingbase`) and r is the median of the lowest `b_percentile` fraction of (F − fit) / F_base (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" use ΔF/F = F / fit − 1 and ignore `--b_percentile`.
 
 ### Motion Correction
 Motion correction is carried out in three to four steps:
@@ -32,15 +32,15 @@ Motion correction is carried out in three to four steps:
 - `--serial`: Do not parallelize fibers and channels.
 - `--no_qc`: Skip the QC plots and metrics.
 
-In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset; a failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
+In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset, a new derived asset named `<original input>_processed_<time of the run>` with the input in `source_data`. Its `processing.json` and `quality_control.json` keep the earlier content: the ΔF/F process is appended to the history and the ΔF/F QC metrics are replaced. A failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
 
 ## Output
 
-The primary output is the updated NWB file, which includes the newly processed data:
+The primary output is the updated NWB file, `fiber.nwb.zarr` in the output directory, which includes the newly processed data:
 - **Baseline-corrected traces (ΔF/F)**: Stored as `[Channel]_[ROI]_dff-[method]` (e.g., `G_1_dff-poly`). 
 - **Fully preprocessed traces (ΔF/F with motion correction)**: Stored as `[Channel]_[ROI]_dff-[method]_mc-[method]` (e.g., `G_1_dff-poly_mc-iso-IRLS`). 
 
-Besides the NWB file, the output directory contains `processing.json`, `dff_timing.csv` and the derived `data_description.json`. If the data-description upgrade fails (e.g. the input metadata has fields the schema does not allow), the run fails and the log names the file.
+Besides the NWB file, the output directory contains `processing.json` and `dff_timing.csv`. The capsule does not write a `data_description.json`.
 
 For quality control (QC), the `dff-qc` subdirectory contains visualizations of the processing steps for each fiber and ΔF/F method.   
 - The ΔF/F figures (e.g., `ROI0_dff-bright-v2.png`) display raw traces with fitted baseline (F<sub>0</sub>) and ΔF/F traces of all channels.   
@@ -51,12 +51,10 @@ For quality control (QC), the `dff-qc` subdirectory contains visualizations of t
     - The motion corrected, and optionally noise filtered, ΔF/F trace
   * In the middle: The corresponding power spectral densities with motion and (if applicable) noise cutoff frequencies indicated as dashed vertical lines
   * On the right: A scatter plot of color vs isosbestic ΔF/F values for both the original and low-pass filtered (`cutoff_freq_motion`) data with the fitted regression line
-- The pre-event regression figures (`ROI0_dff-bright-v2_pregocue-regression[_mc-iso-IRLS].png`) plot each trial's mean ΔF/F before the GoCue (the delay period; else the second before the reward) against time, with a trend line, to show baseline drift.
 
 Within the `dff-qc` subdirectory is also the `quality_control.json` for the [aind-qc-portal](https://github.com/AllenNeuralDynamics/aind-qc-portal), with one status per ROI and method (worst channel wins). The metrics are:
 - **Calibration ratio**: the fit's median negative residual over what Gaussian noise would give; about 1 for a well-placed baseline.
 - **Baseline level**: the mode of the 1 Hz low-passed ΔF/F at the start, middle and end of the session; negative if F<sub>0</sub> is too high.
 - **Motion correction**: noise inflation of the corrected over the uncorrected trace.
-- **Pre-GoCue drift**: the mean pre-event ΔF/F and its trend across trials.
 
 Each metric's description in `quality_control.json` gives its pass and fail limits (constants in `run_capsule.py`).
