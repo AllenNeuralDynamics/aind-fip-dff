@@ -153,3 +153,44 @@ def test_chunk_processing_signed_returns_selection_diagnostics():
     assert len([k for k in params if isinstance(k, int)]) == 9
     _, params_v2, _ = chunk_processing(y, t, method="bright-v2", sampling_rate=20)
     assert all(isinstance(k, int) for k in params_v2)
+
+
+def test_signed_third_tie_break_prefers_positive_candidate_in_near_tie(monkeypatch):
+    """The four start candidates are stubbed to early RSS ratios (pos 0.50, pairs 0.40-0.49): with a tie-break margin a
+    negative candidate wins only if its ratio is below margin x the best positive one."""
+    import utils.preprocess as pp
+
+    n = 100
+    tc = np.ones(n)  # residual of the stub fits is (1 - f) so the early RSS ratio is (1 - f)^2 with f0_best = 0
+    ts = np.arange(n, dtype=float)
+    p_start = np.array([1.0, 0.1, 500.0, 0.1, 100.0])
+
+    def run(ratios, margin):
+        fits = iter(ratios)
+
+        def stub(tc_ds, ts_ds, x0, bounds, **kw):
+            ratio, neg = next(fits)
+            x = np.array([1.0, 0.1, 500.0, 0.1, 100.0, -0.1 if neg else 0.1, 20.0])
+            return np.full(n, 1 - np.sqrt(ratio)), type("R", (), {"x": x})()
+
+        monkeypatch.setattr(pp, "nonlinear_fit", stub)
+        params, n_exp = pp._try_signed_third_exp(tc, ts, p_start, np.zeros(n), False, n, 0.97, {}, None, margin)
+        return n_exp, bool((params[1:7:2] < 0).any())
+
+    near_tie = [(0.50, False), (0.46, True), (0.90, True), (0.95, True)]  # negative only 8% better
+    clear_win = [(0.50, False), (0.30, True), (0.90, True), (0.95, True)]  # negative 40% better
+    assert run(near_tie, None) == (3, True)  # no tie-break: lowest RSS wins
+    assert run(near_tie, 0.9) == (3, False)  # near-tie goes to the positive candidate
+    assert run(clear_win, 0.9) == (3, True)  # a clear improvement keeps the negative one
+    assert run([(0.80, False), (0.40, True), (0.95, True), (0.95, True)], 0.75) == (3, True)  # both pass, the negative one is far enough ahead (0.40 < 0.75 x 0.80)
+    assert run([(0.99, False), (0.40, True), (0.95, True), (0.95, True)], 0.75) == (3, True)  # positive fails the gate
+
+
+def test_chunk_processing_tie_methods_match_signed_when_negative_wins_clearly():
+    from utils.preprocess import SIGNED_METHODS
+
+    assert SIGNED_METHODS["bright-v2-signed"] is None and SIGNED_METHODS["bright-v2-signed-tie75"] < SIGNED_METHODS["bright-v2-signed-tie90"] < 1
+    y, t = _bleaching_trace()
+    for m in SIGNED_METHODS:
+        _, params, _ = chunk_processing(y, t, method=m, sampling_rate=20)
+        assert len([k for k in params if isinstance(k, int)]) == 9 and "diag_accepted" in params

@@ -688,6 +688,10 @@ SIGNED_NEG_CAP_REL = 0.5  # negative amplitude >= -SIGNED_NEG_CAP_REL * b_inf
 SIGNED_NEG_TAU_MAX = 180.0  # the term with the signed amplitude stays a fast term (s)
 SIGNED_NEG_RATIO = 0.7  # a candidate with a negative amplitude must cut the early-window RSS below this ratio
 SIGNED_PAIR_STARTS = ((0.3, 35.0), (0.1, 60.0), (0.5, 40.0))  # (|amplitude| / b_inf, tau [s]) of cancelling pairs
+#: Methods that run the signed 3rd term. The value is the tie-break margin (None = off): if a candidate without a negative
+#: amplitude passes too, one with a negative amplitude wins only if its early RSS is below margin x that of the best
+#: passing positive candidate (a near-tie goes to the positive term, e.g. a plain start-up decay).
+SIGNED_METHODS = {"bright-v2-signed": None, "bright-v2-signed-tie90": 0.9, "bright-v2-signed-tie75": 0.75}
 
 
 def _signed_bounds(bnd, x0, n_exp):
@@ -703,17 +707,19 @@ def _signed_bounds(bnd, x0, n_exp):
     return tuple(map(tuple, b))
 
 
-def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_eval, rss_thresh_3, kw_ds, diagnostics=None):
+def _try_signed_third_exp(
+    tc_ds, ts_ds, params_ds, f0_best, include_bright, n_eval, rss_thresh_3, kw_ds, diagnostics=None, tie_margin=None
+):
     """Step 3 with a signed 3rd bleach term. Fits one positive single start (the shipped start) and three cancelling-pair
     starts (slot 2 positive, new slot 3 negative, similar short taus); each candidate has to pass the acceptance test
     (new tau < 180 s and early-window RSS ratio < `rss_thresh_3`, or < SIGNED_NEG_RATIO if an amplitude is negative); the
-    passing candidate with the lowest early RSS wins. Returns (params, n_exp)."""
+    passing candidate with the lowest early RSS wins (with `tie_margin`: see SIGNED_METHODS). Returns (params, n_exp)."""
     n_exp_won = 2
     ntau = 2 + 2 * n_exp_won
     _, b3 = _init_sum_of_exps(tc_ds, n_exp=3, include_brightening=include_bright)
     b3 = _signed_bounds(b3, np.concatenate([[params_ds[0]], np.zeros(len(b3) - 1)]), 3)
     e_base = float(np.sum((tc_ds[:n_eval] - f0_best[:n_eval]) ** 2))
-    best = None
+    best = best_pos = best_neg = None
     cand = []  # (early RSS ratio, has a negative amplitude, new term's tau) of every candidate, accepted or not
     for kind, frac, tau in [("single", 0.05, 50.0)] + [("pair", f, t) for f, t in SIGNED_PAIR_STARTS]:
         p0 = params_ds.copy()
@@ -729,8 +735,15 @@ def _try_signed_third_exp(tc_ds, ts_ds, params_ds, f0_best, include_bright, n_ev
         has_neg = bool((p3[1:7:2] < 0).any())
         cand.append((e3 / e_base if e_base > 0 else np.nan, has_neg, float(p3[ntau])))
         thresh = SIGNED_NEG_RATIO if has_neg else rss_thresh_3
-        if p3[ntau] < 180.0 and e3 < thresh * e_base and (best is None or e3 < best[0]):
-            best = (e3, p3)
+        if p3[ntau] < 180.0 and e3 < thresh * e_base:
+            if best is None or e3 < best[0]:
+                best = (e3, p3)
+            if has_neg and (best_neg is None or e3 < best_neg[0]):
+                best_neg = (e3, p3)
+            if not has_neg and (best_pos is None or e3 < best_pos[0]):
+                best_pos = (e3, p3)
+    if tie_margin is not None and best_pos is not None and best_neg is not None:
+        best = best_neg if best_neg[0] < tie_margin * best_pos[0] else best_pos
     if diagnostics is not None:
         # best (lowest) early RSS ratio among the candidates without / with a negative amplitude, whether accepted or
         # not, and the new term's tau of the best negative one: lets a sweep ask what another gate would have done
@@ -757,6 +770,7 @@ def tc_brightfit_v2(
     t_eval_exp3: float = 120.0,
     noise_method: str = "mad",
     signed_third: bool = False,
+    signed_tie_margin: float | None = None,
     diagnostics: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit trace with a sum-of-exponentials baseline (bleaching, optionally
@@ -806,6 +820,8 @@ def tc_brightfit_v2(
         `noise_std` method behind `fixed_sigma="auto"`: "mad" (default) or
         "welch". Welch can sit far below the MAD estimate on dense-transient
         traces, which puts the Tukey cutoffs c * sigma inside the noise.
+    signed_tie_margin : float, optional
+        With `signed_third`: tie-break margin (see `SIGNED_METHODS`). Default None (off).
     signed_third : bool, optional
         Experimental (method "bright-v2-signed"): the 3rd bleach term may have
         a negative amplitude (tried from a positive start and three
@@ -878,7 +894,8 @@ def tc_brightfit_v2(
     # Step 3: try adding a 3rd bleach exponential (early-window RSS).
     if signed_third:
         params_ds, n_exp_won = _try_signed_third_exp(
-            tc_ds, ts_ds, params_ds, f0_ds_best, include_bright, n_eval_ds, rss_thresh[1], kw_ds, diagnostics
+            tc_ds, ts_ds, params_ds, f0_ds_best, include_bright, n_eval_ds, rss_thresh[1], kw_ds, diagnostics,
+            signed_tie_margin,
         )
     else:
         n_exp_next = n_exp_won + 1
@@ -937,7 +954,7 @@ def _evaluate_baseline(method: str, coefs: np.ndarray, timestamps: np.ndarray) -
         return triple_exp(timestamps, coefs)
     if method == "bright":
         return baseline(timestamps, *coefs)
-    if method in ("bright-v2", "bright-v2-signed"):
+    if method == "bright-v2" or method in SIGNED_METHODS:
         return sum_of_exps(coefs, timestamps)
     raise ValueError(f"Unknown method {method!r}.")
 
@@ -1030,10 +1047,12 @@ def chunk_processing(
             tc_fit, tc_coefs = tc_brightfit(tc_valid, ts_valid)
         elif method == "bright-v2":
             tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid)
-        elif method == "bright-v2-signed":
-            tc_fit, tc_coefs = tc_brightfit_v2(tc_valid, ts_valid, signed_third=True, diagnostics=diag)
+        elif method in SIGNED_METHODS:
+            tc_fit, tc_coefs = tc_brightfit_v2(
+                tc_valid, ts_valid, signed_third=True, signed_tie_margin=SIGNED_METHODS[method], diagnostics=diag
+            )
 
-        if method in ("bright", "bright-v2", "bright-v2-signed"):
+        if method in ("bright", "bright-v2") or method in SIGNED_METHODS:
             tc_dFoF = tc_valid / tc_fit - 1
         else:
             tc_estim = tc_valid - tc_fit
@@ -1057,7 +1076,7 @@ def chunk_processing(
         tc_params = {
             i_coef: np.nan
             for i_coef in range(
-                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, "bright-v2-signed": 9}[method]
+                {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, **dict.fromkeys(SIGNED_METHODS, 9)}[method]
             )
         }
 

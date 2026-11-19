@@ -46,7 +46,7 @@ from scipy.stats import linregress, ttest_1samp
 from scipy.signal import butter, sosfiltfilt, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, motion_correct
+from utils.preprocess import SIGNED_METHODS, chunk_processing, motion_correct
 from utils.qc_stats import BASELINE_START_WINDOW_S, BASELINE_WINDOW_S, baseline_levels, noise_inflation
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
@@ -1031,7 +1031,8 @@ def create_metric(fiber, method, reference, value):
             "b_{bright}\exp(-t/\\tau_{bright})$$"
         ),
     }
-    baselines["bright-v2-signed"] = baselines["bright-v2"]
+    for _m in SIGNED_METHODS:
+        baselines[_m] = baselines["bright-v2"]
     return QCMetric(
         name=f"Baseline correction of ROI {fiber} using method '{method}'",
         reference=reference,
@@ -1544,7 +1545,7 @@ def process_nwb_file(
     channels = channels[~pd.isna(channels)]
 
     for pp_name in args.dff_methods:
-        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2", "bright-v2-signed"]:
+        if pp_name not in ["poly", "exp", "tri-exp", "bright", "bright-v2", *SIGNED_METHODS]:
             continue
 
         if args.serial:
@@ -1673,7 +1674,7 @@ def _plot_both(
 
 def _params_as_dict(fiber, method, df_pp_params):
     """Helper function to convert parameters to dict (must be at module level for pickling)."""
-    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, "bright-v2-signed": 9}
+    n_params = {"poly": 5, "exp": 4, "tri-exp": 7, "bright": 9, "bright-v2": 9, **dict.fromkeys(SIGNED_METHODS, 9)}
     df = df_pp_params[
         (df_pp_params["fiber_number"] == str(fiber))
         & (df_pp_params["preprocess"] == method)
@@ -1705,7 +1706,8 @@ def _params_as_dict(fiber, method, df_pp_params):
             "tau_bright",
         ],
     }
-    param_names["bright-v2-signed"] = param_names["bright-v2"]
+    for _m in SIGNED_METHODS:
+        param_names[_m] = param_names["bright-v2"]
     # "index" (not "channel") so the QC portal uses channel names as the
     # DataFrame's row index instead of a redundant data column -- same
     # convention create_pregocue_metric uses for its field names.
