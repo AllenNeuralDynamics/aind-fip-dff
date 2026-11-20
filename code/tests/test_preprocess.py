@@ -75,6 +75,20 @@ def test_evaluate_baseline_reproduces_the_fit(method):
     np.testing.assert_allclose(_evaluate_baseline(method, coefs, t), fit, rtol=1e-12)
 
 
+@pytest.mark.parametrize("method", ["poly", "exp", "bright-v2"])
+def test_chunk_processing_start_up_crop_is_nan(method):
+    """The cropped start-up frames are NaN in dF/F and baseline; the rest is the fit of the cropped trace."""
+    tc, t = _bleaching_trace()
+    tc[:100] += 400 * np.exp(-np.arange(100) / 20)  # a start-up transient
+    dff, _, fit = chunk_processing(tc, t, method=method)  # crops 100 frames by default
+    assert len(dff) == len(fit) == len(tc)
+    assert np.isnan(dff[:100]).all() and np.isnan(fit[:100]).all()
+    assert np.isfinite(dff[100:]).all() and np.isfinite(fit[100:]).all()
+    dff_ref, _, fit_ref = chunk_processing(tc[100:], t[100:], method=method, n_frame_to_cut=0)
+    np.testing.assert_array_equal(dff[100:], dff_ref)
+    np.testing.assert_array_equal(fit[100:], fit_ref)
+
+
 def test_chunk_processing_without_valid_frames_gives_nans(caplog):
     dff, _, fit = chunk_processing(np.full(500, np.nan), np.arange(500) * 0.05, method="poly")
     assert np.isnan(dff).all() and np.isnan(fit).all()
@@ -102,6 +116,7 @@ def test_motion_correct_ignores_nonfinite_frames():
     dff.loc[2900:3400, "G"] = np.nan  # a longer one, where Iso is finite
     dff.loc[2500, "Iso"] = np.inf  # a frame without Iso
     dff.loc[3500:, "Iso"] = np.nan  # an Iso tail
+    dff.iloc[:100] = np.nan  # a NaN start-up
     mc, _, coef, _, weights = motion_correct(dff)
     no_iso = ~np.isfinite(dff["Iso"])
     for ch in ("G", "R"):

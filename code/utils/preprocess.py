@@ -72,8 +72,8 @@ def tc_dFF(tc: np.ndarray, tc_base: np.ndarray, b_percentile: float | str) -> np
 
 
 def tc_filling(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
-    """Fill in the gap left by cropping out the first few timesteps."""
-    return np.append(np.ones([n_frame_to_cut, 1]) * tc[0], tc)
+    """Restore the length of a cropped trace with NaN for the `n_frame_to_cut` cropped frames."""
+    return np.append(np.full(n_frame_to_cut, np.nan), tc)
 
 
 def triple_exp(x, params):
@@ -887,8 +887,8 @@ def chunk_processing(
         Method to preprocess the data. Options: poly, exp, tri-exp, bright,
         bright-v2. Default is "poly".
     n_frame_to_cut : int, optional
-        Number of frames to crop from the beginning of the signal.
-        Default is 100.
+        Number of frames to crop from the beginning of the signal. They get
+        NaN dF/F and baseline. Default is 100.
     kernel_size : int, optional
         Size of the kernel for median filtering. Default is 1.
     sampling_rate : float, optional
@@ -909,11 +909,11 @@ def chunk_processing(
     -------
     tuple
         - tc_dFoF : np.ndarray
-            dF/F of fiber photometry signal.
+            dF/F of fiber photometry signal (NaN for the cropped start-up frames).
         - tc_params : dict
             Dictionary with the parameters of the preprocessing.
-        - tc_fit_filled : np.ndarray
-            The fitted baseline, including the filled beginning portion.
+        - tc_fit : np.ndarray
+            The fitted baseline (NaN for the cropped start-up frames).
     """
     tc_cropped = tc_crop(tc, n_frame_to_cut)
     ts = tc_crop(timestamps, n_frame_to_cut)
