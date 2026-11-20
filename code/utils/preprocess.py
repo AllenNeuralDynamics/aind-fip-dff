@@ -23,12 +23,15 @@ def n_frames_to_cut(timestamps: np.ndarray, crop_start_s: float) -> int:
     """Number of frames covering the first `crop_start_s` seconds.
 
     The frame rate is `1 / median(diff(timestamps))`, which is robust to dropped frames and
-    NaN timestamps. At most the number of timestamps (the whole trace).
+    NaN timestamps. Raises `ValueError` if the crop would remove every frame.
     """
     dt = np.nanmedian(np.diff(timestamps))
     if not np.isfinite(dt) or dt <= 0:
         return 0
-    return min(int(round(crop_start_s / dt)), len(timestamps))
+    n = int(round(crop_start_s / dt))
+    if len(timestamps) and n >= len(timestamps):
+        raise ValueError(f"cropping {crop_start_s:g} s removes all {len(timestamps)} frames")
+    return n
 
 
 def tc_crop(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:

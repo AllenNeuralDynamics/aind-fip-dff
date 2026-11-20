@@ -83,7 +83,8 @@ def test_n_frames_to_cut_uses_the_median_frame_interval():
     t_gaps = np.delete(t, [10, 11, 50, 400])  # dropped frames do not shift the median
     t_gaps[-5:] = np.nan  # nor do NaN timestamps
     assert n_frames_to_cut(t_gaps, 20.0) == 400
-    assert n_frames_to_cut(t_gaps, 1e4) == len(t_gaps)  # at most the whole trace
+    with pytest.raises(ValueError, match="removes all"):  # a crop that leaves no frame
+        n_frames_to_cut(t_gaps, 1e4)
     assert n_frames_to_cut(np.full(10, np.nan), 5.0) == 0  # no frame rate: nothing to cut
 
 

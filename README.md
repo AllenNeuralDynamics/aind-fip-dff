@@ -35,7 +35,7 @@ Motion correction is carried out in three to four steps:
 - `--serial`: Do not parallelize fibers and channels.
 - `--no_qc`: Skip the QC plots and metrics.
 
-In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset, a new derived asset named `<original input>_processed_<time of the run>` with the input in `source_data`. Its `processing.json` and `quality_control.json` keep the earlier content: the ΔF/F process is appended to the history and the ΔF/F QC metrics are replaced. A failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
+In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method, crop and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset, a new derived asset named `<original input>_processed_<time of the run>` with the input in `source_data`. Its `processing.json` and `quality_control.json` keep the earlier content: the ΔF/F process is appended to the history and the ΔF/F QC metrics are replaced. A failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
 
 ## Output
 

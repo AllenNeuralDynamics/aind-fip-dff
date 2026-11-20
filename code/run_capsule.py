@@ -1016,7 +1016,10 @@ def _fiber_n_frame_to_cut(df_fip, fiber_number, channels, crop_start_s):
     """Frames covering `crop_start_s` for one fiber: the same for all its channels, from the
     timestamps of the first one."""
     df = df_fip[(df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channels[0])]
-    return n_frames_to_cut(df["time_fip"].to_numpy(dtype=float), crop_start_s)
+    try:
+        return n_frames_to_cut(df["time_fip"].to_numpy(dtype=float), crop_start_s)
+    except ValueError as e:
+        raise ValueError(f"Fiber {fiber_number}: {e}") from e
 
 
 def _process1fiber(
