@@ -43,7 +43,12 @@ from scipy.signal import butter, welch
 
 import utils.nwb_dict_utils as nwb_utils
 from utils.preprocess import chunk_processing, filtfilt_finite, motion_correct
-from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+from utils.qc_stats import (
+    BASELINE_WINDOW_S,
+    baseline_levels,
+    longest_finite_run,
+    noise_inflation,
+)
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
@@ -546,8 +551,8 @@ def plot_motion_correction(
         # np.asarray guards against pandas Series input: scipy>=1.15's welch
         # slices internally with an Ellipsis+tuple index that Series.__getitem__
         # doesn't support (raises KeyError), whereas ndarray input works fine.
-        data = np.asarray(data, dtype=float)
-        data = data[np.isfinite(data)]  # leave out the NaN start-up and dropped frames
+        # one contiguous run: dropping NaN frames inside would shift the frequencies
+        data = longest_finite_run(data)
         if data.size == 0:
             return ax
         psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]

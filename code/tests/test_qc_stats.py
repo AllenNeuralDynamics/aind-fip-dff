@@ -8,9 +8,19 @@ from scipy.signal import butter, sosfiltfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from utils.preprocess import filtfilt_finite  # noqa: E402
-from utils.qc_stats import baseline_levels, noise_inflation  # noqa: E402
+from utils.qc_stats import baseline_levels, longest_finite_run, noise_inflation  # noqa: E402
 
 FS = 20
+
+
+def test_longest_finite_run():
+    x = np.arange(10.0)
+    np.testing.assert_array_equal(longest_finite_run(x), x)
+    x[[0, 1, 5]] = np.nan  # runs of length 3 (2-4) and 4 (6-9)
+    np.testing.assert_array_equal(longest_finite_run(x), [6, 7, 8, 9])
+    x[6] = np.inf  # now 3 (2-4) and 3 (7-9): the first wins
+    np.testing.assert_array_equal(longest_finite_run(x), [2, 3, 4])
+    assert longest_finite_run(np.full(5, np.nan)).size == 0
 
 
 def _trace(offsets=(0.0, 0.0, 0.0), minutes=30, seed=0):
