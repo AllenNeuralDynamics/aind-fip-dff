@@ -19,6 +19,18 @@ from statsmodels.robust import scale
 from statsmodels.robust.norms import RobustNorm, TukeyBiweight
 
 
+def n_frames_to_cut(timestamps: np.ndarray, crop_start_s: float) -> int:
+    """Number of frames covering the first `crop_start_s` seconds.
+
+    The frame rate is `1 / median(diff(timestamps))`, which is robust to dropped frames and
+    NaN timestamps. At most the number of timestamps (the whole trace).
+    """
+    dt = np.nanmedian(np.diff(timestamps))
+    if not np.isfinite(dt) or dt <= 0:
+        return 0
+    return min(int(round(crop_start_s / dt)), len(timestamps))
+
+
 def tc_crop(tc: np.ndarray, n_frame_to_cut: int) -> np.ndarray:
     """Remove the first few seconds of the time course."""
     return tc[n_frame_to_cut:]
