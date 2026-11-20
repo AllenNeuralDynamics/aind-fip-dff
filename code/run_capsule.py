@@ -39,11 +39,16 @@ from aind_ophys_utils.signal_utils import noise_std
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
-from scipy.signal import butter, sosfiltfilt, welch
+from scipy.signal import butter, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, motion_correct
-from utils.qc_stats import BASELINE_WINDOW_S, baseline_levels, noise_inflation
+from utils.preprocess import chunk_processing, filtfilt_finite, motion_correct
+from utils.qc_stats import (
+    BASELINE_WINDOW_S,
+    baseline_levels,
+    longest_finite_run,
+    noise_inflation,
+)
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
@@ -546,7 +551,11 @@ def plot_motion_correction(
         # np.asarray guards against pandas Series input: scipy>=1.15's welch
         # slices internally with an Ellipsis+tuple index that Series.__getitem__
         # doesn't support (raises KeyError), whereas ndarray input works fine.
-        psd = np.array(welch(np.asarray(data) * 100, nperseg=1024))[:, 1:-1]
+        # one contiguous run: dropping NaN frames inside would shift the frequencies
+        data = longest_finite_run(data)
+        if data.size == 0:
+            return ax
+        psd = np.array(welch(data * 100, nperseg=1024))[:, 1:-1]
         if cut:
             psd = psd[:, psd[0] < min(0.5, 1.25 * cutoff_freq_noise / fs)]
         ax.loglog(psd[0] * fs, psd[1], c=color)
@@ -583,7 +592,9 @@ def plot_motion_correction(
             if i < 2:
                 if cut:
                     sos = butter(N=2, Wn=cutoff_freq_noise, fs=fs, output="sos")
-                    noise_filt = lambda x: sosfiltfilt(sos, x)
+                    noise_filt = lambda x: filtfilt_finite(
+                        sos, np.asarray(x, dtype=float)[:, None]
+                    )[:, 0]
                 else:
                     noise_filt = lambda x: x
                 ax.plot(
