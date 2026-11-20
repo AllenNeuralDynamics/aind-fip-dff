@@ -85,6 +85,9 @@ def test_n_frames_to_cut_uses_the_median_frame_interval():
     assert n_frames_to_cut(t_gaps, 20.0) == 400
     with pytest.raises(ValueError, match="removes all"):  # a crop that leaves no frame
         n_frames_to_cut(t_gaps, 1e4)
+    for bad in (np.inf, -np.inf, np.nan, -1.0):
+        with pytest.raises(ValueError, match="finite and >= 0"):
+            n_frames_to_cut(t_gaps, bad)
     assert n_frames_to_cut(np.full(10, np.nan), 5.0) == 0  # no frame rate: nothing to cut
 
 

@@ -23,8 +23,11 @@ def n_frames_to_cut(timestamps: np.ndarray, crop_start_s: float) -> int:
     """Number of frames covering the first `crop_start_s` seconds.
 
     The frame rate is `1 / median(diff(timestamps))`, which is robust to dropped frames and
-    NaN timestamps. Raises `ValueError` if the crop would remove every frame.
+    NaN timestamps. Raises `ValueError` if `crop_start_s` is negative or not finite, or if the
+    crop would remove every frame.
     """
+    if not (np.isfinite(crop_start_s) and crop_start_s >= 0):
+        raise ValueError(f"crop_start_s must be finite and >= 0, got {crop_start_s}")
     dt = np.nanmedian(np.diff(timestamps))
     if not np.isfinite(dt) or dt <= 0:
         return 0

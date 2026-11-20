@@ -1491,10 +1491,12 @@ def _cutoff_freq_noise_type(s: str) -> float:
 
 
 def _crop_start_s_type(s: str) -> float:
-    """argparse type for --crop_start_s: not negative."""
+    """argparse type for --crop_start_s: finite and not negative."""
     val = float(s)
-    if not val >= 0:
-        raise argparse.ArgumentTypeError(f"--crop_start_s must be >= 0 s, got {val:g}")
+    if not (np.isfinite(val) and val >= 0):
+        raise argparse.ArgumentTypeError(
+            f"--crop_start_s must be a finite number >= 0 s, got {val:g}"
+        )
     return val
 
 
