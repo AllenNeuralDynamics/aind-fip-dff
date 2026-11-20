@@ -14,7 +14,7 @@ The following baseline estimation methods are implemented (the default is `poly`
 
 For "poly", "exp" and "tri-exp", ΔF/F = (F − fit) / F_base − r, where F_base is a sliding baseline of F (`tc_slidingbase`) and r is the median of the lowest `b_percentile` fraction of (F − fit) / F_base (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" use ΔF/F = F / fit − 1 and ignore `--b_percentile`.
 
-The first 100 frames (5 s at 20 Hz) are cropped before fitting. ΔF/F, F<sub>0</sub> and the motion-corrected traces are NaN there, as at frames with a non-finite signal or timestamp.
+The first 100 frames (5 s at 20 Hz) are cropped before fitting. ΔF/F and the motion-corrected traces are NaN there, as at frames with a non-finite signal. F<sub>0</sub> is NaN there too, whereas elsewhere it is NaN only where the timestamp is missing.
 
 ### Motion Correction
 Motion correction is carried out in three to four steps:
