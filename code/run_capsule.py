@@ -42,7 +42,12 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from scipy.signal import butter, welch
 
 import utils.nwb_dict_utils as nwb_utils
-from utils.preprocess import chunk_processing, filtfilt_finite, motion_correct
+from utils.preprocess import (
+    chunk_processing,
+    filtfilt_finite,
+    motion_correct,
+    n_frames_to_cut,
+)
 from utils.qc_stats import (
     BASELINE_WINDOW_S,
     baseline_levels,
@@ -52,8 +57,6 @@ from utils.qc_stats import (
 
 #: Sampling rate `motion_correct` runs its filters at (the pipeline never passes `fs`).
 MOTION_CORRECT_FS = inspect.signature(motion_correct).parameters["fs"].default
-#: Frames `chunk_processing` crops from each fit (the pipeline never passes `n_frame_to_cut`).
-N_FRAME_TO_CUT = inspect.signature(chunk_processing).parameters["n_frame_to_cut"].default
 
 """
 This capsule takes in an NWB file containing raw fiber photometry data
@@ -274,7 +277,7 @@ def plot_dff(
     - If zoom_duration > 0: 3 rows per channel (raw + insets + dF/F)
 
     Inset windows show:
-    - First: Beginning of recording (0 to zoom_duration seconds)
+    - First: The first zoom_duration seconds after the cropped start (`n_frame_to_cut`)
     - Middle: Center portion of recording
     - Last: End of recording (last zoom_duration seconds)
 
@@ -375,8 +378,9 @@ def plot_dff(
         # Add insets if requested
         if show_insets:
             t_total = t[-1] - t[0]
+            t_start = t[min(n_frame_to_cut, len(t) - 1)]  # first frame after the crop
             zoom_windows = [
-                (t[0], t[0] + zoom_duration),
+                (t_start, t_start + zoom_duration),
                 (
                     t[0] + (t_total - zoom_duration) / 2,
                     t[0] + (t_total + zoom_duration) / 2,
@@ -416,7 +420,8 @@ def plot_dff(
                             pass
 
                     inset_ax.set_title(
-                        f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
+                        f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s"
+                        + (" after crop" if j == 0 and n_frame_to_cut > 0 else ""),
                         fontsize=10,
                         y=0.94,
                     )
@@ -968,7 +973,9 @@ def create_motion_noise_metric(fiber, method, stats_by_channel):
 
 
 
-def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
+def _process1channel(
+    channel, df_fip, fiber_number, pp_name, b_percentile=0.7, n_frame_to_cut=100
+):
     """Helper function to process a single channel (must be at module level for pickling)."""
     df_fip_iter = df_fip[
         (df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channel)
@@ -981,6 +988,7 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
         NM_values,
         timestamps - np.nanmin(timestamps),
         method=pp_name,
+        n_frame_to_cut=n_frame_to_cut,
         b_percentile=b_percentile,
         trace_id=f"{channel}_{fiber_number}",
     )
@@ -1006,6 +1014,16 @@ def _process1channel(channel, df_fip, fiber_number, pp_name, b_percentile=0.7):
     return df_fip_iter, df_pp_params_ses
 
 
+def _fiber_n_frame_to_cut(df_fip, fiber_number, channels, crop_start_s):
+    """Frames covering `crop_start_s` for one fiber: the same for all its channels, from the
+    timestamps of the first one."""
+    df = df_fip[(df_fip["fiber_number"] == fiber_number) & (df_fip["channel"] == channels[0])]
+    try:
+        return n_frames_to_cut(df["time_fip"].to_numpy(dtype=float), crop_start_s)
+    except ValueError as e:
+        raise ValueError(f"Fiber {fiber_number}: {e}") from e
+
+
 def _process1fiber(
     fiber_number,
     df_fip,
@@ -1015,6 +1033,7 @@ def _process1fiber(
     cutoff_freq_noise,
     serial,
     b_percentile=0.7,
+    crop_start_s=5.0,
 ):
     """Helper function to process a single fiber (must be at module level for pickling).
 
@@ -1055,15 +1074,18 @@ def _process1fiber(
         - weight : dict
             Dictionary mapping channels to IRLS weights for motion correction.
     """
+    n_cut = _fiber_n_frame_to_cut(df_fip, fiber_number, channels, crop_start_s)
     # dF/F - process each channel
     if serial:
         res = [
-            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile)
+            _process1channel(ch, df_fip, fiber_number, pp_name, b_percentile, n_cut)
             for ch in channels
         ]
     else:
         res = Parallel(n_jobs=len(channels), backend="threading")(
-            delayed(_process1channel)(ch, df_fip, fiber_number, pp_name, b_percentile)
+            delayed(_process1channel)(
+                ch, df_fip, fiber_number, pp_name, b_percentile, n_cut
+            )
             for ch in channels
         )
 
@@ -1082,7 +1104,7 @@ def _process1fiber(
         df_dff_iter,
         cutoff_freq_motion=cutoff_freq_motion,
         cutoff_freq_noise=cutoff_freq_noise,
-        n_frame_to_cut=N_FRAME_TO_CUT,
+        n_frame_to_cut=n_cut,
     )
     # Convert back to a table with columns channel and signal
     df_1fiber["motion_corrected"] = df_mc_iter.melt(
@@ -1170,6 +1192,7 @@ def process_nwb_file(
                     args.cutoff_freq_noise,
                     args.serial,
                     args.b_percentile,
+                    args.crop_start_s,
                 )
                 for fib in fiber_numbers
             ]
@@ -1184,6 +1207,7 @@ def process_nwb_file(
                     args.cutoff_freq_noise,
                     args.serial,
                     args.b_percentile,
+                    args.crop_start_s,
                 )
                 for fib in fiber_numbers
             )
@@ -1239,6 +1263,7 @@ def _plot_both(
     weights,
     cutoff_freq_motion,
     cutoff_freq_noise,
+    crop_start_s=5.0,
 ):
     """Helper function to plot both dff and motion correction (must be at
     module level for pickling)."""
@@ -1249,6 +1274,7 @@ def _plot_both(
         channels,
         method,
         output_dir / "dff-qc",
+        n_frame_to_cut=_fiber_n_frame_to_cut(df_fip_pp, fiber, channels, crop_start_s),
     )
     plot_motion_correction(
         df_fip_pp,
@@ -1359,6 +1385,7 @@ def generate_qc_plots(
             weights,
             args.cutoff_freq_motion,
             args.cutoff_freq_noise,
+            args.crop_start_s,
         )
         for fiber, method in itertools.product(fibers, methods)
     ]
@@ -1463,6 +1490,16 @@ def _cutoff_freq_noise_type(s: str) -> float:
     return val
 
 
+def _crop_start_s_type(s: str) -> float:
+    """argparse type for --crop_start_s: finite and not negative."""
+    val = float(s)
+    if not (np.isfinite(val) and val >= 0):
+        raise argparse.ArgumentTypeError(
+            f"--crop_start_s must be a finite number >= 0 s, got {val:g}"
+        )
+    return val
+
+
 def main():
     start_time = dt.now()
     parser = argparse.ArgumentParser()
@@ -1530,6 +1567,15 @@ def main():
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "
             "that's applied to filter out noise, in Hz."
+        ),
+    )
+    parser.add_argument(
+        "--crop_start_s",
+        type=_crop_start_s_type,
+        default=5.0,
+        help=(
+            "Seconds cropped from the start of each fiber before fitting, to leave out the "
+            "start-up transient or an off-level start. Their dF/F is NaN."
         ),
     )
     parser.add_argument(

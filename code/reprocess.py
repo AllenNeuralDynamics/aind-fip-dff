@@ -29,6 +29,7 @@ from run_capsule import (
     write_output_metadata,
     setup_logging_from_metadata,
     _b_percentile_type,
+    _crop_start_s_type,
     _cutoff_freq_motion_type,
     _cutoff_freq_noise_type,
 )
@@ -362,6 +363,15 @@ if __name__ == "__main__":
         help=(
             "Cutoff frequency of the lowpass Butterworth filter "
             "that's applied to filter out noise, in Hz."
+        ),
+    )
+    parser.add_argument(
+        "--crop_start_s",
+        type=_crop_start_s_type,
+        default=5.0,
+        help=(
+            "Seconds cropped from the start of each fiber before fitting, to leave out the "
+            "start-up transient or an off-level start. Their dF/F is NaN."
         ),
     )
     parser.add_argument(

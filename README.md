@@ -14,7 +14,7 @@ The following baseline estimation methods are implemented (the default is `poly`
 
 For "poly", "exp" and "tri-exp", ΔF/F = (F − fit) / F_base − r, where F_base is a sliding baseline of F (`tc_slidingbase`) and r is the median of the lowest `b_percentile` fraction of (F − fit) / F_base (default 0.7, about the 35th percentile; `mode` uses the half-sample mode). Such a low reference can leave a small positive offset in ΔF/F, which the QC metrics below show. "bright" and "bright-v2" use ΔF/F = F / fit − 1 and ignore `--b_percentile`.
 
-The first 100 frames (5 s at 20 Hz) are cropped before fitting. ΔF/F and the motion-corrected traces are NaN there, as at frames with a non-finite signal. F<sub>0</sub> is NaN there too, whereas elsewhere it is NaN only where the timestamp is missing.
+The first 5 s (100 frames at 20 Hz, see `--crop_start_s`) are cropped before fitting. ΔF/F and the motion-corrected traces are NaN there, as at frames with a non-finite signal. F<sub>0</sub> is NaN there too, whereas elsewhere it is NaN only where the timestamp is missing.
 
 ### Motion Correction
 Motion correction is carried out in three to four steps:
@@ -31,10 +31,11 @@ Motion correction is carried out in three to four steps:
 - `--b_percentile`: Reference level of "poly", "exp" and "tri-exp" (see Method): a fraction in (0, 1] or `mode`. Default: `0.7`
 - `--cutoff_freq_motion`: Cutoff frequency of the lowpass Butterworth filter that's only applied for estimating the regression coefficient, in Hz. Default: `0.05`
 - `--cutoff_freq_noise`: Cutoff frequency of the lowpass Butterworth filter that's applied to filter out noise, in Hz. If `None` or greater than the Nyquist frequency (`10` for `20`Hz sampling rate) no noise filtering is performed. Default: `3`
+- `--crop_start_s`: Seconds cropped from the start of each fiber before fitting, e.g. for the start-up transient or an off-level start. ΔF/F, F<sub>0</sub> and the motion-corrected traces are NaN there. The number of frames is `round(crop_start_s * fs)` with `fs = 1 / median(diff(timestamps))`, the same for all channels of a fiber. Default: `5` (100 frames at 20 Hz)
 - `--serial`: Do not parallelize fibers and channels.
 - `--no_qc`: Skip the QC plots and metrics.
 
-In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset, a new derived asset named `<original input>_processed_<time of the run>` with the input in `source_data`. Its `processing.json` and `quality_control.json` keep the earlier content: the ΔF/F process is appended to the history and the ΔF/F QC metrics are replaced. A failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
+In the Code Ocean App Panel the parameters are passed to `code/run` as named flags (`--name=value`). Its `entrypoint` line switches between `run_capsule.py` (default) and `reprocess.py`, a one-off batch run over many attached assets that redoes the ΔF/F step with the same method, crop and filter parameters, plus `--source_pattern` and `--output-dir`. It writes one folder per asset, a new derived asset named `<original input>_processed_<time of the run>` with the input in `source_data`. Its `processing.json` and `quality_control.json` keep the earlier content: the ΔF/F process is appended to the history and the ΔF/F QC metrics are replaced. A failing asset's partial output is removed and the asset is listed, the others are kept, and the exit code is non-zero.
 
 ## Output
 
