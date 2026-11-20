@@ -277,7 +277,7 @@ def plot_dff(
     - If zoom_duration > 0: 3 rows per channel (raw + insets + dF/F)
 
     Inset windows show:
-    - First: Beginning of recording (0 to zoom_duration seconds)
+    - First: The first zoom_duration seconds after the cropped start (`n_frame_to_cut`)
     - Middle: Center portion of recording
     - Last: End of recording (last zoom_duration seconds)
 
@@ -378,8 +378,9 @@ def plot_dff(
         # Add insets if requested
         if show_insets:
             t_total = t[-1] - t[0]
+            t_start = t[min(n_frame_to_cut, len(t) - 1)]  # first frame after the crop
             zoom_windows = [
-                (t[0], t[0] + zoom_duration),
+                (t_start, t_start + zoom_duration),
                 (
                     t[0] + (t_total - zoom_duration) / 2,
                     t[0] + (t_total + zoom_duration) / 2,
@@ -419,7 +420,8 @@ def plot_dff(
                             pass
 
                     inset_ax.set_title(
-                        f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s",
+                        f"{['First', 'Middle', 'Last'][j]} {zoom_duration:.0f}s"
+                        + (" after crop" if j == 0 and n_frame_to_cut > 0 else ""),
                         fontsize=10,
                         y=0.94,
                     )
