@@ -18,6 +18,17 @@ BASELINE_WINDOW_S = 300
 BASELINE_MIN_DURATION_S = 1000
 
 
+def longest_finite_run(x: np.ndarray) -> np.ndarray:
+    """The longest contiguous run of finite samples of `x` (the first if tied; empty if none)."""
+    x = np.asarray(x, dtype=float)
+    edges = np.diff(np.concatenate(([False], np.isfinite(x), [False])).astype(int))
+    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    if not len(starts):
+        return x[:0]
+    i = int(np.argmax(ends - starts))
+    return x[starts[i] : ends[i]]
+
+
 def _mode(x: np.ndarray, scale: float) -> float:
     """Peak of the histogram of `x` (bin width `scale`/4), smoothed with a 2-bin Gaussian."""
     lo, hi = np.percentile(x, [1, 99])
