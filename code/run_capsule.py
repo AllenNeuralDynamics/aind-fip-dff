@@ -476,9 +476,9 @@ def plot_motion_correction(
     channels: list[str],
     method: str,
     fig_path: Path,
-    coeffs: list[dict],
-    intercepts: list[dict],
-    weights: list[dict],
+    coeffs: dict[str, dict[str, dict]],
+    intercepts: dict[str, dict[str, dict]],
+    weights: dict[str, dict[str, dict]],
     cutoff_freq_motion: float,
     cutoff_freq_noise: float,
     fs: float = 20,
@@ -497,12 +497,12 @@ def plot_motion_correction(
         The name of the preprocessing method used ("poly", "exp", or "bright").
     fig_path : Path
         The path where the generated plot will be saved.
-    coeffs : dict of list of dict
-        The regression coefficients for each method/fiber/channel combination.
-    intercepts : dict of list of dict
-        The regression intercepts for each method/fiber/channel combination.
-    weights : dict of list of dict
-        The regression weights for each method/fiber/channel combination.
+    coeffs : dict of dict of dict
+        The regression coefficients, indexed as coeffs[method][fiber][channel].
+    intercepts : dict of dict of dict
+        The regression intercepts, indexed as intercepts[method][fiber][channel].
+    weights : dict of dict of dict
+        The regression weights, indexed as weights[method][fiber][channel].
     cutoff_freq_motion : float
         Cutoff frequency of the lowpass Butterworth filter that's only
         applied for estimating the regression coefficient, in Hz.
@@ -569,9 +569,9 @@ def plot_motion_correction(
             & (df_fip_pp.preprocess == method)
         ]
         color = colors.get(ch, f"C{c}")
-        coef = coeffs[method][int(fiber)][ch]
-        intercept = intercepts[method][int(fiber)][ch]
-        weight = weights[method][int(fiber)][ch]
+        coef = coeffs[method][str(fiber)][ch]
+        intercept = intercepts[method][str(fiber)][ch]
+        weight = weights[method][str(fiber)][ch]
         # Create subplots in the left and center column (sharing x-axis)
         for i in range(3):
             ax = fig.add_subplot(
@@ -1179,9 +1179,11 @@ def process_nwb_file(
 
         df_fip_pp = pd.concat([df_fip_pp] + [r[0] for r in res])
         df_pp_params = pd.concat([df_pp_params] + [r[1] for r in res])
-        coeffs[pp_name] = [r[2] for r in res]
-        intercepts[pp_name] = [r[3] for r in res]
-        weights[pp_name] = [r[4] for r in res]
+        # Key by fiber number, not list position: fibers need not be 0..N-1
+        # (e.g. an NWB with only fiber 1).
+        coeffs[pp_name] = {str(fib): r[2] for fib, r in zip(fiber_numbers, res)}
+        intercepts[pp_name] = {str(fib): r[3] for fib, r in zip(fiber_numbers, res)}
+        weights[pp_name] = {str(fib): r[4] for fib, r in zip(fiber_numbers, res)}
 
     methods = list(df_fip_pp.preprocess.unique())
 
@@ -1389,7 +1391,7 @@ def generate_qc_plots(
                 level_by_channel[ch] = baseline_levels(df.dFF.values, fs)
                 if ch != "Iso":
                     noise_by_channel[ch] = (
-                        coeffs[method][int(fiber)][ch],
+                        coeffs[method][str(fiber)][ch],
                         noise_inflation(
                             df.dFF.values,
                             df.motion_corrected.values,
